@@ -8,6 +8,25 @@ export enum AgentType {
     ACAPY = 'ACAPY'
 }
 
+export declare enum KeyType {
+    Ed25519 = 'ed25519',
+    Bls12381g1g2 = 'bls12381g1g2',
+    Bls12381g1 = 'bls12381g1',
+    Bls12381g2 = 'bls12381g2',
+    X25519 = 'x25519',
+    P256 = 'p256',
+    P384 = 'p384',
+    P521 = 'p521',
+    K256 = 'k256'
+}
+
+export enum DidMethod {
+    INDY = 'indy',
+    KEY = 'key',
+    WEB = 'web',
+    POLYGON = 'polygon'
+}
+
 export enum Ledgers {
     Bcovrin_Testnet = 'Bcovrin Testnet',
     Indicio_Testnet = 'Indicio Testnet',
@@ -52,11 +71,13 @@ export enum AgentSpinUpStatus {
     COMPLETED = 2
 }
 
+
 export enum UserCertificateId {
-    WINNER = 'Winner',
-    PARTICIPANT = 'Participant',
-    ARBITER = 'Arbiter',
-    WORLD_RECORD = 'WorldRecord'
+  WINNER = 'Winner',
+  PARTICIPANT = 'Participant',
+  ARBITER = 'Arbiter',
+  WORLD_RECORD = 'WorldRecord',
+  AYANWORKS_EVENT ='Appreciation Certificate'
 }
 
 export enum NodeEnvironment {
@@ -70,10 +91,21 @@ export enum AutoAccept {
     Never = "never"
 }
 
+export enum SortMembers {
+    CREATED_DATE_TIME = 'createDateTime',
+    STATUS = 'status',
+    ID = 'id',
+    ORGANIZATION = 'organization'
+}
+
 const transitionMap: { [key in Invitation]: Invitation[] } = {
     [Invitation.PENDING]: [Invitation.ACCEPTED, Invitation.REJECTED],
     [Invitation.ACCEPTED]: [],
     [Invitation.REJECTED]: []
 };
+
+export enum CertificateDetails {
+    PINNACLE_CRED_DEF = 'PKDMuYSzJE22Jkh4B1EMiX:3:CL:826:Pinnacle Certificate'
+}
 
 export const transition = (currentStatus: Invitation, nextStatus: Invitation): boolean => (transitionMap[currentStatus].includes(nextStatus));

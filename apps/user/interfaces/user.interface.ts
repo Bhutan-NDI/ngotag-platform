@@ -5,6 +5,7 @@ export interface IUsersProfile {
   firstName?: string;
   lastName?: string;
   supabaseUserId?: string;
+  keycloakUserId?: string;
   userOrgRoles?: IUserOrgRole[];
 }
 
@@ -79,7 +80,6 @@ export interface ISendVerificationEmail {
   
   export interface IShareUserCertificate {
     schemaId: string;
-    credDefId: string;
     credentialId: string;
     attributes: Attribute[];
     invitationUrl?: string;
