@@ -4,7 +4,9 @@ on:
   push:
     branches:
       - develop
-   
+    paths:
+      - 'apps/agent-service/**'
+  workflow_dispatch:
     
 env:
   ECR_IMAGE_TAG: "AGENT_v_${{ github.run_number }}"
