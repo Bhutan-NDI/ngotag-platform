@@ -1,6 +1,5 @@
 name: Build and deploy Node.js app to ECSsdc
 
-name: Stage Client Tag Workflow
 
 on:
   push:
