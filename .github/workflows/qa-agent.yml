@@ -1,12 +1,10 @@
 name: Build and deploy Node.js app to ECSsdc
 
+
 on:
   push:
-    branches:
-      - qa
-    paths:
-      - 'apps/agent-service/**'
-  workflow_dispatch:
+    tags:
+      - 'qa-agent-service*'
     
 env:
   ECR_IMAGE_TAG: "USER_v_${{ github.run_number }}"

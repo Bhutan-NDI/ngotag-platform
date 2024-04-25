@@ -2,11 +2,8 @@ name: Build and deploy Node.js app to ECSsdc
 
 on:
   push:
-    branches:
-      - qa
-    paths:
-      - 'apps/organization/**'
-  workflow_dispatch:
+    tags:
+      - 'qa-organization*'
     
 env:
   ECR_IMAGE_TAG: "ORGANIZATION_V_${{ github.run_number }}"
