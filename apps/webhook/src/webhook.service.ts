@@ -87,6 +87,7 @@ export class WebhookService {
 
   async webhookFunc(webhookUrl: string, data: object): Promise<Response> {
     try {
+      console.log("webhookurl::" , webhookUrl)
       const response = await fetch(webhookUrl, {
         method: 'POST',
         headers: {
@@ -96,6 +97,8 @@ export class WebhookService {
       });
 
       if (!response.ok) {
+        console.log("not ok response::" , response)
+        console.log("not ok response status::" , response.status)
         this.logger.error(`Error in sending webhook response to org webhook url:`, response.status);
         throw new InternalServerErrorException(ResponseMessages.webhook.error.webhookResponse);
       }
@@ -107,11 +110,13 @@ export class WebhookService {
 
   async webhookResponse(webhookUrl: string, data: object): Promise<object> {
     try {
+      console.log("webhookurl::" , webhookUrl)
       const webhookResponse = async (): Promise<Response> => this.webhookFunc(webhookUrl, data);
       const response = await AsyncRetry(webhookResponse, this.retryOptions(this.logger));
       return response;
     } catch (error) {
       this.logger.error(`Error in sending webhook response to org webhook url: ${error}`);
+      console.log("error webhook::" , error)
       throw new RpcException(error.response ? error.response : error);
     }
   }
