@@ -1,16 +1,16 @@
 {
   "platformConfigData": {
-    "externalIp": "##Machine Ip Address/Domain for agent setup##",
-    "inboundEndpoint": "##Machine Ip Address/Domain for agent setup##",
-    "username": "credebl",
+    "externalIp": "qa-agent.ngotag.com",
+    "inboundEndpoint": "qa-agent-inbound.ngotag.com",
+    "username": "ngotag",
     "sgApiKey": "###Sendgrid Key###",
     "emailFrom": "##Senders Mail ID##",
-    "apiEndpoint": "## Platform API Ip Address##",
+    "apiEndpoint": "qa-service.ngotag.com",
     "tailsFileServer": "##Machine Ip Address for agent setup##"
   },
   "platformAdminData": {
-    "firstName": "CREDEBL",
-    "lastName": "CREDEBL",
+    "firstName": "NGOTAG",
+    "lastName": "NGOTAG",
     "email": "",
     "username": "",
     "password": "####Please provide encrypted password using crypto-js###",
