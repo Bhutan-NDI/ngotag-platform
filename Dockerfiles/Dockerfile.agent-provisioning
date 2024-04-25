@@ -1,6 +1,7 @@
 # Stage 1: Build the application
 FROM node:18-alpine as build
 
+
 RUN set -eux \
     && apk --no-cache add \
         openssh-client \
@@ -10,14 +11,6 @@ RUN set -eux \
     && npm install -g pnpm --ignore-scripts \
     && export PATH=$PATH:/usr/lib/node_modules/pnpm/bin \
     && rm -rf /var/cache/apk/*
-
-RUN docker --version && \
-    docker-compose --version
-
-ARG ROOT_PATH
-ENV ROOT_PATH ${ROOT_PATH}
-
-RUN echo "ROOT_PATH is set to: $ROOT_PATH"
 
 # Set the working directory
 WORKDIR /app
@@ -41,6 +34,7 @@ RUN pnpm run build agent-provisioning
 
 # Stage 2: Create the final image
 FROM node:18-alpine as prod
+
 
 RUN set -eux \
     && apk --no-cache add \
