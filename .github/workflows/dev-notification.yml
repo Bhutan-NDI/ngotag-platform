@@ -2,11 +2,8 @@ name: Build and deploy Node.js app to ECSsdc
 
 on:
   push:
-    branches:
-      - develop
-    paths:
-      - 'apps/notification/**'
-  workflow_dispatch:
+    tags:
+      - 'dev-notification*'
     
 env:
   ECR_IMAGE_TAG: "NOTIFICATION_V_${{ github.run_number }}"
