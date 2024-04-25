@@ -2,11 +2,8 @@ name: Build and deploy Node.js app to ECSsdc
 
 on:
   push:
-    branches:
-      - qa
-    paths:
-      - 'apps/user/**'
-  workflow_dispatch:
+    tags:
+      - 'qa-verification*'
     
 env:
   ECR_IMAGE_TAG: "VERIFICATION_V_${{ github.run_number }}"

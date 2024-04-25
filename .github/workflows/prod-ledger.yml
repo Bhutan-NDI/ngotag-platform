@@ -2,11 +2,9 @@ name: Build and deploy Node.js app to ECSsdc
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'apps/ledger/**'
-  workflow_dispatch:
+    tags:
+      - 'prod-ledger*'
+
     
 env:
   ECR_IMAGE_TAG: "LEDGER_V_${{ github.run_number }}"

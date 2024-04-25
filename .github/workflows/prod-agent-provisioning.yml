@@ -1,12 +1,11 @@
 name: Build and deploy Node.js app to ECSsdc
 
+name: Stage Client Tag Workflow
+
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'apps/agent-provisioning/**'
-  workflow_dispatch:
+    tags:
+      - 'prod-agent-provisioning*'
 
 env:
   ECR_IMAGE_TAG: "AGENT_PROVISIONING_V_${{ github.run_number }}"
