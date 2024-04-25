@@ -2,8 +2,11 @@ name: Build and deploy Node.js app to ECSsdc
 
 on:
   push:
-    tags:
-      - 'dev-connection*'
+    branches:
+      - develop
+    paths:
+      - 'apps/connection/**'
+  workflow_dispatch:
     
 env:
   ECR_IMAGE_TAG: "CONNECTION_V_${{ github.run_number }}"

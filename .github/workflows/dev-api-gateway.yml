@@ -2,8 +2,11 @@ name: Build and deploy Node.js app to ECSsdc
 
 on:
   push:
-    tags:
-      - 'dev-api-gateway*'
+    branches:
+      - pipeline-implementation
+    paths:
+      - 'apps/api-gateway/**'
+  workflow_dispatch:
     
 env:
   ECR_IMAGE_TAG: "API-GATEWAY_V_${{ github.run_number }}"

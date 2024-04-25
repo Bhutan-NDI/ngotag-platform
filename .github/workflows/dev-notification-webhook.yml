@@ -5,7 +5,7 @@ on:
     branches:
       - pipeline-implementation
     paths:
-      - 'apps/user/**'
+      - 'apps/ar/**'
   workflow_dispatch:
     
 env:
