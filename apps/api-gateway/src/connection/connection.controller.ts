@@ -308,7 +308,7 @@ export class ConnectionController {
   ): Promise<Response> {
     connectionDto.type = 'Connection';
     this.logger.debug(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
-  
+    this.logger.error(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
     const connectionData = await this.connectionService.getConnectionWebhook(connectionDto, orgId).catch(error => {
         this.logger.debug(`error in saving connection webhook ::: ${JSON.stringify(error)}`);
      });

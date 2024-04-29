@@ -3,7 +3,7 @@ name: Build and deploy Node.js app to ECSsdc
 on:
   push:
     branches:
-      - main
+      - develop
     paths:
       - 'apps/agent-provisioning/**'
   workflow_dispatch:
