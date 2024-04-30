@@ -1,6 +1,7 @@
 # Stage 1: Build the application
 FROM node:18-alpine as build
 
+
 RUN set -eux \
     && apk --no-cache add \
         openssh-client \
@@ -33,6 +34,7 @@ RUN pnpm run build agent-provisioning
 
 # Stage 2: Create the final image
 FROM node:18-alpine as prod
+
 
 RUN set -eux \
     && apk --no-cache add \
@@ -71,3 +73,6 @@ COPY libs/ ./libs/
 
 # Set the command to run the microservice
 CMD ["sh", "-c", "cd libs/prisma-service && npx prisma migrate deploy && cd ../.. && node dist/apps/agent-provisioning/main.js"]
+
+# docker build -t agent-provisioning-service -f Dockerfiles/Dockerfile.agent-provisioning .
+# docker run -d --env-file .env --name agent-provisioning-service docker.io/library/agent-provisioning-service
