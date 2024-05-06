@@ -164,6 +164,7 @@ export interface ISendProofRequestPayload {
     presentationDefinition?:IProofRequestPresentationDefinition;
     reuseConnection?: boolean;
     recipientKey?:string;
+    invitationDid?: string
 }
 
 export interface IWSendProofRequestPayload {
@@ -227,7 +228,7 @@ export interface IProofRequestSearchCriteria {
     pageSize: number;
     sortField: string;
     sortBy: string;
-    searchByText: string;
+    search: string;
 }
 
 export interface IInvitation{

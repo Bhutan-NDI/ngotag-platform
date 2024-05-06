@@ -348,12 +348,12 @@ export class VerificationService {
 
       // Destructuring 'outOfBandRequestProof' to remove emailId, as it is not used while agent operation
       const { isShortenUrl, emailId, type, reuseConnection, ...updateOutOfBandRequestProof } = outOfBandRequestProof;
-      let recipientKey: string | undefined;
+      let invitationDid: string | undefined;
       if (true === reuseConnection) {
-        const data: agent_invitations[] = await this.verificationRepository.getRecipientKeyByOrgId(user.orgId);
+        const data: agent_invitations[] = await this.verificationRepository.getInvitationDidByOrgId(user.orgId);
          if (data && 0 < data.length) {
           const [firstElement] = data;
-          recipientKey = firstElement?.recipientKey ?? undefined;
+          invitationDid = firstElement?.invitationDid ?? undefined;
       }
       }
       outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
@@ -363,7 +363,7 @@ export class VerificationService {
 
       if (ProofRequestType.INDY === type) {
         updateOutOfBandRequestProof.protocolVersion = updateOutOfBandRequestProof.protocolVersion || 'v1';
-        updateOutOfBandRequestProof.recipientKey = recipientKey || undefined;
+        updateOutOfBandRequestProof.invitationDid = invitationDid || undefined;
         payload   = {
         orgId: user.orgId,
         url,
@@ -377,6 +377,7 @@ export class VerificationService {
           orgId: user.orgId,
           url,
           proofRequestPayload: {
+            goalCode: outOfBandRequestProof.goalCode,
             protocolVersion:outOfBandRequestProof.protocolVersion || 'v2',
             comment:outOfBandRequestProof.comment,
             label,
@@ -390,7 +391,7 @@ export class VerificationService {
               }
             },
             autoAcceptProof:outOfBandRequestProof.autoAcceptProof,
-            recipientKey:recipientKey || undefined
+            invitationDid:invitationDid || undefined
           }
         };  
       }
@@ -682,6 +683,7 @@ export class VerificationService {
     }
   }
 
+  // TODO: This function is only for anoncreds indy
   async getVerifiedProofdetails(proofId: string, orgId: string): Promise<IProofPresentationDetails[]> {
     try {
       const getAgentDetails = await this.verificationRepository.getAgentEndPoint(orgId);
