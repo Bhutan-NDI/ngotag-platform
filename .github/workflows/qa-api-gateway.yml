@@ -7,7 +7,7 @@ on:
     
 env:
   ECR_IMAGE_TAG: "API-GATEWAY_V_${{ github.run_number }}"
-  ECR_REPOSITORY: "dev-services"
+  ECR_REPOSITORY: "qa-services"
   AWS_REGION: "ap-southeast-1"
   CLUSTER: "QA-NGOTAG-CLUSTER"
 
