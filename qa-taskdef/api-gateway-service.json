@@ -28,7 +28,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/QA_API_GATEWAY_TASKDEFINITION",
+                    "awslogs-group": "/ecs/QA_API-GATEWAY_SERVICE_TASKDEFINITION",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },

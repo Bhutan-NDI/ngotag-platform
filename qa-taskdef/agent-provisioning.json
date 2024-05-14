@@ -1,5 +1,5 @@
 {
-    "family": "DEV_AGENT-PROVISIONING_SERVICE_TASKDEFINITION",
+    "family": "DEV_AGENT-PROVISIONING_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "agent_provisioning",

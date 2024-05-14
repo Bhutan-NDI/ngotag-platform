@@ -1,5 +1,5 @@
 {
-    "family": "QA_NOTIFICATION_SERVICE_TASKDEFINITION",
+    "family": "QA_NOTIFICATION_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "notification",
@@ -22,7 +22,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/QA_NOTIFICATION_SERVICE_TASKDEFINITION",
+                    "awslogs-group": "/ecs/QA_NOTIFICATION_TASKDEFINITION",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },
