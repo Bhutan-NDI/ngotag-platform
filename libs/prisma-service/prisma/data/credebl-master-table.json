@@ -1,16 +1,16 @@
 {
   "platformConfigData": {
-    "externalIp": "qa-agent.ngotag.com",
-    "inboundEndpoint": "qa-agent-inbound.ngotag.com",
-    "username": "ngotag",
+    "externalIp": "agent.nashidplatform.com",
+    "inboundEndpoint": "agent-inbound.nashidplatform.com",
+    "username": "nashid",
     "sgApiKey": "###Sendgrid Key###",
     "emailFrom": "##Senders Mail ID##",
-    "apiEndpoint": "qa-service.ngotag.com",
+    "apiEndpoint": "service.nashidplatform.com",
     "tailsFileServer": "##Machine Ip Address for agent setup##"
   },
   "platformAdminData": {
-    "firstName": "NGOTAG",
-    "lastName": "NGOTAG",
+    "firstName": "NASHID",
+    "lastName": "NASHID",
     "email": "",
     "username": "",
     "password": "####Please provide encrypted password using crypto-js###",
