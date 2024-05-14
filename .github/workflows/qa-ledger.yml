@@ -6,10 +6,10 @@ on:
       - 'qa-ledger*'
     
 env:
-  ECR_IMAGE_TAG: "LEDGER_V_${{ github.run_number }}"
+  ECR_IMAGE_TAG: "ECOSYSTEM_V_${{ github.run_number }}"
   ECR_REPOSITORY: "qa-services"
   AWS_REGION: "ap-southeast-1"
-  CLUSTER: "DEV-NGOTAG-CLUSTER"
+  CLUSTER: "QA-NGOTAG-CLUSTER"
 
 jobs:
   build:
@@ -41,7 +41,7 @@ jobs:
           ECR_REPOSITORY: qa-services
           IMAGE_TAG: "LEDGER_V_${{ github.run_number }}"
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfiles/Dockerfile.ledger .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfiles/Dockerfile.ecosystem .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker image list
           
@@ -64,7 +64,7 @@ jobs:
       
       - name: Replace executionRoleArn in task definition
         run: |
-          sed -i "s#\"executionRoleArn\": \"arn:aws:iam::.*:role/ecsTaskExecutionRole\"#\"executionRoleArn\": \"arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole\"#" qa-taskdef/ledger-service.json
+          sed -i "s#\"executionRoleArn\": \"arn:aws:iam::.*:role/ecsTaskExecutionRole\"#\"executionRoleArn\": \"arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ecsTaskExecutionRole\"#" qa-taskdef/ecosystem-service.json
 
       - name: Update Task Definition and service
         run: |
