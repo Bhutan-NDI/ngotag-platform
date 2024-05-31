@@ -1,5 +1,5 @@
 {
-    "family": "STAGE_API-GATEWAY_SERVICE_TASKDEFINITION",
+    "family": "STAGE_API_GATEWAY_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "api_gateway",
@@ -28,7 +28,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/STAGE_API-GATEWAY_SERVICE_TASKDEFINITION",
+                    "awslogs-group": "/ecs/STAGE_API_GATEWAY_TASKDEFINITION",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },

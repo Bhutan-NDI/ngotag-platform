@@ -1,5 +1,5 @@
 {
-    "family": "STAGE_LEDGER_SERVICE_TASKDEFINITION",
+    "family": "STAGE_LEDGER_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "ledger",
@@ -22,7 +22,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/STAGE_LEDGER_SERVICE_TASKDEFINITION",
+                    "awslogs-group": "/ecs/STAGE_LEDGER_TASKDEFINITION",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },
