@@ -72,8 +72,8 @@ jobs:
           NAME=$(sed -n 's/.*"name": "\(.*\)",/\1/p' stage-taskdef/verification-service.json)
           SERVICE_NAME="${NAME}-service"
           
-          # Replace placeholders in the JSON file
-          sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" stage-taskdef/verification-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
+           # Replace placeholders in the JSON file
+          sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" stage-taskdef/user-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
  
           # Debug: Print the content of the modified JSON file
           cat ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
