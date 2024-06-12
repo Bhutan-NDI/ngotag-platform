@@ -1,4 +1,4 @@
-name: Build and deploy Node.js app to ECSsdc
+name: Build and deploy LEDGER  app to QA ECS 
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - 'qa-ledger*'
     
 env:
-  ECR_IMAGE_TAG: "ECOSYSTEM_V_${{ github.run_number }}"
+  ECR_IMAGE_TAG: "LEDGER_V_${{ github.run_number }}"
   ECR_REPOSITORY: "qa-services"
   AWS_REGION: "ap-southeast-1"
   CLUSTER: "QA-NGOTAG-CLUSTER"
