@@ -72,7 +72,7 @@ jobs:
           NAME=$(sed -n 's/.*"name": "\(.*\)",/\1/p' stage-taskdef/verification-service.json)
           SERVICE_NAME="${NAME}-service"
           
-          # Replace placeholders in the JSON file
+           # Replace placeholders in the JSON file
           sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" stage-taskdef/verification-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json
  
           # Debug: Print the content of the modified JSON file
@@ -95,6 +95,7 @@ jobs:
             DESIRED_COUNT="1"
             fi
             # Update the existing service
+             DESIRED_COUNT="1"
               REVISION=$(aws ecs describe-task-definition --task-definition ${FAMILY} --region ap-southeast-1 | jq -r '.taskDefinition.revision')
             aws ecs update-service --cluster ${CLUSTER} --region ap-southeast-1 --service ${SERVICE_NAME} --task-definition ${FAMILY}:${REVISION} --desired-count ${DESIRED_COUNT}
             fi
