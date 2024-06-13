@@ -3,7 +3,7 @@ name: Build and deploy API-GATEWAY to Stage ECS
 on:
   push:
     tags:
-      - 'stage-api-gateway*'
+      - 'stage*'
     
 env:
   ECR_IMAGE_TAG: "API-GATEWAY_V_${{ github.run_number }}"
