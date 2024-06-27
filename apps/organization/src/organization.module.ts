@@ -17,6 +17,7 @@ import { CacheModule } from '@nestjs/cache-manager';
 import { getNatsOptions } from '@credebl/common/nats.config';
 import { ClientRegistrationService } from '@credebl/client-registration';
 import { KeycloakUrlService } from '@credebl/keycloak-url';
+import { CommonConstants } from '@credebl/common/common.constant';
 
 import { AwsService } from '@credebl/aws';
 @Module({
@@ -25,7 +26,7 @@ import { AwsService } from '@credebl/aws';
       {
         name: 'NATS_CLIENT',
         transport: Transport.NATS,
-        options: getNatsOptions(process.env.ORGANIZATION_NKEY_SEED)
+        options: getNatsOptions(CommonConstants.ORGANIZATION_SERVICE, process.env.ORGANIZATION_NKEY_SEED)
       }
     ]),
     CommonModule,
