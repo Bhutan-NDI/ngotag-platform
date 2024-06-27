@@ -24,6 +24,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { IConnectionList, ICreateConnectionUrl } from '@credebl/common/interfaces/connection.interface';
 import { IConnectionDetailsById } from 'apps/api-gateway/src/interfaces/IConnectionSearch.interface';
 import { IQuestionPayload } from './interfaces/question-answer.interfaces';
+import { agent_invitations } from '@prisma/client';
 
 @Injectable()
 export class ConnectionService {
@@ -621,7 +622,8 @@ export class ConnectionService {
         orgId,
         routing,
         recipientKey,
-        invitationDid
+        invitationDid,
+        IsReuseConnection
       } = payload?.createOutOfBandConnectionInvitation;
 
       const agentDetails = await this.connectionRepository.getAgentEndPoint(payload?.createOutOfBandConnectionInvitation?.orgId);
@@ -631,8 +633,22 @@ export class ConnectionService {
       if (!agentDetails) {
         throw new NotFoundException(ResponseMessages.connection.error.agentEndPointNotFound);
       }
+
       
-      this.logger.log(`logoUrl:::, ${organisation.logoUrl}`);
+      let legacyinvitationDid;
+      if (IsReuseConnection) {
+        const data: agent_invitations[] = await this.connectionRepository.getInvitationDidByOrgId(orgId);
+           if (data && 0 < data.length) {
+            const [firstElement] = data;
+            legacyinvitationDid = firstElement?.invitationDid ?? undefined;
+            
+            this.logger.log('legacyinvitationDid:', legacyinvitationDid);
+        }
+      }
+      const connectionInvitationDid = invitationDid ? invitationDid : legacyinvitationDid;
+
+      this.logger.log('connectionInvitationDid:', connectionInvitationDid);
+
       const connectionPayload = {
         multiUseInvitation: multiUseInvitation ?? true,
         autoAcceptConnection: autoAcceptConnection ?? true,
@@ -647,7 +663,7 @@ export class ConnectionService {
         routing: routing || undefined,
         messages: messages || undefined,
         recipientKey: recipientKey || undefined,
-        invitationDid: invitationDid || undefined
+        invitationDid: connectionInvitationDid || undefined
       };
       
       const createConnectionInvitationFlag = 'connection-invitation';
