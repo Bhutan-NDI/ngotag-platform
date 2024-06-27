@@ -3,7 +3,7 @@ name: Build and deploy CONNECTION app to Stage ECS
 on:
   push:
     tags:
-      - 'stage*'
+      - 'stage-connection*'
     
 env:
   ECR_IMAGE_TAG: "CONNECTION_V_${{ github.run_number }}"

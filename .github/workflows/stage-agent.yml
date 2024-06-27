@@ -3,7 +3,7 @@ name: Build and deploy AGENT app to Stage ECS
 on:
   push:
     tags:
-      - 'stage*'
+      - 'stage-agent*'
     
 env:
   ECR_IMAGE_TAG: "AGENT_V_${{ github.run_number }}"
