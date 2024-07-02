@@ -4,8 +4,8 @@
         {
             "name": "utility",
             "image": "%REPOSITORY_URI%:UTILITY_V_%BUILD_NUMBER%",
-            "cpu": 2048,
-            "memory": 8194,
+            "cpu": 1024,
+            "memory": 2048,
             "portMappings": [],
             "essential": true,
             "environment": [],
@@ -38,6 +38,6 @@
     "requiresCompatibilities": [
         "FARGATE"
     ],
-   "cpu": "2048",
-   "memory": "8194"
+    "cpu": "1024",
+    "memory": "2048"
 }
