@@ -4,8 +4,8 @@
         {
             "name": "issuance",
             "image": "%REPOSITORY_URI%:ISSUANCE_V_%BUILD_NUMBER%",
-            "cpu": 1024,
-            "memory": 2048,
+            "cpu": 2048,
+            "memory": 8194,
             "portMappings": [],
             "essential": true,
             "environment": [],
@@ -38,6 +38,6 @@
     "requiresCompatibilities": [
         "FARGATE"
     ],
-    "cpu": "1024",
-    "memory": "2048"
+   "cpu": 2048,
+   "memory": 8194
 }
