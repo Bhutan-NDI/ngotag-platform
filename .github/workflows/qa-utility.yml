@@ -3,7 +3,7 @@ name: Build and deploy UTILITY  app to QA ECS
 on:
   push:
     tags:
-      - 'qa-utility*'
+      - 'qa*'
     
 env:
   ECR_IMAGE_TAG: "UTILITY_V_${{ github.run_number }}"

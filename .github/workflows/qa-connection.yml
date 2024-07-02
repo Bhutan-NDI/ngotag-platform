@@ -3,7 +3,7 @@ name: Build and deploy CONNECTION  app to QA ECS
 on:
   push:
     tags:
-      - 'qa-connection*'
+      - 'qa*'
     
 env:
   ECR_IMAGE_TAG: "CONNECTION_V_${{ github.run_number }}"

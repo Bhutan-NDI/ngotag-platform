@@ -3,7 +3,7 @@ name: Build and deploy VERIFICATION  app to QA ECS
 on:
   push:
     tags:
-      - 'qa-verification*'
+      - 'qa*'
     
 env:
   ECR_IMAGE_TAG: "VERIFICATION_V_${{ github.run_number }}"
