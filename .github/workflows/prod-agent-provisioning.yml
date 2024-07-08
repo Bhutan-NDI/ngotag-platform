@@ -69,7 +69,7 @@ jobs:
       - name: Update Task Definition
         run: |
          FAMILY=$(sed -n 's/.*"family": "\(.*\)",/\1/p' prod-taskdef/agent-provisioning.json)
-         NAME=$(sed -n 's/.*"name": "\(.*\)",/\1/p' prod-taskdef/agent-provisioning.json)
+         
          SERVICE_NAME="agent-provisioning_service"
          echo "SERVICE_NAME: ${SERVICE_NAME}"
 
