@@ -45,6 +45,32 @@
    
     "executionRoleArn": "arn:aws:iam::id:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
+    "volumes": [
+        {
+            "name": "AGNET-CONFIG",
+            "efsVolumeConfiguration": {
+                "fileSystemId": "fs-07c309727dd8993de",
+                "rootDirectory": "/",
+                "transitEncryption": "ENABLED",
+                "authorizationConfig": {
+                    "accessPointId": "fsap-08d8c4b70c9f945ce",
+                    "iam": "DISABLED"
+                }
+            }
+        },
+        {
+            "name": "port-file",
+            "efsVolumeConfiguration": {
+                "fileSystemId": "fs-07c309727dd8993de",
+                "rootDirectory": "/",
+                "transitEncryption": "ENABLED",
+                "authorizationConfig": {
+                    "accessPointId": "fsap-0a656359818c94728",
+                    "iam": "DISABLED"
+                }
+            }
+        }
+    ],
     "placementConstraints": [],
     "requiresCompatibilities": [
         "FARGATE"
