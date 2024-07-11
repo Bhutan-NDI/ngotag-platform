@@ -570,3 +570,7 @@ export interface ICreateConnectionInvitation {
   appendedAttachments?: object[];
   orgId?: string;
 }
+
+export interface IBasicMessage {
+  content: string;
+}

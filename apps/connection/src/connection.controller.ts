@@ -89,4 +89,9 @@ export class ConnectionController {
   async createConnectionInvitation(payload: ICreateOutOfbandConnectionInvitation): Promise<object> {
     return this.connectionService.createConnectionInvitation(payload);
   }
+
+  @MessagePattern({ cmd: 'send-basic-message' })
+  async sendBasicMessage(payload: {content: string, orgId: string, connectionId: string}): Promise<object> {
+    return this.connectionService.sendBasicMesage(payload);
+  }
 }

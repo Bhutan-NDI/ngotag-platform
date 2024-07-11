@@ -251,5 +251,10 @@ export class AgentServiceController {
     async createConnectionInvitation(payload: { url: string; orgId: string; connectionPayload: ICreateConnectionInvitation }): Promise<object> {
       return this.agentServiceService.createConnectionInvitation(payload.url, payload.orgId, payload.connectionPayload);
     }
+
+    @MessagePattern({ cmd: 'agent-send-basic-message' })
+  async sendBasicMessage(payload: { url, orgId, content }): Promise<object> {
+    return this.agentServiceService.sendBasicMessage(payload.content, payload.url, payload.orgId);
+  }
 }
 
