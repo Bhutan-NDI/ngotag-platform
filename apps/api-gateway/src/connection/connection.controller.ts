@@ -334,7 +334,7 @@ export class ConnectionController {
   }
 
   @Post('/orgs/:orgId/basic-message/:connectionId')
-    @ApiOperation({ summary: '', description: 'send question' })
+    @ApiOperation({ summary: '', description: 'Send basic message to connection' })
     @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
     @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER, OrgRoles.VERIFIER, OrgRoles.MEMBER, OrgRoles.HOLDER, OrgRoles.SUPER_ADMIN, OrgRoles.PLATFORM_ADMIN)
     @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
@@ -351,7 +351,7 @@ export class ConnectionController {
         const basicMesgResponse = await this.connectionService.sendBasicMessage(basicMessageDto);
         const finalResponse: IResponse = {
             statusCode: HttpStatus.CREATED,
-            message: ResponseMessages.connection.success.questionSend, // TODO
+            message: ResponseMessages.connection.success.basicMessage, // TODO
             data: basicMesgResponse
         };
         return res.status(HttpStatus.CREATED).json(finalResponse);

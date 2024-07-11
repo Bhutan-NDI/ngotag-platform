@@ -810,7 +810,7 @@ export class ConnectionService {
       const sendBasicMessage = await this._sendBasicMessage(questionPayload, url, orgId);
       return sendBasicMessage;
     } catch (error) {
-      this.logger.error(`[sendQuestion] - error in sending question: ${error}`);
+      this.logger.error(`[sendBasicMesage] - error in sending basic message: ${error}`);
       if (error && error?.status && error?.status?.message && error?.status?.message?.error) {
         throw new RpcException({
           message: error?.status?.message?.error?.reason
