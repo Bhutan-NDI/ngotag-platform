@@ -92,3 +92,14 @@ export class QuestionAnswerWebhookDto {
         type: string;
     
 }
+
+export class BasicMessageDto {
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsString({ message: 'content must be a string' })
+    @IsNotEmpty({ message: 'please provide valid content' })
+    content: string;
+
+    orgId: string;
+    connectionId: string;
+}

@@ -9,3 +9,10 @@ export interface IValidResponses {
     connectionId?: string;
     tenantId?: string;
   }
+
+  export interface IBasicMessage {
+    content: string;
+    orgId?: string;
+    connectionId?: string;
+    tenantId?: string;
+  }
