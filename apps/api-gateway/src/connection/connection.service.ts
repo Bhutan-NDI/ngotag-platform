@@ -6,7 +6,7 @@ import { ConnectionDto, CreateOutOfBandConnectionInvitation, ReceiveInvitationDt
 import { IReceiveInvitationRes, IUserRequestInterface } from './interfaces';
 import { IConnectionList } from '@credebl/common/interfaces/connection.interface';
 import { AgentConnectionSearchCriteria, IConnectionDetailsById, IConnectionSearchCriteria } from '../interfaces/IConnectionSearch.interface';
-import { QuestionDto } from './dtos/question-answer.dto';
+import { BasicMessageDto, QuestionDto } from './dtos/question-answer.dto';
 
 @Injectable()
 export class ConnectionService extends BaseService {
@@ -129,5 +129,15 @@ export class ConnectionService extends BaseService {
   ): Promise<IReceiveInvitationRes> {
     const payload = { user, createOutOfBandConnectionInvitation };
     return this.sendNatsMessage(this.connectionServiceProxy, 'create-connection-invitation', payload);
+  }
+
+  sendBasicMessage(
+    basicMessageDto: BasicMessageDto
+  ): Promise<object> {
+    try {
+      return this.sendNatsMessage(this.connectionServiceProxy, 'send-basic-message', basicMessageDto);
+    } catch (error) {
+      throw new RpcException(error.response);
+    }
   }
 }

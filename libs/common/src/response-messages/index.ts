@@ -246,7 +246,8 @@ export const ResponseMessages = {
             fetchConnection: 'Connection details fetched successfully',
             fetch: 'Connections details fetched successfully',
             questionAnswerRecord: 'Question Answer record fetched successfully',
-            questionSend:'Question sent successfully'
+            questionSend:'Question sent successfully',
+            basicMessage:'Basic message sent successfully'
         },
         error: {
             exists: 'Connection is already exist',
