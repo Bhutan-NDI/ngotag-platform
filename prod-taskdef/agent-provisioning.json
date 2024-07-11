@@ -1,11 +1,11 @@
 {
-    "family": "PROD_AGENT-PROVISIONING_SERVICE_TASKDEFINITION",
+    "family": "PROD_AGENT_PROVISIONING_SERVICE_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "agent-provisioning",
             "image": "%REPOSITORY_URI%:AGENT-PROVISIONING_V_%BUILD_NUMBER%",
-            "cpu": 1024,
-            "memory": 2048,
+            "cpu": 2048,
+            "memory": 8192,
             "portMappings": [],
             "essential": true,
             "environment": [],
@@ -33,7 +33,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/PROD_AGENT-PROVISIONING_SERVICE_TASKDEFINITION",
+                    "awslogs-group": "/ecs/PROD_AGENT_PROVISIONING_SERVICE_TASKDEFINITION",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },
@@ -45,10 +45,36 @@
    
     "executionRoleArn": "arn:aws:iam::id:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
+    "volumes": [
+        {
+            "name": "AGNET-CONFIG",
+            "efsVolumeConfiguration": {
+                "fileSystemId": "fs-07c309727dd8993de",
+                "rootDirectory": "/",
+                "transitEncryption": "ENABLED",
+                "authorizationConfig": {
+                    "accessPointId": "fsap-08d8c4b70c9f945ce",
+                    "iam": "DISABLED"
+                }
+            }
+        },
+        {
+            "name": "port-file",
+            "efsVolumeConfiguration": {
+                "fileSystemId": "fs-07c309727dd8993de",
+                "rootDirectory": "/",
+                "transitEncryption": "ENABLED",
+                "authorizationConfig": {
+                    "accessPointId": "fsap-0a656359818c94728",
+                    "iam": "DISABLED"
+                }
+            }
+        }
+    ],
     "placementConstraints": [],
     "requiresCompatibilities": [
         "FARGATE"
     ],
-    "cpu": "1024",
-    "memory": "2048"
+    "cpu": "2048",
+    "memory": "8192"
 }

@@ -1,5 +1,5 @@
 {
-    "family": "QA_API-GATEWAY_SERVICE_TASKDEFINITION",
+    "family": "QA_API_GATEWAY_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "api_gateway",

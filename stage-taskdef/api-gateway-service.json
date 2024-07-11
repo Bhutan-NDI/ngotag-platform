@@ -1,9 +1,9 @@
 {
-    "family": "STAGE_API-GATEWAY_SERVICE_TASKDEFINITION",
+    "family": "STAGE_API_GATEWAY_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "api_gateway",
-            "image": "%REPOSITORY_URI%:CONNECTION_V_%BUILD_NUMBER%",
+            "image": "%REPOSITORY_URI%:API-GATEWAY_V_%BUILD_NUMBER%",
             "cpu": 1024,
             "memory": 2048,
             "portMappings": [
@@ -28,7 +28,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/STAGE_API-GATEWAY_SERVICE_TASKDEFINITION",
+                    "awslogs-group": "/ecs/STAGE_API_GATEWAY_TASKDEFINITION",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },

@@ -3,9 +3,9 @@
     "containerDefinitions": [
         {
             "name": "api_gateway",
-            "image": "%REPOSITORY_URI%:CONNECTION_V_%BUILD_NUMBER%",
-            "cpu": 1024,
-            "memory": 2048,
+            "image": "%REPOSITORY_URI%:API-GATEWAY_V_%BUILD_NUMBER%",
+            "cpu": 2048,
+            "memory": 8192,
             "portMappings": [
                 {
                     "containerPort": 5000,
@@ -44,6 +44,6 @@
     "requiresCompatibilities": [
         "FARGATE"
     ],
-    "cpu": "1024",
-    "memory": "2048"
+    "cpu": "2048",
+    "memory": "8192"
 }

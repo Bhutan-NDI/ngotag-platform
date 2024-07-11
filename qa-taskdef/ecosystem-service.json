@@ -1,5 +1,5 @@
 {
-    "family": "QA_ECOSYSTEM_SERVICE_TASKDEFINITION",
+    "family": "QA_ECOSYSTEM_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "ecosystem",
@@ -16,13 +16,13 @@
                 }
             ],
             "mountPoints": [],
-            "volumes": [],
+            "volumesFrom": [],
             "ulimits": [],
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/QA_ECOSYSTEM_SERVICE_TASKDEFINITION",
+                    "awslogs-group": "/ecs/QA_ECOSYSTEM_TASKDEFINITION",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },

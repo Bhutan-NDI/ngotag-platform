@@ -136,7 +136,6 @@ export enum CommonConstants {
 
   // CREATE KEYS
   CREATE_POLYGON_SECP256k1_KEY = '/polygon/create-keys',
- 
 
   // ENTITY NAMES
   ENTITY_NAME_TEMPLATE = 'templates',
@@ -245,7 +244,7 @@ export enum CommonConstants {
 
   // agent status
   URL_AGENT_STATUS = '/agent',
-  
+
   // Tenant Status
   PENDING_STATE = 0,
   REJECT_STATE = 2,
@@ -272,11 +271,10 @@ export enum CommonConstants {
   ACTIVE_NON_ADMIN_USER = 1,
   ALL_NON_ADMIN_USER = 3,
 
-
   // Platform admin Details
-  PLATFORM_ADMIN_EMAIL='platform.admin@yopmail.com',
-  PLATFORM_ADMIN_ORG='Platform-admin',
-  PLATFORM_ADMIN_ORG_ROLE='platform_admin',
+  PLATFORM_ADMIN_EMAIL = 'platform.admin@yopmail.com',
+  PLATFORM_ADMIN_ORG = 'Platform-admin',
+  PLATFORM_ADMIN_ORG_ROLE = 'platform_admin',
 
   //onBoarding Type
   ONBOARDING_TYPE_ADMIN = 0,
@@ -318,12 +316,33 @@ export enum CommonConstants {
   KEYTYPE = 'ed25519',
   METHOD = 'indy',
   NETWORK = 'bcovrin:testnet',
-  ROLE = 'endorser', 
+  ROLE = 'endorser',
 
- //CacheInfo
-CACHE_SHARED_APIKEY_KEY = "dedicatedApiKey",
-CACHE_APIKEY_KEY = "sharedApiKey",
-CACHE_TTL_SECONDS = 604800
+  //CacheInfo
+  CACHE_SHARED_APIKEY_KEY = 'dedicatedApiKey',
+  CACHE_APIKEY_KEY = 'sharedApiKey',
+  CACHE_TTL_SECONDS = 604800,
+
+  // MICROSERVICES NAMES
+  API_GATEWAY_SERVICE = 'api-gateway',
+  ORGANIZATION_SERVICE = 'organization',
+  USER_SERVICE = 'user',
+  AUTH_SERVICE = 'authz',
+  FIDO_SERVICE = 'fido',
+  UTILITY_SERVICE = 'utilitites',
+  CONNECTION_SERVICE = 'connection',
+  LEDGER_SERVICE = 'ledger',
+  PLATFORM_SERVICE = 'platform',
+  SCHEMA_SERVICE = 'schema',
+  CREDENTIAL_DEFINITION_SERVICE = 'credential-definition',
+  AGENT_SERVICE = 'agent-service',
+  AGENT_PROVISIONING = 'agent-provisioning',
+  ISSUANCE_SERVICE = 'issuance',
+  VERIFICATION_SERVICE = 'verification',
+  ECOSYSTEM_SERVICE = 'ecosystem',
+  WEBHOOK_SERVICE = 'webhook',
+  NOTIFICATION_SERVICE = 'notification',
+  GEO_LOCATION_SERVICE = 'geo-location'
 }
 
 export const postgresqlErrorCodes = [];

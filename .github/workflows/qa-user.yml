@@ -1,12 +1,12 @@
-name: Build and deploy Node.js app to ECSsdc
+name: Build and deploy USER  app to QA ECS 
 
 on:
   push:
     tags:
-      - 'qa-user*'
+      - 'qa*'
     
 env:
-  ECR_IMAGE_TAG: "USER_v_${{ github.run_number }}"
+  ECR_IMAGE_TAG: "USER_V_${{ github.run_number }}"
   ECR_REPOSITORY: "qa-services"
   AWS_REGION: "ap-southeast-1"
   CLUSTER: "QA-NGOTAG-CLUSTER"
@@ -95,6 +95,6 @@ jobs:
             DESIRED_COUNT="1"
             fi
             # Update the existing service
-             REVISION=$(aws ecs describe-task-definition --task-definition ${FAMILY} --region ap-southeast-1 | jq -r '.qa-taskdefinition.revision')
+              REVISION=$(aws ecs describe-task-definition --task-definition ${FAMILY} --region ap-southeast-1 | jq -r '.taskDefinition.revision')
             aws ecs update-service --cluster ${CLUSTER} --region ap-southeast-1 --service ${SERVICE_NAME} --task-definition ${FAMILY}:${REVISION} --desired-count ${DESIRED_COUNT}
             fi

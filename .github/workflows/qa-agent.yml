@@ -1,13 +1,13 @@
-name: Build and deploy Node.js app to ECSsdc
+name: Build and deploy AGENT  app to QA ECS 
 
 
 on:
   push:
     tags:
-      - 'qa-agent-service*'
+      - 'qa*'
     
 env:
-  ECR_IMAGE_TAG: "USER_v_${{ github.run_number }}"
+  ECR_IMAGE_TAG: "AGENT_V_${{ github.run_number }}"
   ECR_REPOSITORY: "qa-services"
   AWS_REGION: "ap-southeast-1"
   CLUSTER: "QA-NGOTAG-CLUSTER"
@@ -40,7 +40,7 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: qa-services
-          IMAGE_TAG: "USER_V_${{ github.run_number }}"
+          IMAGE_TAG: "AGENT_V_${{ github.run_number }}"
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfiles/Dockerfile.agent-service .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
@@ -50,7 +50,7 @@ jobs:
         run: |
           echo "ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
           echo "ECR_REPOSITORY=qa-services" >> $GITHUB_ENV
-          echo "IMAGE_TAG=USER_V_${{ github.run_number }}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=AGENT_V_${{ github.run_number }}" >> $GITHUB_ENV
    
       - name: Print environment variables
         run: |
@@ -99,6 +99,6 @@ jobs:
             DESIRED_COUNT="1"
             fi
             # Update the existing service
-             REVISION=$(aws ecs describe-task-definition --task-definition ${FAMILY} --region ap-southeast-1 | jq -r '.qa-taskdefinition.revision')
+              REVISION=$(aws ecs describe-task-definition --task-definition ${FAMILY} --region ap-southeast-1 | jq -r '.taskDefinition.revision')
             aws ecs update-service --cluster ${CLUSTER} --region ap-southeast-1 --service ${SERVICE_NAME} --task-definition ${FAMILY}:${REVISION} --desired-count ${DESIRED_COUNT}
             fi
