@@ -278,6 +278,8 @@ export class ConnectionController {
     @Res() res: Response
   ): Promise<Response> {
     connectionDto.type = 'Connection';
+    this.logger.log(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
+
     this.logger.debug(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
     
     const connectionData = await this.connectionService.getConnectionWebhook(connectionDto, orgId).catch(error => {
