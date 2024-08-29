@@ -206,6 +206,7 @@ export interface IWebhookProofPresentation {
     connectionId: string;
     presentationId: string;
     threadId: string;
+    parentThreadId?: string;
     autoAcceptProof: string;
     updatedAt: string;
     isVerified: boolean;
