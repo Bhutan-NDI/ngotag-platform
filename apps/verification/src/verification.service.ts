@@ -526,6 +526,7 @@ export class VerificationService {
         cmd: 'agent-send-out-of-band-proof-request'
       };
 
+      this.logger.log(`_sendOutOfBandProofRequest: nats call payload: ${JSON.stringify(payload)}`);
       return await this.natsCall(pattern, payload);
 
     } catch (error) {

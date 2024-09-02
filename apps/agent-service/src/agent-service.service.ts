@@ -1398,6 +1398,7 @@ export class AgentServiceService {
   ): Promise<object> {
     try {
       const getApiKey = await this.getOrgAgentApiKey(orgId);
+      this.logger.log(`sendOutOfBandProofRequest: payload: ${JSON.stringify(proofRequestPayload)}`);
       const sendProofRequest = await this.commonService
         .httpPost(url, proofRequestPayload, { headers: { authorization: getApiKey } })
         .then(async (response) => response);
