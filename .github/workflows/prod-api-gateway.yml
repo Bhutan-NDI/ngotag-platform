@@ -71,7 +71,7 @@ jobs:
         run: |
           FAMILY=$(sed -n 's/.*"family": "\(.*\)",/\1/p' prod-taskdef/api-gateway-service.json)
           NAME=$(sed -n 's/.*"name": "\(.*\)",/\1/p' prod-taskdef/api-gateway-service.json)
-          SERVICE_NAME="api_gateway-service"
+          SERVICE_NAME="api_gateway-Service"
           echo "SERVICE_NAME: $SERVICE_NAME"
 
           # Replace placeholders in the JSON file

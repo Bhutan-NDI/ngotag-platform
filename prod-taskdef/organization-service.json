@@ -1,5 +1,5 @@
 {
-    "family": "PROD_ORGANIZATION_SERVICE_TASKDEFINITION",
+    "family": "PRODUCTION_ORGANIZATION_SERVICE_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "organization",
@@ -22,7 +22,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/PROD_ORGANIZATION_SERVICE_TASKDEFINITION",
+                    "awslogs-group": "/ecs/PRODUCTION_ORGANIZATION_SERVICE_TASKDEFINITION",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },

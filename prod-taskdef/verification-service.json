@@ -1,5 +1,5 @@
 {
-    "family": "PROD_VERIFICATION_SERVICE_TASKDEFINITION",
+    "family": "PRODUCTION_VERIFICATION_SERVICE_TASKDEFINITION",
     "containerDefinitions": [
         {
             "name": "verification",
@@ -22,7 +22,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/PROD_VERIFICATION_SERVICE_TASKDEFINITION",
+                    "awslogs-group": "/ecs/PRODUCTION_VERIFICATION_SERVICE_TASKDEFINITION",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },

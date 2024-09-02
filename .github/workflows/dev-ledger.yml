@@ -3,7 +3,7 @@ name:  Build and deploy LEDGER app to DEV ECS
 on:
   push:
     branches:
-      - pipeline-implementation
+      - develop
     paths:
       - 'apps/ledger/**'
   workflow_dispatch:

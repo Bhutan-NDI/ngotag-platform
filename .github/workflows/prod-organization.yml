@@ -71,7 +71,7 @@ jobs:
         run: |
           FAMILY=$(sed -n 's/.*"family": "\(.*\)",/\1/p' prod-taskdef/organization-service.json)
           NAME=$(sed -n 's/.*"name": "\(.*\)",/\1/p' prod-taskdef/organization-service.json)
-          SERVICE_NAME="organization_service"
+          SERVICE_NAME="organization-service"
           
           # Replace placeholders in the JSON file
           sed -e "s;%BUILD_NUMBER%;${{ github.run_number }};g" -e "s;%REPOSITORY_URI%;${REPOSITORY_URI};g" prod-taskdef/organization-service.json > ${GITHUB_WORKSPACE}/${NAME}-v_${{ github.run_number }}.json

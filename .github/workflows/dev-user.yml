@@ -3,7 +3,7 @@ name:  Build and deploy USER app to DEV ECS
 on:
   push:
     branches:
-      - pipeline-implementation
+      - develop
     paths:
       - 'apps/user/**'
   workflow_dispatch:

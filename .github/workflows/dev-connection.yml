@@ -3,7 +3,7 @@ name:  Build and deploy CONNECTION app to DEV ECS
 on:
   push:
     branches:
-      - pipeline-implementation
+      - develop
     paths:
       - 'apps/connection/**'
   workflow_dispatch:

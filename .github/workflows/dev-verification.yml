@@ -3,7 +3,7 @@ name:  Build and deploy VERIFICATION app to DEV ECS
 on:
   push:
     branches:
-      - pipeline-implementation
+      - develop
     paths:
       - 'apps/verification/**'
   workflow_dispatch:

@@ -3,7 +3,7 @@ name:  Build and deploy ISSUANCE app to DEV ECS
 on:
   push:
     branches:
-      - pipeline-implementation
+      - develop
     paths:
       - 'apps/issuance/**'
   workflow_dispatch:

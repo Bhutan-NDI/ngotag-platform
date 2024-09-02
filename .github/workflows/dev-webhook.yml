@@ -3,7 +3,7 @@ name: Build and deploy WEBHOOK  app to DEV  ECS
 on:
   push:
     branches:
-      - pipeline-implementation
+      - develop
     paths:
        - 'apps/webhook/**'
   workflow_dispatch:

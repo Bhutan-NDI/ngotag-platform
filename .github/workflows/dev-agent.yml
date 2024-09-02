@@ -3,7 +3,7 @@ name:  Build and deploy AGENT app to DEV ECS
 on:
   push:
     branches:
-      - pipeline-implementation
+      - develop
     paths:
       - 'apps/agent-service/**'
   workflow_dispatch:

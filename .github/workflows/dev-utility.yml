@@ -3,7 +3,7 @@ name:  Build and deploy UTILITY app to DEV ECS
 on:
   push:
     branches:
-      - pipeline-implementation
+      - develop
     paths:
       - 'apps/utility/**'
   workflow_dispatch:
