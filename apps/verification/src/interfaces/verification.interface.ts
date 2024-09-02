@@ -135,6 +135,7 @@ export interface IPresentationExchangeProofFormats {
 export interface ISendPresentationExchangeProofRequestPayload {
     protocolVersion: string;
     comment: string;
+    parentThreadId?: string;
     proofFormats: IPresentationExchangeProofFormats;
     autoAcceptProof: string;
     label?: string;
