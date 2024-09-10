@@ -11,7 +11,6 @@ import { getNatsOptions } from '@credebl/common/nats.config';
 import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { CommonConstants } from '@credebl/common/common.constant';
 // import { nkeyAuthenticator } from 'nats';
-import { CommonConstants } from '@credebl/common/common.constant';
 
 @Module({
   imports: [

@@ -1,6 +1,5 @@
 import { NATSReconnects } from '@credebl/enum/enum';
 import { Authenticator, nkeyAuthenticator } from 'nats';
-import { CommonConstants } from './common.constant';
 
 export const getNatsOptions = (
   serviceName: string, nkeySeed?: string

@@ -17,8 +17,6 @@ import { CacheModule } from '@nestjs/cache-manager';
 import { getNatsOptions } from '@credebl/common/nats.config';
 import { ClientRegistrationService } from '@credebl/client-registration';
 import { KeycloakUrlService } from '@credebl/keycloak-url';
-import { CommonConstants } from '@credebl/common/common.constant';
-
 import { AwsService } from '@credebl/aws';
 import { CommonConstants } from '@credebl/common/common.constant';
 @Module({
