@@ -1,6 +1,6 @@
 import { IResponse } from '@credebl/common/interfaces/response.interface';
 import { ResponseMessages } from '@credebl/common/response-messages';
-import { Controller, Post, Logger, Body, UseGuards, HttpStatus, Res, Get, Param, UseFilters, Query, Inject, ParseUUIDPipe, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Logger, Body, UseGuards, HttpStatus, Res, Get, Param, UseFilters, Query, Inject, ParseUUIDPipe, BadRequestException, Delete } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiExcludeEndpoint, ApiForbiddenResponse, ApiOperation, ApiQuery, ApiResponse, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { User } from '../authz/decorators/user.decorator';
@@ -21,7 +21,8 @@ import { IConnectionSearchCriteria } from '../interfaces/IConnectionSearch.inter
 import { SortFields } from 'apps/connection/src/enum/connection.enum';
 import { ClientProxy} from '@nestjs/microservices';
 import { BasicMessageDto, QuestionAnswerWebhookDto, QuestionDto} from './dtos/question-answer.dto';
-
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { user } from '@prisma/client';
 @UseFilters(CustomExceptionFilter)
 @Controller()
 @ApiTags('connections')
@@ -281,7 +282,11 @@ export class ConnectionController {
     this.logger.log(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
 
     this.logger.debug(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
-    
+  
+    if (orgId && 'default' === connectionDto?.contextCorrelationId) {
+      connectionDto.orgId = orgId;
+    }
+
     const connectionData = await this.connectionService.getConnectionWebhook(connectionDto, orgId).catch(error => {
         this.logger.debug(`error in saving connection webhook ::: ${JSON.stringify(error)}`);
      });
@@ -290,11 +295,11 @@ export class ConnectionController {
       message: ResponseMessages.connection.success.create,
       data: connectionData
     };
-    const webhookUrl = await this.connectionService._getWebhookUrl(connectionDto.contextCorrelationId).catch(error => {
-        this.logger.debug(`error in getting webhook url ::: ${JSON.stringify(error)}`);
-  
+    const webhookUrl = await this.connectionService._getWebhookUrl(connectionDto?.contextCorrelationId, orgId).catch(error => {
+        this.logger.debug(`error in getting webhook url ::: ${JSON.stringify(error)}`); 
+        
     });
-    if (webhookUrl) {
+    if (webhookUrl) {      
         await this.connectionService._postWebhookResponse(webhookUrl, { data: connectionDto }).catch(error => {
             this.logger.debug(`error in posting webhook  response to webhook url ::: ${JSON.stringify(error)}`);
         });
@@ -323,10 +328,11 @@ export class ConnectionController {
       message: ResponseMessages.connection.success.create,
       data: ''
     };
-    const webhookUrl = await this.connectionService._getWebhookUrl(questionAnswerWebhookDto.contextCorrelationId).catch(error => {
+    const webhookUrl = await this.connectionService._getWebhookUrl(questionAnswerWebhookDto?.contextCorrelationId, orgId).catch(error => {
         this.logger.debug(`error in getting webhook url ::: ${JSON.stringify(error)}`);
   
     });
+    
     if (webhookUrl) {
         await this.connectionService._postWebhookResponse(webhookUrl, { data: questionAnswerWebhookDto }).catch(error => {
             this.logger.debug(`error in posting webhook  response to webhook url ::: ${JSON.stringify(error)}`);
@@ -335,8 +341,35 @@ export class ConnectionController {
     return res.status(HttpStatus.CREATED).json(finalResponse);
   }
 
+  @Delete('/orgs/:orgId/connections')
+  @ApiOperation({ summary: 'Delete connection record', description: 'Delete connections by orgId' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  @ApiBearerAuth()
+  @Roles(OrgRoles.OWNER)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  async deleteConnectionsByOrgId(
+    @Param(
+      'orgId',
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    orgId: string,
+    @User() user: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    await this.connectionService.deleteConnectionRecords(orgId, user);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.connection.success.deleteConnectionRecord
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
   @Post('/orgs/:orgId/basic-message/:connectionId')
-    @ApiOperation({ summary: '', description: 'Send basic message to connection' })
+    @ApiOperation({ summary: 'Send basic message', description: 'Send basic message' })
     @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
     @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER, OrgRoles.VERIFIER, OrgRoles.MEMBER, OrgRoles.HOLDER, OrgRoles.SUPER_ADMIN, OrgRoles.PLATFORM_ADMIN)
     @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
@@ -353,7 +386,7 @@ export class ConnectionController {
         const basicMesgResponse = await this.connectionService.sendBasicMessage(basicMessageDto);
         const finalResponse: IResponse = {
             statusCode: HttpStatus.CREATED,
-            message: ResponseMessages.connection.success.basicMessage, // TODO
+            message: ResponseMessages.connection.success.basicMessage,
             data: basicMesgResponse
         };
         return res.status(HttpStatus.CREATED).json(finalResponse);

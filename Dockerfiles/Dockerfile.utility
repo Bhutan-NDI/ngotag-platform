@@ -1,8 +1,6 @@
 # Stage 1: Build the application
 FROM node:18-slim as build
 RUN npm install -g pnpm
-RUN apt-get update
-RUN apt-get install -y openssl
 
 RUN apt-get update -y
 RUN apt-get --no-install-recommends install -y openssl
@@ -18,7 +16,7 @@ RUN pnpm install
 # Copy the rest of the application code
 COPY . .
 # RUN cd libs/prisma-service && npx prisma migrate deploy && npx prisma generate
-RUN cd libs/prisma-service && npx prisma migrate && npx prisma generate
+RUN cd libs/prisma-service && npx prisma migrate deploy && npx prisma generate
 
 # Build the user service
 RUN pnpm run build utility
@@ -28,7 +26,6 @@ FROM node:18-slim
 
 RUN apt-get update -y
 RUN apt-get --no-install-recommends install -y openssl
-
 # Set the working directory
 WORKDIR /app
 RUN npm install -g pnpm

@@ -26,7 +26,7 @@ import { UserOrgRolesService } from '@credebl/user-org-roles';
 import { UserRepository } from '../repositories/user.repository';
 import { VerifyEmailTokenDto } from '../dtos/verify-email.dto';
 import { sendEmail } from '@credebl/common/send-grid-helper-file';
-import { user } from '@prisma/client';
+import { RecordType, user } from '@prisma/client';
 import {
   Attribute,
   ICheckUserDetails,
@@ -40,14 +40,16 @@ import {
     IUsersProfile,
     IUserResetPassword,
     IPuppeteerOption,
-    IShareDegreeCertificateRes
+    IShareDegreeCertificateRes,
+    IUserDeletedActivity,
+    UserKeycloakId
 } from '../interfaces/user.interface';
 import { AcceptRejectInvitationDto } from '../dtos/accept-reject-invitation.dto';
 import { UserActivityService } from '@credebl/user-activity';
 import { SupabaseService } from '@credebl/supabase';
 import { UserDevicesRepository } from '../repositories/user-device.repository';
 import { v4 as uuidv4 } from 'uuid';
-import { EcosystemConfigSettings, UserCertificateId } from '@credebl/enum/enum';
+import { EcosystemConfigSettings, Invitation, UserCertificateId, UserRole } from '@credebl/enum/enum';
 import { WinnerTemplate } from '../templates/winner-template';
 import { ParticipantTemplate } from '../templates/participant-template';
 import { ArbiterTemplate } from '../templates/arbiter-template';
@@ -57,9 +59,14 @@ import { AwsService } from '@credebl/aws';
 import puppeteer from 'puppeteer';
 import { WorldRecordTemplate } from '../templates/world-record-template';
 import { IUsersActivity } from 'libs/user-activity/interface';
-import { ISendVerificationEmail, ISignInUser, IVerifyUserEmail, IUserInvitations, IResetPasswordResponse } from '@credebl/common/interfaces/user.interface';
+import { ISendVerificationEmail, ISignInUser, IVerifyUserEmail, IUserInvitations, IResetPasswordResponse, ISignUpUserResponse } from '@credebl/common/interfaces/user.interface';
 import { AddPasskeyDetailsDto } from 'apps/api-gateway/src/user/dto/add-user.dto';
 import { URLUserResetPasswordTemplate } from '../templates/reset-password-template';
+import { toNumber } from '@credebl/common/cast.helper';
+import * as jwt from 'jsonwebtoken';
+import { EventPinnacle } from '../templates/event-pinnacle';
+import { EventCertificate } from '../templates/event-certificates';
+import * as QRCode from 'qrcode';
 
 @Injectable()
 export class UserService {
@@ -83,40 +90,56 @@ export class UserService {
    * @param userEmailVerification
    * @returns
    */
+
   async sendVerificationMail(userEmailVerification: ISendVerificationEmail): Promise<user> {
     try {
-      const { email } = userEmailVerification;
-
+      const { email, brandLogoUrl, platformName, clientId, clientSecret } = userEmailVerification;
+  
       if ('PROD' === process.env.PLATFORM_PROFILE_MODE) {
         // eslint-disable-next-line prefer-destructuring
         const domain = email.split('@')[1];
-
         if (DISALLOWED_EMAIL_DOMAIN.includes(domain)) {
           throw new BadRequestException(ResponseMessages.user.error.InvalidEmailDomain);
         }
       }
+  
       const userDetails = await this.userRepository.checkUserExist(email);
-
-      if (userDetails?.isEmailVerified) {
-        throw new ConflictException(ResponseMessages.user.error.exists);
+  
+      if (userDetails) {
+        if (userDetails.isEmailVerified) {
+          throw new ConflictException(ResponseMessages.user.error.exists);
+        } else {
+          throw new ConflictException(ResponseMessages.user.error.verificationAlreadySent);
+        }
       }
-
-      if (userDetails && !userDetails.isEmailVerified) {
-        throw new ConflictException(ResponseMessages.user.error.verificationAlreadySent);
-      }
-
+  
       const verifyCode = uuidv4();
-      const uniqueUsername = await this.createUsername(email, verifyCode);
-      userEmailVerification.username = uniqueUsername;
-      const resUser = await this.userRepository.createUser(userEmailVerification, verifyCode);
+      let sendVerificationMail: boolean;
 
       try {
-        await this.sendEmailForVerification(email, resUser.verificationCode);
+
+        const token = await this.clientRegistrationService.getManagementToken(clientId, clientSecret);
+        const getClientData = await this.clientRegistrationService.getClientRedirectUrl(clientId, token);
+
+        const [redirectUrl] = getClientData[0]?.redirectUris || [];
+  
+        if (!redirectUrl) {
+          throw new NotFoundException(ResponseMessages.user.error.redirectUrlNotFound);
+        }
+  
+        sendVerificationMail = await this.sendEmailForVerification(email, verifyCode, redirectUrl, clientId, brandLogoUrl, platformName);
       } catch (error) {
         throw new InternalServerErrorException(ResponseMessages.user.error.emailSend);
       }
-
-      return resUser;
+  
+      if (sendVerificationMail) {
+        const uniqueUsername = await this.createUsername(email, verifyCode);
+        userEmailVerification.username = uniqueUsername;
+        userEmailVerification.clientId = clientId;
+        userEmailVerification.clientSecret = clientSecret;
+        const resUser = await this.userRepository.createUser(userEmailVerification, verifyCode);
+        return resUser;
+      } 
     } catch (error) {
       this.logger.error(`In Create User : ${JSON.stringify(error)}`);
       throw new RpcException(error.response ? error.response : error);
@@ -153,17 +176,19 @@ export class UserService {
    * @returns
    */
 
-  async sendEmailForVerification(email: string, verificationCode: string): Promise<boolean> {
+  async sendEmailForVerification(email: string, verificationCode: string, redirectUrl: string, clientId: string, brandLogoUrl:string, platformName: string): Promise<boolean> {
     try {
       const platformConfigData = await this.prisma.platform_config.findMany();
 
+      const decryptClientId = await this.commonService.decryptPassword(clientId);
       const urlEmailTemplate = new URLUserEmailTemplate();
       const emailData = new EmailDto();
       emailData.emailFrom = platformConfigData[0].emailFrom;
       emailData.emailTo = email;
-      emailData.emailSubject = `[${process.env.PLATFORM_NAME}] Verify your email to activate your account`;
+      const platform = platformName || process.env.PLATFORM_NAME;
+      emailData.emailSubject = `[${platform}] Verify your email to activate your account`;
 
-      emailData.emailHtml = await urlEmailTemplate.getUserURLTemplate(email, verificationCode);
+      emailData.emailHtml = await urlEmailTemplate.getUserURLTemplate(email, verificationCode, redirectUrl, decryptClientId, brandLogoUrl, platformName);
       const isEmailSent = await sendEmail(emailData);
       if (isEmailSent) {
         return isEmailSent;
@@ -210,7 +235,7 @@ export class UserService {
     }
   }
 
-  async createUserForToken(userInfo: IUserInformation): Promise<string> {
+  async createUserForToken(userInfo: IUserInformation): Promise<ISignUpUserResponse> {
     try {
       const { email } = userInfo;
       if (!userInfo.email) {
@@ -235,11 +260,9 @@ export class UserService {
       if (!userDetails) {
         throw new NotFoundException(ResponseMessages.user.error.adduser);
       }
-
-      let keycloakDetails = null;
-
-      const token = await this.clientRegistrationService.getManagementToken();
-
+   let keycloakDetails = null;
+      
+   const token = await this.clientRegistrationService.getManagementToken(checkUserDetails.clientId, checkUserDetails.clientSecret);
       if (userInfo.isPasskey) {
         const resUser = await this.userRepository.addUserPassword(email.toLowerCase(), userInfo.password);
         const userDetails = await this.userRepository.getUserDetails(email.toLowerCase());
@@ -271,6 +294,15 @@ export class UserService {
         keycloakDetails.keycloakUserId.toString()
       );
 
+      if (userInfo?.isHolder) {
+        const getUserRole = await this.userRepository.getUserRole(UserRole.HOLDER);
+
+        if (!getUserRole) {
+          throw new NotFoundException(ResponseMessages.user.error.userRoleNotFound);
+        }
+        await this.userRepository.storeUserRole(userDetails.id, getUserRole?.id);
+      }
+
       const realmRoles = await this.clientRegistrationService.getAllRealmRoles(token);
       
       const holderRole = realmRoles.filter(role => role.name === OrgRoles.HOLDER);
@@ -287,7 +319,7 @@ export class UserService {
       const holderOrgRole = await this.orgRoleService.getRole(OrgRoles.HOLDER);
       await this.userOrgRoleService.createUserOrgRole(userDetails.id, holderOrgRole.id, null, holderRoleData.id);
 
-      return ResponseMessages.user.success.signUpUser;
+      return { userId: userDetails?.id };
     } catch (error) {
       this.logger.error(`Error in createUserForToken: ${JSON.stringify(error)}`);
       throw new RpcException(error.response ? error.response : error);
@@ -378,7 +410,9 @@ export class UserService {
 
     try {
         try {
-          const tokenResponse = await this.clientRegistrationService.getAccessToken(refreshToken);
+          const data = jwt.decode(refreshToken) as jwt.JwtPayload;
+          const userByKeycloakId = await this.userRepository.getUserByKeycloakId(data?.sub);
+          const tokenResponse = await this.clientRegistrationService.getAccessToken(refreshToken, userByKeycloakId?.['clientId'], userByKeycloakId?.['clientSecret']);
           return tokenResponse;
         } catch (error) {
           throw new BadRequestException(ResponseMessages.user.error.invalidRefreshToken);
@@ -502,7 +536,8 @@ export class UserService {
       const decryptedPassword = await this.commonService.decryptPassword(password);
       try {    
         
-        const authToken = await this.clientRegistrationService.getManagementToken();  
+
+        const authToken = await this.clientRegistrationService.getManagementToken(userData.clientId, userData.clientSecret);  
         userData.password = decryptedPassword;
         if (userData.keycloakUserId) {
           await this.clientRegistrationService.resetPasswordOfUser(userData, process.env.KEYCLOAK_REALM, authToken);
@@ -565,7 +600,7 @@ export class UserService {
         userData.password = newDecryptedPassword;
         try {    
           let keycloakDetails = null;    
-          const token = await this.clientRegistrationService.getManagementToken();  
+          const token = await this.clientRegistrationService.getManagementToken(userData.clientId, userData.clientSecret);  
 
           if (userData.keycloakUserId) {
 
@@ -603,7 +638,7 @@ export class UserService {
       if (userData.keycloakUserId) {
 
         try {
-          const tokenResponse = await this.clientRegistrationService.getUserToken(email, password);
+          const tokenResponse = await this.clientRegistrationService.getUserToken(email, password, userData.clientId, userData.clientSecret);
           tokenResponse.isRegisteredToSupabase = false;
           return tokenResponse;
         } catch (error) {
@@ -823,6 +858,15 @@ export class UserService {
   async acceptRejectInvitations(acceptRejectInvitation: AcceptRejectInvitationDto, userId: string): Promise<IUserInvitations> {
     try {
       const userData = await this.userRepository.getUserById(userId);
+     
+      if (Invitation.ACCEPTED === acceptRejectInvitation.status) {
+        const payload = {userId};
+        const TotalOrgs = await this._getTotalOrgCount(payload);
+  
+        if (TotalOrgs >= toNumber(`${process.env.MAX_ORG_LIMIT}`)) {
+        throw new BadRequestException(ResponseMessages.user.error.userOrgsLimit);
+         }
+      }
       return this.fetchInvitationsStatus(acceptRejectInvitation, userData.keycloakUserId, userData.email, userId);
     } catch (error) {
       this.logger.error(`acceptRejectInvitations: ${error}`);
@@ -830,8 +874,29 @@ export class UserService {
     }
   }
 
+  async  _getTotalOrgCount(payload): Promise<number> {
+    const pattern = { cmd: 'get-organizations-count' };
+
+    const getOrganizationCount = await this.userServiceProxy
+      .send(pattern, payload)
+      .toPromise()
+      .catch((error) => {
+        this.logger.error(`catch: ${JSON.stringify(error)}`);
+        throw new HttpException(
+          {
+            status: error.status,
+            error: error.message
+          },
+          error.status
+        );
+      });
+
+    return getOrganizationCount;
+  }
+
   async shareUserCertificate(shareUserCertificate: IShareUserCertificate): Promise<string> {
 
+    let template;
     const attributeArray = [];
     let attributeJson = {};
     const attributePromises = shareUserCertificate.attributes.map(async (iterator: Attribute) => {
@@ -841,8 +906,6 @@ export class UserService {
       attributeArray.push(attributeJson);
     });
     await Promise.all(attributePromises);
-    let template;
-
     switch (shareUserCertificate.schemaId.split(':')[2]) {
       case UserCertificateId.WINNER:
         // eslint-disable-next-line no-case-declarations
@@ -864,22 +927,35 @@ export class UserService {
         const userWorldRecordTemplate = new WorldRecordTemplate();
         template = await userWorldRecordTemplate.getWorldRecordTemplate(attributeArray);
         break;
+        case UserCertificateId.AYANWORKS_EVENT:
+           // eslint-disable-next-line no-case-declarations
+           const QRDetails = await this.getShorteningURL(shareUserCertificate, attributeArray);
+
+           if (shareUserCertificate.attributes.some(item => item.value.toLocaleLowerCase().includes("pinnacle"))) {
+            const userPinnacleTemplate = new EventPinnacle();
+            template = await userPinnacleTemplate.getPinnacleWinner(attributeArray, QRDetails);
+          } else {
+            const userCertificateTemplate = new EventCertificate();
+            template = await userCertificateTemplate.getCertificateWinner(attributeArray, QRDetails);
+          }
+          break;  
       default:
         throw new NotFoundException('error in get attributes');
     }
 
-    const option: IPuppeteerOption = {height: 0, width: 1000};
+    //Need to handle the option for all type of certificate
+    const option: IPuppeteerOption = {height: 974, width: 1606};
 
     const imageBuffer = 
     await this.convertHtmlToImage(template, shareUserCertificate.credentialId, option);
-    const verifyCode = uuidv4();
 
     const imageUrl = await this.awsService.uploadUserCertificate(
       imageBuffer,
       'svg',
       'certificates',
       process.env.AWS_PUBLIC_BUCKET_NAME,
-      'base64'
+      'base64',
+      'certificates'
     );
     const existCredentialId = await this.userRepository.getUserCredentialsById(shareUserCertificate.credentialId);
     
@@ -905,7 +981,7 @@ export class UserService {
     const browser = await puppeteer.launch({
       executablePath: '/usr/bin/google-chrome', 
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      protocolTimeout: 200000,
+      protocolTimeout: 800000, //initial - 200000
       headless: true
     });
 
@@ -919,6 +995,22 @@ export class UserService {
     return screenshot;
   }
 
+  //Need to add interface
+  async getShorteningURL(shareUserCertificate, attributeArray): Promise<unknown> {
+    const urlObject = {
+      schemaId: shareUserCertificate.schemaId,
+      credDefId: shareUserCertificate.credDefId,
+      attribute: attributeArray,
+      credentialId:shareUserCertificate.credentialId,
+      email:attributeArray.find((attr) => "email" in attr).email
+    };
+
+    const qrCodeOptions = { type: 'image/png' };
+    const encodedData = Buffer.from(JSON.stringify(shareUserCertificate)).toString('base64');
+      const qrCode = await QRCode.toDataURL(`https://credebl.id/c_v?${encodedData}`, qrCodeOptions);
+
+    return qrCode;
+  }
   /**
    *
    * @param acceptRejectInvitation
@@ -1111,6 +1203,56 @@ export class UserService {
     } catch (error) {
       this.logger.error(`update platform settings: ${JSON.stringify(error)}`);
       throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  async updateOrgDeletedActivity(orgId: string, userId: string, deletedBy: string, recordType: RecordType, userEmail: string, txnMetadata: object): Promise<IUserDeletedActivity> {
+    try {
+      return await this.userRepository.updateOrgDeletedActivity(orgId, userId, deletedBy, recordType, userEmail, txnMetadata);
+    } catch (error) {
+      this.logger.error(`In updateOrgDeletedActivity : ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  async getUserDetails(userId: string): Promise<string> {
+    try {
+      const getUserDetails = await this.userRepository.getUserDetailsByUserId(userId);
+      const userEmail = getUserDetails.email;
+      return userEmail;
+    } catch (error) {
+      this.logger.error(`In get user details by user Id : ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  async getUserKeycloakIdByEmail(userEmails: string[]): Promise<UserKeycloakId[]> {
+    try {
+     
+      const getkeycloakUserIds = await this.userRepository.getUserKeycloak(userEmails);
+      return getkeycloakUserIds;
+    } catch (error) {
+      this.logger.error(`In getUserKeycloakIdByEmail : ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  async getUserByUserIdInKeycloak(email: string): Promise<string> {
+    try {
+     
+      const userData = await this.userRepository.checkUserExist(email.toLowerCase());
+
+      if (!userData) {
+        throw new NotFoundException(ResponseMessages.user.error.notFound);
+      }
+
+      const token = await this.clientRegistrationService.getManagementToken(userData?.clientId, userData?.clientSecret);
+      const getClientData = await this.clientRegistrationService.getUserInfoByUserId(userData?.keycloakUserId, token);
+
+      return getClientData;
+    } catch (error) {
+      this.logger.error(`In getUserByUserIdInKeycloak : ${JSON.stringify(error)}`);
+      throw error;
     }
   }
 }

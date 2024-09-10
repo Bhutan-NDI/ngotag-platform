@@ -93,7 +93,7 @@
     {
       "name": "Bcovrin Testnet",
       "networkType": "testnet",
-      "poolConfig": "http://test.bcovrin.vonx.io/genesis",
+      "poolConfig": "https://raw.githubusercontent.com/bcgov/von-network/main/BCovrin/genesis_test",
       "isActive": true,
       "networkString": "testnet",
       "nymTxnEndpoint": "http://test.bcovrin.vonx.io/register",
@@ -134,6 +134,15 @@
       "networkString": "testnet",
       "nymTxnEndpoint": "",
       "indyNamespace": "polygon:testnet"
+    },
+    {
+      "name": "NA",
+      "networkType": "NA",
+      "poolConfig": "NA",
+      "isActive": true,
+      "networkString": "NA",
+      "nymTxnEndpoint": "NA",
+      "indyNamespace": "no_ledger"
     }
   ],
   "endorseData": [
@@ -196,34 +205,38 @@
     {
       "name": "indy",
       "details":  {
-        "bcovrin": {
-            "testnet":"did:indy:bcovrin:testnet"
-        },
-        "indicio": {
-            "testnet":"did:indy:indicio:testnet",
-            "demonet":"did:indy:indicio:demonet",
-            "mainnet":"did:indy:indicio:mainnet"
+        "did:indy": {
+            "bcovrin:testnet":"did:indy:bcovrin:testnet",
+            "indicio:demonet":"did:indy:indicio:demonet",
+            "indicio:mainnet":"did:indy:indicio:mainnet",
+            "indicio:testnet":"did:indy:indicio:testnet"
         }
     }
     },
     {
       "name": "polygon",
-      "details": {
-        "mainnet": "did:polygon:mainnet",
-        "testnet": "did:polygon:testnet"
+      "details":  {
+        "did:polygon": {
+            "mainnet":"did:polygon:mainnet",
+            "testnet":"did:polygon:testnet"
+        }
     }
     },
     {
-      "name": "key",
-      "details": {
-      "key": "did:key"
-      }
+      "name": "noLedger",
+      "details":  {
+        "did:key": "did:key",
+        "did:web": "did:web"
+    }
+    }
+  ],
+
+  "userRoleData": [
+    {
+      "role": "HOLDER"
     },
     {
-      "name": "web",
-      "details": {
-      "web": "did:web"
-      }
+      "role": "DEFAULT_USER"
     }
   ]
 }

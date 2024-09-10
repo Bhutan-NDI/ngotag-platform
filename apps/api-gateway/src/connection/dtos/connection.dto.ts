@@ -209,6 +209,10 @@ export class ConnectionDto {
 
     @ApiPropertyOptional()
     @IsOptional()
+    orgId: string;
+
+    @ApiPropertyOptional()
+    @IsOptional()
     outOfBandRecord?: object;
 
     @ApiPropertyOptional()

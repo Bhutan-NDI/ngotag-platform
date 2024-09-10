@@ -3,7 +3,7 @@ import { Authenticator, nkeyAuthenticator } from 'nats';
 import { CommonConstants } from './common.constant';
 
 export const getNatsOptions = (
-  serviceName?: string, nkeySeed?: string
+  serviceName: string, nkeySeed?: string
 ): {
   servers: string[];
   authenticator?: Authenticator;
@@ -15,7 +15,7 @@ export const getNatsOptions = (
     servers: `${process.env.NATS_URL}`.split(','),
     maxReconnectAttempts: NATSReconnects.maxReconnectAttempts,
     reconnectTimeWait: NATSReconnects.reconnectTimeWait,
-    queue: `${CommonConstants.API_GATEWAY_SERVICE}`
+    queue: serviceName
   };
 
   if (nkeySeed) {

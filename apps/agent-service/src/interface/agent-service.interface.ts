@@ -1,3 +1,5 @@
+import { AgentSpinUpStatus } from '@credebl/enum/enum';
+import { Prisma } from '@prisma/client';
 import { UserRoleOrgPermsDto } from 'apps/api-gateway/src/dtos/user-role-org-perms.dto';
 
 export interface IAgentSpinupDto {
@@ -22,7 +24,20 @@ export interface IAgentSpinupDto {
   tenant?: boolean;
   ledgerName?: string[];
   platformAdminEmail?: string;
+  isOnPremises?: boolean;
+  agentEndpoint?: string;
   apiKey?: string;
+  orgAgentType?: string;
+  userId?: string;
+}
+
+export interface IAgentConfigure {
+  walletName: string;
+  did: string;
+  agentEndpoint: string;
+  apiKey: string;
+  orgId: string;
+  network?: string;
 }
 
 export interface IOutOfBandCredentialOffer {
@@ -141,7 +156,7 @@ export interface IWalletProvision {
   agentType: string;
   orgName: string;
   indyLedger: string;
-  afjVersion: string;
+  credoImage: string;
   protocol: string;
   tenant: boolean;
   inboundEndpoint: string;
@@ -182,6 +197,7 @@ export interface IStoreOrgAgentDetails {
   tenantId?: string;
   ledgerId?: string[];
   agentType?: string;
+  userId?: string;
 }
 
 export interface IStoreDidDetails {
@@ -325,7 +341,7 @@ export interface IAgentStatus {
 }
 
 export interface ISchema {
-  uri:string;
+  uri: string;
 }
 export interface IFields {
   path: string[];
@@ -335,29 +351,26 @@ export interface IConstraints {
 }
 
 export interface IInputDescriptors {
-
-  id:string;
-  name?:string;
-  purpose?:string;
-  schema:ISchema[];
-  constraints?:IConstraints;
-
+  id: string;
+  name?: string;
+  purpose?: string;
+  schema: ISchema[];
+  constraints?: IConstraints;
 }
 
 export interface IProofRequestPresentationDefinition {
-  id:string;
+  id: string;
   name: string;
-  input_descriptors:IInputDescriptors[];
+  input_descriptors: IInputDescriptors[];
 }
 
 export interface IPresentationExchange {
-  presentationDefinition:IProofRequestPresentationDefinition;
- 
+  presentationDefinition: IProofRequestPresentationDefinition;
 }
 
 interface IProofFormats {
   indy?: IndyProof;
-  presentationExchange? : IPresentationExchange;
+  presentationExchange?: IPresentationExchange;
 }
 
 interface IndyProof {
@@ -537,6 +550,9 @@ export interface IQuestionPayload {
   connectionId: string;
   tenantId: string;
 }
+export interface IBasicMessage {
+  content: string;
+}
 interface Ledger {
   id: string;
   createDateTime: string;
@@ -571,6 +587,71 @@ export interface ICreateConnectionInvitation {
   orgId?: string;
 }
 
-export interface IBasicMessage {
-  content: string;
+export interface AgentHealthData {
+  label: string;
+  endpoints: string[];
+  isInitialized: boolean;
+}
+
+export interface IAgentStore {
+  did?: string;
+  verkey?: string;
+  isDidPublic?: boolean;
+  agentSpinUpStatus?: AgentSpinUpStatus;
+  walletName?: string;
+  agentsTypeId?: string;
+  orgId?: string;
+  agentEndPoint?: string;
+  agentId?: string;
+  orgAgentTypeId?: string;
+  ledgerId?: string[];
+  id?: string;
+  apiKey?: string;
+  userId?: string;
+  createdBy?: string;
+  lastChangedBy?: string;
+  didDoc?: string;
+  tenantId?: string;
+}
+
+export interface LedgerNameSpace {
+  id: string;
+  createDateTime: Date;
+  lastChangedDateTime: Date;
+  name: string;
+  networkType: string;
+  poolConfig: string;
+  isActive: boolean;
+  networkString: string;
+  nymTxnEndpoint: string;
+  indyNamespace: string;
+  networkUrl: string;
+}
+
+export interface OrgDid {
+  id: string;
+  createDateTime: Date;
+  createdBy: string;
+  lastChangedDateTime: Date;
+  lastChangedBy: string;
+  orgId: string;
+  isPrimaryDid: boolean;
+  did: string;
+  didDocument: Prisma.JsonValue;
+  orgAgentId: string;
+}
+
+export interface ILedgers {
+    id: string;
+    createDateTime: Date;
+    lastChangedDateTime: Date;
+    name: string;
+    networkType: string;
+    poolConfig: string;
+    isActive: boolean;
+    networkString: string;
+    nymTxnEndpoint: string;
+    indyNamespace: string;
+    networkUrl: string;
+
 }

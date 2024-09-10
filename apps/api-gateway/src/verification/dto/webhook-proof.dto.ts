@@ -72,4 +72,8 @@ export class WebhookPresentationProofDto {
     @ApiPropertyOptional()
     @IsOptional()
     proofData: object;
+
+    @ApiPropertyOptional()
+    @IsOptional()
+    orgId: string;
 }
