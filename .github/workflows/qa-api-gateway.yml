@@ -3,7 +3,7 @@ name: Build and deploy API-GATEWAY app to QA ECS
 on:
   push:
     tags:
-      - 'qa*'
+      - 'qa-api-gateway*'
     
 env:
   ECR_IMAGE_TAG: "API-GATEWAY_V_${{ github.run_number }}"

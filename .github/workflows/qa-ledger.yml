@@ -3,7 +3,7 @@ name: Build and deploy LEDGER  app to QA ECS
 on:
   push:
     tags:
-      - 'qa*'
+      - 'qa-ledger*'
     
 env:
   ECR_IMAGE_TAG: "LEDGER_V_${{ github.run_number }}"

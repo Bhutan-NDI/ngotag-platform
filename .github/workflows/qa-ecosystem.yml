@@ -3,7 +3,7 @@ name: Build and deploy ECOSYSTEM  app to QA ECS
 on:
   push:
     tags:
-      - 'qa'
+      - 'qa-ecosystem*'
     
 env:
   ECR_IMAGE_TAG: "ECOSYSTEM_V_${{ github.run_number }}"

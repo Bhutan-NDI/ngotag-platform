@@ -3,7 +3,7 @@ name: Build and deploy USER  app to QA ECS
 on:
   push:
     tags:
-      - 'qa*'
+      - 'qa-user*'
     
 env:
   ECR_IMAGE_TAG: "USER_V_${{ github.run_number }}"

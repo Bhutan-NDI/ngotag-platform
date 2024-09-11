@@ -4,7 +4,7 @@ name: Build and deploy AGENT  app to QA ECS
 on:
   push:
     tags:
-      - 'qa*'
+      - 'qa-agent-service*'
     
 env:
   ECR_IMAGE_TAG: "AGENT_V_${{ github.run_number }}"

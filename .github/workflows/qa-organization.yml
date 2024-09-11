@@ -3,7 +3,7 @@ name: Build and deploy ORGANIZATION  app to QA ECS
 on:
   push:
     tags:
-      - 'qa*'
+      - 'qa-organization*'
     
 env:
   ECR_IMAGE_TAG: "ORGANIZATION_V_${{ github.run_number }}"
