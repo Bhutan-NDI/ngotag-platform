@@ -9,7 +9,7 @@ env:
   ECR_IMAGE_TAG: "API-GATEWAY_V_${{ github.run_number }}"
   ECR_REPOSITORY: "prod-services"
   AWS_REGION: "ap-southeast-1"
-  CLUSTER: "PROD-NGOTAG-CLUSTER"
+  CLUSTER: "PROD-BACKEND-CLUSTER"
 
 jobs:
   build:
