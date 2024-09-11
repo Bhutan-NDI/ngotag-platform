@@ -11,7 +11,7 @@
             "environment": [],
             "environmentFiles": [
                 {
-                    "value": "arn:aws:s3:::env-prodbucket/.env",
+                    "value": "arn:aws:s3:::env-prodbucket/PROD.env",
                     "type": "s3"
                 }
             ],
@@ -49,11 +49,11 @@
         {
             "name": "AGNET-CONFIG",
             "efsVolumeConfiguration": {
-                "fileSystemId": "fs-07c309727dd8993de",
+                "fileSystemId": "fs-0224b1b9d5777bf1d",
                 "rootDirectory": "/",
                 "transitEncryption": "ENABLED",
                 "authorizationConfig": {
-                    "accessPointId": "fsap-08d8c4b70c9f945ce",
+                    "accessPointId": "fsap-01a39a7ecc928968d",
                     "iam": "DISABLED"
                 }
             }
@@ -61,11 +61,11 @@
         {
             "name": "port-file",
             "efsVolumeConfiguration": {
-                "fileSystemId": "fs-07c309727dd8993de",
+                "fileSystemId": "fs-0224b1b9d5777bf1d",
                 "rootDirectory": "/",
                 "transitEncryption": "ENABLED",
                 "authorizationConfig": {
-                    "accessPointId": "fsap-0a656359818c94728",
+                    "accessPointId": "fsap-0e509a2f6a1296cdc",
                     "iam": "DISABLED"
                 }
             }
