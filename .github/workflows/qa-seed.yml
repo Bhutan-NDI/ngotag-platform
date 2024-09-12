@@ -41,7 +41,7 @@ jobs:
           ECR_REPOSITORY: qa-services
           IMAGE_TAG: "LEDGER_V_${{ github.run_number }}"
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfiles/Dockerfile.ledger .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfiles/Dockerfile.seed .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker image list
           
