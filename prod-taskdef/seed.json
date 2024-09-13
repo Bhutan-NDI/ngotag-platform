@@ -1,5 +1,5 @@
 {
-    "family": "QA_SEED_TASKDEFINITON",
+    "family": "PRODUCTION_SEED_TASKDEFINITON",
     "containerDefinitions": [
         {
             "name": "seed",
@@ -11,7 +11,7 @@
             "environment": [],
             "environmentFiles": [
                 {
-                    "value": "arn:aws:s3:::env-qabucket/.env",
+                    "value": "arn:aws:s3:::env-prodbucket/PROD.env",
                     "type": "s3"
                 }
             ],
@@ -22,7 +22,7 @@
                 "logDriver": "awslogs",
                 "options": {
                     "awslogs-create-group": "true",
-                    "awslogs-group": "/ecs/QA_SEED_TASKDEFINITON",
+                    "awslogs-group": "/ecs/PRODUCTION_SEED_TASKDEFINITON",
                     "awslogs-region": "ap-southeast-1",
                     "awslogs-stream-prefix": "ecs"
                 },

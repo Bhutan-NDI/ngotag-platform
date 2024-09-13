@@ -14,12 +14,13 @@ RUN pnpm i
 COPY . .
 # RUN cd libs/prisma-service && npx prisma migrate deploy && npx prisma generate
 # RUN cd libs/prisma-service && npx prisma migrate && npx prisma generate
-
+RUN chmod 777 /app/libs/prisma-service/prisma/scripts/geo_location_data_import.sh
+RUN chmod 777 /app/libs/prisma-service/prisma/scripts/update_client_credential_data.sh
 
 
 
 # Set the command to run the microservice
-CMD ["sh", "-c", "cd libs/prisma-service && npx prisma migrate deploy && npx prisma generate && npx prisma db seed"]
+CMD ["sh", "-c", "cd libs/prisma-service/prisma && npx prisma migrate deploy && npx prisma generate && npx prisma db seed"]
 
 
 
