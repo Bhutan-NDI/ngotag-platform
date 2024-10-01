@@ -1,27 +1,22 @@
 # Stage 1: Build the application
 FROM node:18-alpine as build
-RUN npm install -g pnpm
-# Set the working directory
-WORKDIR /app
 
-# Copy package.json and package-lock.json
+RUN apk add --no-cache postgresql-client
+RUN npm install -g pnpm --ignore-scripts
+WORKDIR /app
 COPY package.json ./
 
 # Install dependencies
 RUN pnpm i
 
-# Copy the rest of the application code
 COPY . .
-# RUN cd libs/prisma-service && npx prisma migrate deploy && npx prisma generate
-# RUN cd libs/prisma-service && npx prisma migrate && npx prisma generate
-RUN chmod 777 /app/libs/prisma-service/prisma/scripts/geo_location_data_import.sh
-RUN chmod 777 /app/libs/prisma-service/prisma/scripts/update_client_credential_data.sh
 
+
+# Set permissions
+RUN chmod 777 /app/libs/prisma-service/prisma/scripts
+RUN chmod +x /app/libs/prisma-service/prisma/scripts/geo_location_data_import.sh
+RUN chmod +x /app/libs/prisma-service/prisma/scripts/update_client_credential_data.sh
 
 
 # Set the command to run the microservice
-CMD ["sh", "-c", "cd libs/prisma-service/prisma && npx prisma migrate deploy && npx prisma generate && npx prisma db seed"]
-
-
-
-
+CMD ["sh", "-c", "cd libs/prisma-service && npx prisma generate && npx prisma migrate deploy && npx prisma db seed"]
