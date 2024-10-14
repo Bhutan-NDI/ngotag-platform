@@ -138,6 +138,10 @@ export class ProofRequestPresentationDefinition {
   @IsOptional()
   name: string;
 
+  @IsString()
+  @IsOptional()
+  purpose: string;
+
   @ApiProperty({type: () =>  [InputDescriptors]})
   @IsNotEmpty({ message: 'inputDescriptors is required.' })
   @IsArray({ message: 'inputDescriptors must be an array' })
