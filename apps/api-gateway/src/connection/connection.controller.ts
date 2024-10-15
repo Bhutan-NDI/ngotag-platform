@@ -278,7 +278,7 @@ export class ConnectionController {
     @Res() res: Response
   ): Promise<Response> {
     connectionDto.type = 'Connection';
-    this.logger.log(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
+    this.logger.error(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
 
     this.logger.debug(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
     
@@ -293,8 +293,9 @@ export class ConnectionController {
     const webhookUrl = await this.connectionService._getWebhookUrl(connectionDto.contextCorrelationId).catch(error => {
         this.logger.debug(`error in getting webhook url ::: ${JSON.stringify(error)}`);
   
-    });
-    if (webhookUrl) {
+    });   
+    this.logger.error(`we got webhookUrl as ${webhookUrl}`);
+    if (webhookUrl) {      
         await this.connectionService._postWebhookResponse(webhookUrl, { data: connectionDto }).catch(error => {
             this.logger.debug(`error in posting webhook  response to webhook url ::: ${JSON.stringify(error)}`);
         });

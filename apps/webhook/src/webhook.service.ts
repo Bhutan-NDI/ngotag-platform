@@ -107,7 +107,10 @@ export class WebhookService {
 
   async webhookResponse(webhookUrl: string, data: object): Promise<object> {
     try {
-      const webhookResponse = async (): Promise<Response> => this.webhookFunc(webhookUrl, data);
+      if ('Connection' == data['type'] ||  'Connection' == data['@type']) {
+        this.logger.log(`webhookResponse sent to NDI agent sevice with ${JSON.stringify(data, null, 2)}`);
+      }
+      const webhookResponse = async (): Promise<Response> => this.webhookFunc(webhookUrl, data);     
       const response = await AsyncRetry(webhookResponse, this.retryOptions(this.logger));
       return response;
     } catch (error) {
