@@ -1,5 +1,5 @@
 /* eslint-disable camelcase */
-import { BadRequestException, HttpException, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { map } from 'rxjs/operators';
 import { IGetAllProofPresentations, IProofRequestSearchCriteria, IGetProofPresentationById, IProofPresentation, IProofRequestPayload, IRequestProof, ISendProofRequestPayload, IVerifyPresentation, IVerifiedProofData, IInvitation } from './interfaces/verification.interface';
@@ -454,8 +454,8 @@ export class VerificationService {
       }
 
       if (emailId) {
-        await this.sendEmailInBatches(payload, emailId, getAgentDetails, getOrganization);
-        return true;
+        const emailResponse = await this.sendEmailInBatches(payload, emailId, getAgentDetails, getOrganization);
+        return emailResponse;
       } else {
         const presentationProof: IInvitation = await this.generateOOBProofReq(payload);
         const proofRequestInvitationUrl: string = presentationProof.invitationUrl;
@@ -498,13 +498,16 @@ export class VerificationService {
 
 
   // Currently batch size is not used, as length of emails sent is restricted to '10'
-  async sendEmailInBatches(payload: IProofRequestPayload, emailIds: string[], getAgentDetails: org_agents, organizationDetails: organisation): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async sendEmailInBatches(payload: IProofRequestPayload, emailIds: string[], getAgentDetails: org_agents, organizationDetails: organisation): Promise<any> {
     try {
     const accumulatedErrors = [];
+    const accumulatedResponse = [];
 
         for (const email of emailIds) {
           try {
-                await this.sendOutOfBandProofRequest(payload, email, getAgentDetails, organizationDetails);
+                const response = await this.sendOutOfBandProofRequest(payload, email, getAgentDetails, organizationDetails);
+                accumulatedResponse.push({email, ...response});
                 await this.delay(500);
               } catch (error) {
                 this.logger.error(`Error sending email to ${email}::::::`, error);
@@ -517,6 +520,8 @@ export class VerificationService {
       throw new Error(ResponseMessages.verification.error.emailSend);
     }
 
+    return accumulatedResponse;
+
   } catch (error) {
     this.logger.error('[sendEmailInBatches] - error in sending email in batches');
     throw new Error(ResponseMessages.verification.error.batchEmailSend);
@@ -525,8 +530,9 @@ export class VerificationService {
 
 
   // This function is specifically for OOB verification using email
-  async sendOutOfBandProofRequest(payload: IProofRequestPayload, email: string, getAgentDetails: org_agents, organizationDetails: organisation): Promise<boolean> {
-    const getProofPresentation = await this._sendOutOfBandProofRequest(payload);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async sendOutOfBandProofRequest(payload: IProofRequestPayload, email: string, getAgentDetails: org_agents, organizationDetails: organisation): Promise<any> {
+    const getProofPresentation = await this._sendOutOfBandProofRequest(payload);    
 
     if (!getProofPresentation) {
       throw new Error(ResponseMessages.verification.error.proofPresentationNotFound);
@@ -564,7 +570,11 @@ export class VerificationService {
       throw new Error(ResponseMessages.verification.error.emailSend);
     }
 
-    return isEmailSent;
+    return {
+              isEmailSent,
+              outOfBandRecordId: getProofPresentation?.response?.outOfBandRecord?.id,
+              proofRecordThId: getProofPresentation?.response?.proofRecordThId
+          };
   }
 
 
@@ -975,9 +985,14 @@ export class VerificationService {
 
   verificationErrorHandling(error): void {
     if (!error && !error?.status && !error?.status?.message && !error?.status?.message?.error) {
-
       throw new RpcException(error.response ? error.response : error);
     } else {
+       if (error?.message) {
+        throw new RpcException({
+          message: error?.message,
+          statusCode: HttpStatus.INTERNAL_SERVER_ERROR
+        });
+       }
       throw new RpcException({
         message: error?.status?.message?.error?.reason ? error?.status?.message?.error?.reason : error?.status?.message?.error,
         statusCode: error?.status?.code
