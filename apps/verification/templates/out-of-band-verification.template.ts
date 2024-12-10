@@ -57,7 +57,7 @@ export class OutOfBandVerification {
                   
                    </p>
                    <p>
-                     <b>Note:</b> Alternatively, you will find a <b>QR Code image attached</b> to this email. You can open the QR code on another device and scan the QR code using the BHUTAN NDI App on your mobile device. 
+                     <b>Note:</b> Alternatively, you will find a <b>QR Code image attached</b> to this email. You can open the QR code on another device and scan the QR code using the ${process.env.MOBILE_APP} App on your mobile device. 
                     <u> The QR Code is single-use.</u>
                    </p>
                    
