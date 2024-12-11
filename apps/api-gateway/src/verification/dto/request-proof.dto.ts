@@ -69,11 +69,29 @@ class ProofPayload {
     protocolVersion: string;
 }
 
+export class Filter {
+  @ApiProperty()
+  @IsString({ message: 'type must be in string' })
+  @IsNotEmpty({ message: 'type is required.' })
+  type: string;
+
+  @ApiProperty()
+  @IsString({ message: 'pattern must be in string' })
+  @IsNotEmpty({ message: 'pattern is required.' })
+  pattern: string;
+}
 export class Fields {
   @ApiProperty()
   @IsArray()
   @IsNotEmpty({ message: 'path is required.' })
   path: string[];
+
+  @ApiProperty()
+  @IsOptional()
+  @IsNotEmpty({ message: 'filter is required.' })
+  @ValidateNested()
+  @Type(() => Filter)
+  filter: Filter;
 }
 
 export class Constraints {
@@ -384,7 +402,11 @@ export class SendProofRequestPayload {
                       'constraints': {
                         'fields': [
                           {
-                            'path': ['$.issuer']
+                            'path': ['$.issuer.id'],
+                            'filter': {
+                              'type': 'string',
+                              'pattern': 'did:example:123|did:example:456'
+                            }
                           }
                         ]
                       }
