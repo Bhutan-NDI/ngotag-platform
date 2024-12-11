@@ -2,7 +2,7 @@
 FROM node:18-alpine as build
 RUN npm install -g pnpm --ignore-scripts \
   && apk update \
-  && apk add openssh-client
+  && apk add openssl
 
 # Set the working directory
 WORKDIR /app
@@ -26,7 +26,7 @@ RUN pnpm run build api-gateway
 FROM node:18-alpine
 RUN npm install -g pnpm --ignore-scripts \
   && apk update \
-  && apk add openssh-client
+  && apk add openssl
 
 # Set the working directory
 WORKDIR /app
