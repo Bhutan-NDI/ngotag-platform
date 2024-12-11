@@ -26,7 +26,8 @@ RUN pnpm run build api-gateway
 FROM node:18-alpine
 RUN npm install -g pnpm --ignore-scripts \
   && apk update \
-  && apk add openssh-client \
+  && apk add openssh-client
+
 # Set the working directory
 WORKDIR /app
 
