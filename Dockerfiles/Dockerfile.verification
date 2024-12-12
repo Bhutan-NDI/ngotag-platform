@@ -1,6 +1,9 @@
 # Stage 1: Build the application
 FROM node:18-alpine as build
-RUN npm install -g pnpm
+RUN npm install -g pnpm -ignore-scripts \
+  && apk update \
+  && apk add openssl
+
 # Set the working directory
 WORKDIR /app
 
