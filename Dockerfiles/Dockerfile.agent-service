@@ -33,6 +33,7 @@ FROM node:18-alpine
 RUN npm install -g pnpm --ignore-scripts \
     && apk update \
     && apk add openssh-client \
+    && apk add openssl \
     && apk add aws-cli \
     && apk add docker \
     && apk add docker-compose 
