@@ -23,7 +23,10 @@ RUN npm run build verification
 
 # Stage 2: Create the final image
 FROM node:18-alpine
-RUN npm install -g pnpm
+RUN npm install -g pnpm -ignore-scripts \
+  && apk update \
+  && apk add openssl
+
 # Set the working directory
 WORKDIR /app
 
