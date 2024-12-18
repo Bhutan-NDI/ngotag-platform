@@ -1,6 +1,6 @@
 export class OutOfBandVerification {
 
-    public outOfBandVerification(email: string, orgName: string, deeplLinkURL: string): string {
+    public outOfBandVerification(email: string, orgName: string, deepLinkURL: string): string {
         try {
             return `<!DOCTYPE html>
       <html lang="en">
@@ -37,35 +37,29 @@ export class OutOfBandVerification {
                       Hello ${email},
                   </p>
                   <p>
-                  <b>${orgName}</b>  has requested verification of your digital credential. To share requested credential kindly follow below steps:
+                  <b>${orgName}</b>  has requested verification of your digital credential. To share the requested credentials, kindly follow the steps below:
                       <ul>
                           <li>Download the <b>${process.env.MOBILE_APP_NAME}</b> from  
                             <a href="${process.env.PLAY_STORE_DOWNLOAD_LINK}" target="_blank">Android Play Store</a> or
 <a href="${process.env.IOS_DOWNLOAD_LINK}" target="_blank">iOS App Store.</a> (Skip, if already downloaded)
 </li>
-                          <li>Complete the onboarding process in ${process.env.MOBILE_APP}.</li>
-                          <li>Open the “Share Credential” link below in this email <i>(This will open the link in the ${process.env.MOBILE_APP} App)</i></li>
-                          <li>Tap the <b>"Send Proof"</b>  button in ${process.env.MOBILE_APP} to share you credential data.</li>
+                          <li>Complete the onboarding process on ${process.env.MOBILE_APP}.</li>
+                          <li>Click on “Share Credential” button below in this email <i>(This will redirect you to the ${process.env.MOBILE_APP} App)</i></li>
+                          <li>Tap the <b>"Share"</b>  button on ${process.env.MOBILE_APP} to share your credentials.</li>
                       </ul>
                       <div style="text-align: center; padding-bottom: 20px;">
-                      <a clicktracking=off href="${deeplLinkURL}"
+                      <a clicktracking=off href="${deepLinkURL}"
                           class="mobile-button"
-                          style="padding: 10px 20px 10px 20px;color: #fff;background: #1F4EAD;border-radius: 5px;text-decoration: none;">
+                          style="padding: 10px 20px 10px 20px;color: #fff;background: #124143;border-radius: 5px;text-decoration: none;">
                           Share Credential
-                      </a>
-                      <a clicktracking=off href="${process.env.MOBILE_APP_DOWNLOAD_URL}"
-                          class="desktop-button"
-                          style="padding: 10px 20px 10px 20px;color: #fff;background: #1F4EAD;border-radius: 5px;text-decoration: none;">
-                          Download App
                       </a>
                   </div>
                   
                    </p>
                    <p>
-                     <b>Note:</b> If the above steps do not work for you, please open the <b>attached QR Code image</b> in this email on another device, and scan the QR code using the ${process.env.MOBILE_APP_NAME} on your mobile device. 
+                     <b>Note:</b> Alternatively, you will find a <b>QR Code image attached</b> to this email. You can open the QR code on another device and scan the QR code using the ${process.env.MOBILE_APP} App on your mobile device. 
                     <u> The QR Code is single-use.</u>
                    </p>
-                  
                    
                   <hr style="border-top:1px solid #e8e8e8" />
                   <footer style="padding-top: 20px;">
