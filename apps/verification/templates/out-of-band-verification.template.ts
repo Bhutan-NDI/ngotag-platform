@@ -37,15 +37,15 @@ export class OutOfBandVerification {
                       Hello ${email},
                   </p>
                   <p>
-                  <b>${orgName}</b>  has requested verification of your digital credential. To share requested credential kindly follow below steps:
+                  <b>${orgName}</b>  has requested verification of your digital credential. To share the requested credentials, kindly follow the steps below:
                       <ul>
                           <li>Download the <b>${process.env.MOBILE_APP_NAME}</b> from  
                             <a href="${process.env.PLAY_STORE_DOWNLOAD_LINK}" target="_blank">Android Play Store</a> or
 <a href="${process.env.IOS_DOWNLOAD_LINK}" target="_blank">iOS App Store.</a> (Skip, if already downloaded)
 </li>
-                          <li>Complete the onboarding process in ${process.env.MOBILE_APP}.</li>
-                          <li>Open the “Share Credential” link below in this email <i>(This will open the link in the ${process.env.MOBILE_APP} App)</i></li>
-                          <li>Tap the <b>"Share"</b>  button in ${process.env.MOBILE_APP} to share you credential data.</li>
+                          <li>Complete the onboarding process on ${process.env.MOBILE_APP}.</li>
+                          <li>Click on “Share Credential” button below in this email <i>(This will redirect you to the ${process.env.MOBILE_APP} App)</i></li>
+                          <li>Tap the <b>"Share"</b>  button on ${process.env.MOBILE_APP} to share your credentials.</li>
                       </ul>
                       <div style="text-align: center; padding-bottom: 20px;">
                       <a clicktracking=off href="${deepLinkURL}"
