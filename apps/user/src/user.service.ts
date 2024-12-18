@@ -15,7 +15,7 @@ import {
 import { ClientRegistrationService } from '@credebl/client-registration';
 import { CommonService } from '@credebl/common';
 import { EmailDto } from '@credebl/common/dtos/email.dto';
-import { LoginUserDto } from '../dtos/login-user.dto';
+import { LoginUserDto, LoginUserNameDto } from '../dtos/login-user.dto';
 import { OrgRoles } from 'libs/org-roles/enums';
 import { OrgRolesService } from '@credebl/org-roles';
 import { PrismaService } from '@credebl/prisma-service';
@@ -42,7 +42,8 @@ import {
     IPuppeteerOption,
     IShareDegreeCertificateRes,
     IUserDeletedActivity,
-    UserKeycloakId
+    UserKeycloakId,
+    IUserInformationUsernameBased
 } from '../interfaces/user.interface';
 import { AcceptRejectInvitationDto } from '../dtos/accept-reject-invitation.dto';
 import { UserActivityService } from '@credebl/user-activity';
@@ -126,7 +127,6 @@ export class UserService {
         if (!redirectUrl) {
           throw new NotFoundException(ResponseMessages.user.error.redirectUrlNotFound);
         }
-  
         sendVerificationMail = await this.sendEmailForVerification(email, verifyCode, redirectUrl, clientId, brandLogoUrl, platformName);
       } catch (error) {
         throw new InternalServerErrorException(ResponseMessages.user.error.emailSend);
@@ -326,6 +326,83 @@ export class UserService {
     }
   }
 
+
+  async createUserForTokenUsernameBased(userInfo: IUserInformationUsernameBased): Promise<ISignUpUserResponse> {
+    try {
+      
+      const checkUserDetails = await this.userRepository.getUserDetailsByUsername(userInfo.username);
+
+      if (checkUserDetails) {
+        throw new ConflictException(ResponseMessages.user.error.exists);
+      }
+
+      const resUser = await this.userRepository.createUserWithoutVerification(userInfo);
+      let keycloakDetails = null;
+      
+      const token = await this.clientRegistrationService.getManagementToken(userInfo.clientId, userInfo.clientSecret);
+      if (userInfo.isPasskey) {
+        const resUser = await this.userRepository.addUserPasswordByUserName(userInfo.username, userInfo.password);
+        const userDetails = await this.userRepository.getUserDetailsByUsername(userInfo.username);
+        const decryptedPassword = await this.commonService.decryptPassword(userDetails.password);
+
+        if (!resUser) {
+          throw new NotFoundException(ResponseMessages.user.error.invalidUsername);
+        }
+
+        userInfo.password = decryptedPassword;
+        try {          
+          keycloakDetails = await this.clientRegistrationService.createUserUserNameBased(userInfo, process.env.KEYCLOAK_REALM, token);
+        } catch (error) {
+          throw new InternalServerErrorException('Error while registering user on keycloak');
+        }
+      } else {
+        const decryptedPassword = await this.commonService.decryptPassword(userInfo.password);
+
+        userInfo.password = decryptedPassword;
+
+        try {          
+          keycloakDetails = await this.clientRegistrationService.createUserUserNameBased(userInfo, process.env.KEYCLOAK_REALM, token);
+        } catch (error) {
+          throw new InternalServerErrorException('Error while registering user on keycloak');
+        }
+      }
+
+      await this.userRepository.updateUserDetails(resUser.id,
+        keycloakDetails.keycloakUserId.toString()
+      );
+
+      if (userInfo?.isHolder) {
+        const getUserRole = await this.userRepository.getUserRole(UserRole.HOLDER);
+
+        if (!getUserRole) {
+          throw new NotFoundException(ResponseMessages.user.error.userRoleNotFound);
+        }
+        await this.userRepository.storeUserRole(resUser.id, getUserRole?.id);
+      }
+
+      const realmRoles = await this.clientRegistrationService.getAllRealmRoles(token);
+      
+      const holderRole = realmRoles.filter(role => role.name === OrgRoles.HOLDER);
+      const holderRoleData =  0 < holderRole.length && holderRole[0];
+
+      const payload = [
+        {
+          id: holderRoleData.id,
+          name: holderRoleData.name
+        }
+      ];
+
+      await this.clientRegistrationService.createUserHolderRole(token,  keycloakDetails.keycloakUserId.toString(), payload);
+      const holderOrgRole = await this.orgRoleService.getRole(OrgRoles.HOLDER);
+      await this.userOrgRoleService.createUserOrgRole(resUser.id, holderOrgRole.id, null, holderRoleData.id);
+
+      return { userId: resUser?.id };
+    } catch (error) {
+      this.logger.error(`Error in createUserForToken: ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
   async addPasskey(email: string, userInfo: AddPasskeyDetailsDto): Promise<string> {
     try {
       if (!email.toLowerCase()) {
@@ -399,6 +476,35 @@ export class UserService {
 
         const decryptedPassword = await this.commonService.decryptPassword(password);
         return await this.generateToken(email.toLowerCase(), decryptedPassword, userData);        
+      }
+    } catch (error) {
+      this.logger.error(`In Login User : ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  async usernameLogin(loginUserDto: LoginUserNameDto): Promise<ISignInUser> {
+    const { username, password, isPasskey } = loginUserDto;
+
+    try {
+
+      const userData = await this.userRepository.getUserDetailsByUsername(username);
+      if (!userData) {
+        throw new NotFoundException(ResponseMessages.user.error.notFound);
+      }
+
+      if (true === isPasskey && false === userData?.isFidoVerified) {
+        throw new UnauthorizedException(ResponseMessages.user.error.registerFido);
+      }
+
+      if (true === isPasskey && userData?.username && true === userData?.isFidoVerified) {
+        const getUserDetails = await this.userRepository.getUserDetailsByUsername(username);
+        const decryptedPassword = await this.commonService.decryptPassword(getUserDetails.password);
+        return await this.generateToken(username, decryptedPassword, userData);
+      } else {
+
+        const decryptedPassword = await this.commonService.decryptPassword(password);
+        return await this.generateToken(username, decryptedPassword, userData);        
       }
     } catch (error) {
       this.logger.error(`In Login User : ${JSON.stringify(error)}`);

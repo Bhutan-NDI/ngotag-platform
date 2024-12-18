@@ -21,8 +21,8 @@ import { ResponseMessages } from '@credebl/common/response-messages';
 import { Response } from 'express';
 import { EmailVerificationDto } from '../user/dto/email-verify.dto';
 import { AuthTokenResponse } from './dtos/auth-token-res.dto';
-import { LoginUserDto } from '../user/dto/login-user.dto';
-import { AddUserDetailsDto } from '../user/dto/add-user.dto';
+import { LoginUserDto, LoginUserNameDto } from '../user/dto/login-user.dto';
+import { AddUserDetailsDto, AddUserDetailsUsernameBasedDto } from '../user/dto/add-user.dto';
 import { CustomExceptionFilter } from 'apps/api-gateway/common/exception-handler';
 import { ResetPasswordDto } from './dtos/reset-password.dto';
 import { ForgotPasswordDto } from './dtos/forgot-password.dto';
@@ -92,6 +92,28 @@ export class AuthzController {
     return res.status(HttpStatus.CREATED).json(finalResponse);
 
   }
+
+
+   /**
+  *
+  * @Body userInfo
+  * @returns User's registration status and user details
+  */
+   @Post('/username/signup')
+   @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
+   @ApiOperation({ summary: 'Register new user to platform', description: 'Register new user to platform' })
+   async addUserDetailsUserNameBased(@Body() userInfo: AddUserDetailsUsernameBasedDto, @Res() res: Response): Promise<Response> {
+     const userData = await this.authzService.addUserDetailsUsernameBased(userInfo);
+       const finalResponse = {
+         statusCode: HttpStatus.CREATED,
+         message: ResponseMessages.user.success.create,
+         data: userData
+       };
+     return res.status(HttpStatus.CREATED).json(finalResponse);
+ 
+   }
+
+
   /**
   * @Body loginUserDto
   * @returns User's access token details
@@ -119,6 +141,36 @@ export class AuthzController {
       throw new UnauthorizedException(`Please provide valid credentials`);
     }
   }
+
+
+    /**
+  * @Body loginUserDto
+  * @returns User's access token details
+  */
+    @Post('/username/signin')
+    @ApiOperation({
+      summary: 'Authenticate the user for the access',
+      description: 'Authenticate the user for the access'
+    })
+    @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: AuthTokenResponse })
+    @ApiBody({ type: LoginUserNameDto })
+    async usernameLogin(@Body() loginUserDto: LoginUserNameDto, @Res() res: Response): Promise<Response> {
+  
+      if (loginUserDto.username) {
+        const userData = await this.authzService.usernameLogin(loginUserDto.username, loginUserDto.password, loginUserDto.isPasskey);
+  
+        const finalResponse: IResponseType = {
+          statusCode: HttpStatus.OK,
+          message: ResponseMessages.user.success.login,
+          data: userData
+        };
+  
+        return res.status(HttpStatus.OK).json(finalResponse);
+      } else {
+        throw new UnauthorizedException(`Please provide valid credentials`);
+      }
+    }
+
 
   @Post('/reset-password')
   @ApiOperation({

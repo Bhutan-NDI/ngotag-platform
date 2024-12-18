@@ -14,7 +14,8 @@ import {
   IUserDeletedActivity,
   UserKeycloakId,
   UserRoleMapping,
-  UserRoleDetails
+  UserRoleDetails,
+  IUserInformationUsernameBased
 } from '../interfaces/user.interface';
 import { InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
@@ -67,6 +68,27 @@ export class UserRepository {
     }
   }
 
+
+  async createUserWithoutVerification(user: IUserInformationUsernameBased): Promise<user> {
+    try {
+      const saveResponse = await this.prisma.user.create({
+        data: {
+          username: user.username,
+          clientId: user.clientId,
+          clientSecret: user.clientSecret,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          publicProfile: true
+        }
+      });
+
+      return saveResponse;
+    } catch (error) {
+      this.logger.error(`In Create User Repository: ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
   /**
    *
    * @param email
@@ -104,6 +126,25 @@ export class UserRepository {
       throw new NotFoundException(error);
     }
   }
+
+
+    /**
+   *
+   * @param username
+   * @returns User details
+   */
+    async getUserDetailsByUsername(username: string): Promise<user> {
+      try {
+        return this.prisma.user.findFirst({
+          where: {
+            username
+          }
+        });
+      } catch (error) {
+        this.logger.error(`Not Found: ${JSON.stringify(error)}`);
+        throw new NotFoundException(error);
+      }
+    }
 
   /**
    *
@@ -418,6 +459,31 @@ export class UserRepository {
     }
   }
 
+
+    /**
+   *
+   * @param userInfo
+   * @returns Updates user details
+   */
+  // eslint-disable-next-line camelcase
+  async updateUserInfoByUserName(username: string, userInfo: IUserInformation): Promise<user> {
+    try {
+      const updateUserDetails = await this.prisma.user.update({
+        where: {
+          username
+        },
+        data: {
+          firstName: userInfo.firstName,
+          lastName: userInfo.lastName
+        }
+      });
+      return updateUserDetails;
+    } catch (error) {
+      this.logger.error(`Error in update isEmailVerified: ${error.message} `);
+      throw error;
+    }
+  }
+
   /**
    *
    * @param queryOptions
@@ -627,6 +693,31 @@ export class UserRepository {
       throw error;
     }
   }
+
+
+    /**
+   *
+   * @param userInfo
+   * @returns Updates user credentials
+   */
+  // eslint-disable-next-line camelcase
+  async addUserPasswordByUserName(username: string, userInfo: string): Promise<user> {
+    try {
+      const updateUserDetails = await this.prisma.user.update({
+        where: {
+          username
+        },
+        data: {
+          password: userInfo
+        }
+      });
+      return updateUserDetails;
+    } catch (error) {
+      this.logger.error(`Error in update isEmailVerified: ${error.message} `);
+      throw error;
+    }
+  }
+
 
   /**
    *

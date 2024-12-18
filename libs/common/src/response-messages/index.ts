@@ -50,6 +50,7 @@ export const ResponseMessages = {
       invalidInvitationStatus: 'Invalid invitation status',
       invalidKeycloakId: 'keycloakId is invalid',
       invalidEmail: 'Invalid Email Id!',
+      invalidUsername: 'Invalid Email Id!',
       adduser: 'Unable to add user details',
       userRoleNotFound: 'User role not found',
       verifyEmail: 'The verification link has already been sent to your email address. please verify',

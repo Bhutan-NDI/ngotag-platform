@@ -64,6 +64,17 @@ export interface IUserInformation {
   isHolder?: boolean;
 }
 
+export interface IUserInformationUsernameBased {
+  username: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  isPasskey: boolean;
+  isHolder?: boolean;
+  clientId?: string;
+  clientSecret?: string;
+}
+
 export interface AddPasskeyDetails {
   password: string;
 }
@@ -185,6 +196,13 @@ export interface IVerifyUserEmail{
 
 export interface  IUserSignIn{
   email: string;
+  password: string;
+  isPasskey: boolean;
+}
+
+
+export interface  IUserNameSignIn{
+  username: string;
   password: string;
   isPasskey: boolean;
 }

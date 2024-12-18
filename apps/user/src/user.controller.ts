@@ -1,4 +1,4 @@
-import { IOrgUsers, Payload, ICheckUserDetails, PlatformSettings, IShareUserCertificate, UpdateUserProfile, IUsersProfile, IUserInformation, IUserSignIn, IUserCredentials, IUserResetPassword, IUserDeletedActivity, UserKeycloakId} from '../interfaces/user.interface';
+import { IOrgUsers, Payload, ICheckUserDetails, PlatformSettings, IShareUserCertificate, UpdateUserProfile, IUsersProfile, IUserInformation, IUserSignIn, IUserCredentials, IUserResetPassword, IUserDeletedActivity, UserKeycloakId, IUserInformationUsernameBased, IUserNameSignIn} from '../interfaces/user.interface';
 import { AcceptRejectInvitationDto } from '../dtos/accept-reject-invitation.dto';
 import { Controller } from '@nestjs/common';
 import { MessagePattern } from '@nestjs/microservices';
@@ -43,6 +43,19 @@ export class UserController {
    const loginRes = await this.userService.login(payload);   
    return loginRes;
   }
+
+
+   /**
+  * @Body loginUserDto
+  * @returns User's access token details
+  */
+
+   @MessagePattern({ cmd: 'username-holder-login' })
+   async usernameLogin(payload: IUserNameSignIn): Promise<ISignInUser> {
+    const loginRes = await this.userService.usernameLogin(payload);   
+    return loginRes;
+   }
+
 
   @MessagePattern({ cmd: 'refresh-token-details' })
   async refreshTokenDetails(refreshToken: string): Promise<ISignInUser> {
@@ -178,6 +191,15 @@ export class UserController {
   async addUserDetailsInKeyCloak(payload: { userInfo: IUserInformation }): Promise<ISignUpUserResponse> {
     return this.userService.createUserForToken(payload.userInfo);
   }
+
+    /**
+  * @Body userInfo
+  * @returns User's registration status
+  */
+    @MessagePattern({ cmd: 'add-user-username-based' })
+    async addUserDetailsUsernameBasedInKeyCloak(payload: { userInfo: IUserInformationUsernameBased }): Promise<ISignUpUserResponse> {
+      return this.userService.createUserForTokenUsernameBased(payload.userInfo);
+    }
 
   // Fetch Users recent activities
   @MessagePattern({ cmd: 'get-user-activity' })

@@ -11,7 +11,7 @@ import * as qs from 'qs';
 import { ClientCredentialTokenPayloadDto } from './dtos/client-credential-token-payload.dto';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { CommonService } from '@credebl/common';
-import { CreateUserDto } from './dtos/create-user.dto';
+import { CreateUserDto, CreateUserDtoUsernameBased } from './dtos/create-user.dto';
 import { JwtService } from '@nestjs/jwt';
 import { KeycloakUrlService } from '@credebl/keycloak-url';
 import { accessTokenPayloadDto } from './dtos/accessTokenPayloadDto';
@@ -115,6 +115,57 @@ export class ClientRegistrationService {
       await this.keycloakUrlService.getUserByUsernameURL(realm, user.email),
       this.getAuthHeader(token)
     );
+    const userid = getUserResponse[0].id;
+
+
+    const setPasswordResponse = await this.resetPasswordOfKeycloakUser(realm, user.password, userid, token);
+
+    return {
+      keycloakUserId: getUserResponse[0].id
+    };
+  }
+
+
+  async createUserUserNameBased(
+    user: CreateUserDtoUsernameBased,
+    realm: string,
+    token: string
+  ): Promise<{ keycloakUserId: string; }> {
+    const payload = {
+      createdTimestamp: Date.parse(Date.now.toString()),
+      username: user.username,
+      enabled: true,
+      totp: false,
+      emailVerified: true,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email? user.email : `${process.env.CLOUD_WALLET_COMMON_EMAIL}`,
+      disableableCredentialTypes: [],
+      requiredActions: [],
+      notBefore: 0,
+      access: {
+        manageGroupMembership: true,
+        view: true,
+        mapRoles: true,
+        impersonate: true,
+        manage: true
+      },
+      realmRoles: ['mb-user'],
+      attributes: {
+        ...(user.isHolder ? { userRole: `${CommonConstants.USER_HOLDER_ROLE}` } : {})
+      }
+    };
+    const registerUserResponse = await this.commonService.httpPost(
+      await this.keycloakUrlService.createUserURL(realm),
+      payload,
+      this.getAuthHeader(token)
+    );
+
+    const getUserResponse = await this.commonService.httpGet(
+      await this.keycloakUrlService.getUserByUsernameURL(realm, user.username),
+      this.getAuthHeader(token)
+    );
+    console.log(getUserResponse);
     const userid = getUserResponse[0].id;
 
 

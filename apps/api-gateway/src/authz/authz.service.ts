@@ -8,7 +8,7 @@ import {
 } from '@nestjs/websockets';
 import { UserEmailVerificationDto } from '../user/dto/create-user.dto';
 import { EmailVerificationDto } from '../user/dto/email-verify.dto';
-import { AddUserDetailsDto } from '../user/dto/add-user.dto';
+import { AddUserDetailsDto, AddUserDetailsUsernameBasedDto } from '../user/dto/add-user.dto';
 import { IResetPasswordResponse, ISendVerificationEmail, ISignInUser, ISignUpUserResponse, IVerifyUserEmail } from '@credebl/common/interfaces/user.interface';
 import { ResetPasswordDto } from './dtos/reset-password.dto';
 import { ForgotPasswordDto } from './dtos/forgot-password.dto';
@@ -45,6 +45,11 @@ export class AuthzService extends BaseService {
     const payload = { email, password, isPasskey };
     return this.sendNatsMessage(this.authServiceProxy, 'user-holder-login', payload);
   }
+
+  async usernameLogin(username: string, password?: string, isPasskey = false): Promise<ISignInUser> {
+    const payload = { username, password, isPasskey };
+    return this.sendNatsMessage(this.authServiceProxy, 'username-holder-login', payload);
+  }
   
   async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<IResetPasswordResponse> {
     return this.sendNatsMessage(this.authServiceProxy, 'user-reset-password', resetPasswordDto);
@@ -65,5 +70,10 @@ export class AuthzService extends BaseService {
   async addUserDetails(userInfo: AddUserDetailsDto): Promise<ISignUpUserResponse> {
     const payload = { userInfo };
     return this.sendNatsMessage(this.authServiceProxy, 'add-user', payload);
+  }
+
+  async addUserDetailsUsernameBased(userInfo: AddUserDetailsUsernameBasedDto): Promise<ISignUpUserResponse> {
+    const payload = { userInfo };
+    return this.sendNatsMessage(this.authServiceProxy, 'add-user-username-based', payload);
   }
 }

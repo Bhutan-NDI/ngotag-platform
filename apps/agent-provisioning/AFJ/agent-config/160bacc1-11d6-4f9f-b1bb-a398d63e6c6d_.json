@@ -1,0 +1,33 @@
+{
+  "label": "160bacc1-11d6-4f9f-b1bb-a398d63e6c6d_",
+  "walletId": "platform-admin",
+  "walletKey": "U2FsdGVkX18Y7bdtrjA444InlqFbMTownPCloGszjy0=",
+  "walletType": "postgres",
+  "walletUrl": ":",
+  "walletAccount": "",
+  "walletPassword": "",
+  "walletAdminAccount": "",
+  "walletAdminPassword": "",
+  "walletScheme": "DatabasePerWallet",
+  "indyLedger": ,
+  "endpoint": [
+    ""
+  ],
+  "autoAcceptConnections": true,
+  "autoAcceptCredentials": "contentApproved",
+  "autoAcceptProofs": "contentApproved",
+  "logLevel": 5,
+  "inboundTransport": [
+    {
+      "transport": "",
+      "port": 9001
+    }
+  ],
+  "outboundTransport": [
+    ""
+  ],
+  "webhookUrl": "/wh/160bacc1-11d6-4f9f-b1bb-a398d63e6c6d",
+  "adminPort": 8001,
+  "tenancy": ,
+  "schemaFileServerURL": ""
+}
