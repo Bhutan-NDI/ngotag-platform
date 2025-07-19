@@ -313,7 +313,7 @@ export class AgentServiceController {
 
    @MessagePattern({ cmd: 'ethereum-create-keys' })
   async createEthKeyPair(payload: { orgId: string }): Promise<object> {
-    return this.agentServiceService.createEthKeyPair(payload.orgId);
+    return this.agentServiceService.createEthereumKeyPair(payload.orgId);
   }
 
   @MessagePattern({ cmd: 'agent-create-connection-invitation' })
