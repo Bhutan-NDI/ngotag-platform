@@ -160,6 +160,15 @@
     }
     },
     {
+      "name": "ethereum",
+      "details":  {
+        "did:ethr": {
+            "mainnet":"did:ethr",
+            "testnet":"did:ethr:sepolia"
+        }
+    }
+    },
+    {
       "name": "noLedger",
       "details":  {
         "did:key": "did:key",

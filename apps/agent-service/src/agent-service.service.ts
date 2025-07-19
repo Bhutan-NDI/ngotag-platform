@@ -886,6 +886,10 @@ export class AgentServiceService {
         createDidPayload.endpoint = agentDetails.agentEndPoint;
       }
 
+        if (createDidPayload.method === DidMethod.ETHEREUM) {
+        createDidPayload.endpoint = agentDetails.agentEndPoint;
+      }
+
       const { isPrimaryDid, ...payload } = createDidPayload;
 
       // For did:web, verify the DID Document is correctly hosted before writing to the wallet or DB.
@@ -1079,6 +1083,61 @@ export class AgentServiceService {
       return createKeyPairResponse;
     } catch (error) {
       this.logger.error(`error in createSecp256k1KeyPair : ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+
+  /**
+   * @returns ethereum key pair for Ethr DID
+   */
+  async createEthKeyPair(orgId: string): Promise<object> {
+    try {
+      const platformAdminSpinnedUp = await this.agentServiceRepository.platformAdminAgent(
+        CommonConstants.PLATFORM_ADMIN_ORG
+      );
+
+      const getPlatformAgentEndPoint = platformAdminSpinnedUp.org_agents[0].agentEndPoint;
+      const getDcryptedToken = await this.commonService.decryptPassword(platformAdminSpinnedUp?.org_agents[0].apiKey);
+
+      const url = `${getPlatformAgentEndPoint}${CommonConstants.CREATE_ETH_KEY}`;
+
+      const createKeyPairResponse = await this.commonService.httpPost(
+        url,
+        {},
+        { headers: { authorization: getDcryptedToken } }
+      );
+      return createKeyPairResponse;
+    } catch (error) {
+      this.logger.error(`error in create ethereum KeyPair : ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  /**
+   * @returns Secp256k1 key pair for polygon DID
+   */
+  async createEthereumKeyPair(orgId: string): Promise<object> {
+    try {
+      this.logger.log(CommonConstants.PLATFORM_ADMIN_ORG);
+      const platformAdminSpinnedUp = await this.agentServiceRepository.platformAdminAgent(
+        CommonConstants.PLATFORM_ADMIN_ORG
+      );
+      this.logger.log(`Platform admin agent details: ${JSON.stringify(platformAdminSpinnedUp)}`);
+
+      const getPlatformAgentEndPoint = platformAdminSpinnedUp.org_agents[0].agentEndPoint;
+      const getDcryptedToken = await this.commonService.decryptPassword(platformAdminSpinnedUp?.org_agents[0].apiKey);
+
+      const url = `${getPlatformAgentEndPoint}${CommonConstants.CREATE_ETH_KEY}`;
+
+      const createKeyPairResponse = await this.commonService.httpPost(
+        url,
+        {},
+        { headers: { authorization: getDcryptedToken } }
+      );
+      return createKeyPairResponse;
+    } catch (error) {
+      this.logger.error(`error in createEthKeyPair : ${JSON.stringify(error)}`);
       throw new RpcException(error.response ? error.response : error);
     }
   }

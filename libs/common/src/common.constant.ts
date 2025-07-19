@@ -117,6 +117,7 @@ export enum CommonConstants {
 
   // CREATE KEYS
   CREATE_POLYGON_SECP256k1_KEY = '/polygon/create-keys',
+  CREATE_ETH_KEY = '/ethereum/create-keys',
 
   // OID4VC URLs
   URL_OIDC_ISSUER_CREATE = '/openid4vc/issuer',

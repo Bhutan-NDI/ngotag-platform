@@ -311,6 +311,11 @@ export class AgentServiceController {
     return this.agentServiceService.createSecp256k1KeyPair(payload.orgId);
   }
 
+   @MessagePattern({ cmd: 'ethereum-create-keys' })
+  async createEthKeyPair(payload: { orgId: string }): Promise<object> {
+    return this.agentServiceService.createEthKeyPair(payload.orgId);
+  }
+
   @MessagePattern({ cmd: 'agent-create-connection-invitation' })
   async createConnectionInvitation(payload: {
     url: string;

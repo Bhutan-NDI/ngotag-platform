@@ -78,6 +78,13 @@ export class AgentService extends BaseService {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'verify-signature-from-agent', payload);
   }
 
+  async createEthKeyPair(orgId: string): Promise<object> {
+    const payload = { orgId };
+    // NATS call
+
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'ethereum-create-keys', payload);
+  }
+
   async getLedgerConfig(user: user): Promise<object> {
     const payload = { user };
 

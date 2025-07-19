@@ -408,6 +408,32 @@ export class AgentController {
   }
 
   /**
+   * Create Secp256k1 key pair for ethereum DID
+   * @param orgId The ID of the organization
+   * @param res The response object
+   * @returns Secp256k1 key pair for ethereum DID
+   */
+  @Post('/orgs/:orgId/agents/ethereum/create-keys')
+  @ApiOperation({
+    summary: 'Create Secp256k1 key pair for ethereum DID',
+    description: 'Create Secp256k1 key pair for ethereum DID for an organization'
+  })
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.PLATFORM_ADMIN, OrgRoles.ISSUER, OrgRoles.VERIFIER)
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Success', type: ApiResponseDto })
+  async createEthKeyPair(@Param('orgId') orgId: string, @Res() res: Response): Promise<Response> {
+    const didDetails = await this.agentService.createEthKeyPair(orgId);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.CREATED,
+      message: ResponseMessages.agent.success.createKeys,
+      data: didDetails
+    };
+
+    return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
+
+  /**
    * Configure the agent by organization
    * @param agentConfigureDto The details of the agent configuration
    * @param user The user making the request
