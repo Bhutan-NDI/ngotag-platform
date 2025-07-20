@@ -298,7 +298,6 @@ export class SchemaService extends BaseService {
           description: ResponseMessages.errorMessages.badRequest
         });
       }
-
       const schemaAlreadyExists = await this.schemaRepository.w3cSchemaExists(schemaName, schemaVersion, orgId);
       if (schemaAlreadyExists) {
         throw new ConflictException(ResponseMessages.schema.error.exists, {
@@ -307,7 +306,9 @@ export class SchemaService extends BaseService {
         });
       }
 
-      const url = `${agentEndPoint}${CommonConstants.CREATE_POLYGON_W3C_SCHEMA}`;
+      const url = agentDetails.orgDid.includes(JSONSchemaType.ETHEREUM_W3C)
+        ? `${agentEndPoint}${CommonConstants.CREATE_ETHEREUM_W3C_SCHEMA}`
+        : `${agentEndPoint}${CommonConstants.CREATE_POLYGON_W3C_SCHEMA}`;
 
       let schemaObject;
       let schemaResourceId: string | undefined;
@@ -338,7 +339,7 @@ export class SchemaService extends BaseService {
         orgId,
         schemaRequestPayload: agentSchemaPayload
       };
-      if (schemaPayload.schemaType === JSONSchemaType.POLYGON_W3C) {
+      if (schemaPayload.schemaType === JSONSchemaType.POLYGON_W3C || schemaPayload.schemaType === JSONSchemaType.ETHEREUM_W3C) {
         const createSchemaPayload = await this._createW3CSchema(W3cSchemaPayload);
         createSchema = createSchemaPayload.response;
         createSchema.type = JSONSchemaType.POLYGON_W3C;
