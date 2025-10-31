@@ -153,3 +153,21 @@ services:
 volumes:
   cache:
     driver: local
+
+
+
+
+
+
+
+  kinley:
+    image: kinley/kinley:latest
+    container_name: kinley
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - KINLEY_DB_PATH=/data/kinley.db
+    volumes:
+      - kinley-data:/data
