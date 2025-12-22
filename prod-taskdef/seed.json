@@ -5,7 +5,7 @@
             "name": "seed",
             "image": "%REPOSITORY_URI%:SEED_V_%BUILD_NUMBER%",
             "cpu": 1024,
-            "memory": 2048,
+            "memory": 4096,
             "portMappings": [],
             "essential": true,
             "environment": [],
@@ -39,5 +39,5 @@
         "FARGATE"
     ],
     "cpu": "1024",
-    "memory": "2048"
+    "memory": "4096"
 }
