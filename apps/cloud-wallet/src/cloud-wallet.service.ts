@@ -48,7 +48,8 @@ import {
   IDeleteCloudWallet,
   ICheckCloudWalletStatus,
   IExportCloudWallet,
-  IAddConnectionType
+  IAddConnectionType,
+  IImportCloudWallet
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -678,6 +679,51 @@ export class CloudWalletService {
       return exportWalletResponse;
     } catch (error) {
       this.logger.error(`[export wallet] - error while exporting wallet: ${error}`);
+      await this.commonService.handleError(error);
+    }
+  }
+
+
+  /**
+   * Import cloud wallet
+   * @param importWallet
+   * @returns imported tenant Id
+   */
+  async importCloudWallet(importWallet: IImportCloudWallet): Promise<Response> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { email, userId, exportUrl, passKey, walletID } = importWallet;
+
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
+
+      if (!checkUserExist) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
+      }
+      const [getTenant, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+
+      const { tenantId } = getTenant;
+      const { agentEndpoint } = getTenant;
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_IMPORT}${tenantId}`;
+
+      const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
+
+      if (!checkCloudWalletAgentHealth) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
+      }
+      const importWalletResponse = await this.commonService.httpPost(url, { exportedUrl:exportUrl, exportedWalletKey: passKey, exportedWalletID: walletID}, {
+        headers: { authorization: decryptedApiKey }
+      });
+
+      if (!importWalletResponse) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.exportWallet, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      return importWalletResponse;
+    } catch (error) {
+      this.logger.error(`[import wallet] - error while importing wallet: ${error}`);
       await this.commonService.handleError(error);
     }
   }

@@ -217,6 +217,7 @@ export const ResponseMessages = {
       createWallet: 'Wallet created successfully',
       createDid: 'Did created successfully',
       exportWallet: 'Wallet Exported successfully',
+      importWallet: 'Wallet imported successfully',
       health: 'Agent health details retrieved successfully.',
       ledgerConfig: 'Ledger config details fetched successfully.',
       webhookUrlRegister: 'Webhook Url registered successfully',

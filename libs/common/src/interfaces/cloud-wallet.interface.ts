@@ -494,6 +494,14 @@ export interface IExportCloudWallet {
   email: string;
 }
 
+export interface IImportCloudWallet {
+  exportUrl: string;
+  passKey: string;
+  walletID: string;
+  userId: string;
+  email: string;
+}
+
 export interface IAddConnectionType {
   connectionType: string;
   connectionId: string;

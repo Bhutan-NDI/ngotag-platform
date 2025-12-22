@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Matches, MaxLength, Min } from 'class-validator';
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotSQLInjection, trim } from '@credebl/common/cast.helper';
@@ -220,6 +220,29 @@ export class ReceiveInvitationUrlDTO {
     email: string;
     
     userId: string;
+}
+
+export class ImportCloudWalletDto {
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'Export URL is required' })
+  @IsUrl()
+  exportUrl: string;
+
+  @ApiPropertyOptional({ example: 'walletID' })
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'walletID is required' })
+  @IsString({ message: 'walletID must be in string format.' })
+  walletID: string;
+
+  @ApiPropertyOptional({ example: 'XzFjo1RTZ2h9UVFCnPUyaQ' })
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'passKey is required' })
+  @IsString({ message: 'passKey must be in string format.' })
+  passKey: string;
+
+  email: string;
+  
+  userId: string;
 }
 
 export class CredentialListDto {

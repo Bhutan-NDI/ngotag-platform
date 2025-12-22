@@ -98,6 +98,7 @@ export enum CommonConstants {
   URL_SHAGENT_CREATE_TENANT = '/multi-tenancy/create-tenant',
   URL_SHAGENT_CREATE_DID = '/multi-tenancy/create-did/',
   URL_CLOUD_WALLET_EXPORT = '/multi-tenancy/export/',
+  URL_CLOUD_WALLET_IMPORT = '/multi-tenancy/import-tenant/',
   URL_SHAGENT_WITH_TENANT_AGENT = '/multi-tenancy/with-tenant-agent',
   URL_SHAGENT_CREATE_SCHEMA = '/multi-tenancy/schema/#',
   URL_SHAGENT_GET_SCHEMA = '/multi-tenancy/schema/@/#',

@@ -2,7 +2,7 @@
 import { Controller } from '@nestjs/common'; // Import the common service in the library
 import { CloudWalletService } from './cloud-wallet.service'; // Import the common service in connection module
 import { MessagePattern } from '@nestjs/microservices'; // Import the nestjs microservices package
-import { IAcceptOffer, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, ICreateCloudWallet, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, ICreateConnection, IConnectionInvitationResponse, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, ISelfAttestedCredential, IW3cCredentials, ICheckCloudWalletStatus, IDeleteCloudWallet, IExportCloudWallet, IAddConnectionType } from '@credebl/common/interfaces/cloud-wallet.interface';
+import { IAcceptOffer, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, ICreateCloudWallet, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, ICreateConnection, IConnectionInvitationResponse, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, ISelfAttestedCredential, IW3cCredentials, ICheckCloudWalletStatus, IDeleteCloudWallet, IExportCloudWallet, IAddConnectionType, IImportCloudWallet } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
 import { cloud_wallet_user_info, user as User } from '@prisma/client';
 import { UpdateBaseWalletDto } from 'apps/api-gateway/src/cloud-wallet/dtos/cloudWallet.dto';
@@ -96,6 +96,11 @@ export class CloudWalletController {
   @MessagePattern({ cmd: 'export-cloud-wallet' })
   async exportCloudWallet(exportWallet: IExportCloudWallet): Promise<Response> {
     return this.cloudWalletService.exportCloudWallet(exportWallet);
+  }
+
+  @MessagePattern({ cmd: 'import-cloud-wallet' })
+  async importCloudWallet(importWallet: IImportCloudWallet): Promise<Response> {
+    return this.cloudWalletService.importCloudWallet(importWallet);
   }
 
   @MessagePattern({ cmd: 'cloud-wallet-did-list' })

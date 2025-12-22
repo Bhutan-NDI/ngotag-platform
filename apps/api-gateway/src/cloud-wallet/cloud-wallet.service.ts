@@ -1,5 +1,5 @@
 
-import { IAcceptOffer, ICreateCloudWallet, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, ICreateConnection, IConnectionInvitationResponse, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, IW3cCredentials, IDeleteCloudWallet, IExportCloudWallet, ICheckCloudWalletStatus, IAddConnectionType } from '@credebl/common/interfaces/cloud-wallet.interface';
+import { IAcceptOffer, ICreateCloudWallet, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, ICreateConnection, IConnectionInvitationResponse, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, IW3cCredentials, IDeleteCloudWallet, IExportCloudWallet, ICheckCloudWalletStatus, IAddConnectionType, IImportCloudWallet } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { Inject, Injectable} from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 // eslint-disable-next-line camelcase
@@ -112,6 +112,10 @@ export class CloudWalletService extends BaseService {
 
   exportWallet(exportWallet: IExportCloudWallet): Promise<Response> {
   return this.sendNatsMessage(this.cloudWalletServiceProxy, 'export-cloud-wallet', exportWallet);
+  }
+
+  importWallet(importWallet: IImportCloudWallet): Promise<Response> {
+    return this.sendNatsMessage(this.cloudWalletServiceProxy, 'import-cloud-wallet', importWallet);
   }
 
 getDidList(

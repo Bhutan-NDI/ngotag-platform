@@ -5,7 +5,7 @@ import { ApiBearerAuth, ApiForbiddenResponse, ApiOperation, ApiQuery, ApiRespons
 import { ForbiddenErrorDto } from '../dtos/forbidden-error.dto';
 import { UnauthorizedErrorDto } from '../dtos/unauthorized-error.dto';
 import { CloudWalletService } from './cloud-wallet.service';
-import { AcceptOfferDto, AddConnectionTypeDto, BasicMessageDTO, CreateCloudWalletDidDto, CreateCloudWalletDto, CredentialListDto, ExportCloudWalletDto, GetAllCloudWalletConnectionsDto, ReceiveInvitationUrlDTO, UpdateBaseWalletDto } from './dtos/cloudWallet.dto';
+import { AcceptOfferDto, AddConnectionTypeDto, BasicMessageDTO, CreateCloudWalletDidDto, CreateCloudWalletDto, CredentialListDto, ExportCloudWalletDto, GetAllCloudWalletConnectionsDto, ImportCloudWalletDto, ReceiveInvitationUrlDTO, UpdateBaseWalletDto } from './dtos/cloudWallet.dto';
 import { Response } from 'express';
 import { CustomExceptionFilter } from 'apps/api-gateway/common/exception-handler';
 import { ApiResponseDto } from '../dtos/apiResponse.dto';
@@ -565,6 +565,33 @@ export class CloudWalletController {
     return res.status(HttpStatus.CREATED).json(finalResponse);
   }
   
+  @Post('/import-wallet')
+  @ApiOperation({
+    summary: 'Import Wallet',
+    description: 'Import Wallet'
+  })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'), UserRoleGuard)
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async importWallet(
+    @Body() importWallet: ImportCloudWalletDto,
+    @User() user: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const {email, id} = user;
+    importWallet.email = email;
+    importWallet.userId = id;
+
+    const importWalletDetails = await this.cloudWalletService.importWallet(importWallet);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.agent.success.importWallet,
+      data: importWalletDetails
+    };
+
+    return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
 
    /**
         * Get DID list by tenant id
