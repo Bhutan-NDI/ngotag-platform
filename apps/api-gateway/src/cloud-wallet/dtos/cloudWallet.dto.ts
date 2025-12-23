@@ -228,6 +228,11 @@ export class ImportCloudWalletDto {
   @IsUrl()
   exportUrl: string;
 
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'checksum for uploaded file is required' })
+  @IsString({ message: 'checksum must be in string format.' })
+  checksum: string;
+
   @ApiPropertyOptional({ example: 'walletID' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'walletID is required' })

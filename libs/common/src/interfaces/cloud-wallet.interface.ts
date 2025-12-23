@@ -496,6 +496,7 @@ export interface IExportCloudWallet {
 
 export interface IImportCloudWallet {
   exportUrl: string;
+  checksum: string;
   passKey: string;
   walletID: string;
   userId: string;
