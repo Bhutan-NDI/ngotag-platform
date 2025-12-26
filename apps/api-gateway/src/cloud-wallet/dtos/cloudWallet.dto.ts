@@ -224,6 +224,11 @@ export class ReceiveInvitationUrlDTO {
 
 export class ImportCloudWalletDto {
   @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'Export ID is required' })
+  @IsUrl()
+  exportId: string;
+
+  @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'Export URL is required' })
   @IsUrl()
   exportUrl: string;

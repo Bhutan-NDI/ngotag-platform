@@ -692,7 +692,7 @@ export class CloudWalletService {
   async importCloudWallet(importWallet: IImportCloudWallet): Promise<Response> {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { email, userId, exportUrl, checksum, passKey, walletID } = importWallet;
+      const { email, userId, exportId, exportUrl, checksum, passKey, walletID } = importWallet;
 
       const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
 
@@ -710,7 +710,7 @@ export class CloudWalletService {
       if (!checkCloudWalletAgentHealth) {
         throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
       }
-      const importWalletResponse = await this.commonService.httpPost(url, { exportedUrl:exportUrl, checksum, exportedWalletKey: passKey, exportedWalletID: walletID}, {
+      const importWalletResponse = await this.commonService.httpPost(url, { exportId, exportedUrl:exportUrl, checksum, exportedWalletKey: passKey, exportedWalletID: walletID}, {
         headers: { authorization: decryptedApiKey }
       });
 
