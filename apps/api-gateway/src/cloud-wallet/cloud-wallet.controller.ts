@@ -1,7 +1,7 @@
 import { IResponse } from '@credebl/common/interfaces/response.interface';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { Controller, Post, Logger, Body, HttpStatus, Res, UseFilters, UseGuards, Get, Param, Query, BadRequestException, Delete, Patch } from '@nestjs/common';
-import { ApiBearerAuth, ApiForbiddenResponse, ApiOperation, ApiQuery, ApiResponse, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiForbiddenResponse, ApiOperation, ApiQuery, ApiResponse, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { ForbiddenErrorDto } from '../dtos/forbidden-error.dto';
 import { UnauthorizedErrorDto } from '../dtos/unauthorized-error.dto';
 import { CloudWalletService } from './cloud-wallet.service';
@@ -23,6 +23,8 @@ import { CreateConnectionDto } from './dtos/create-connection.dto';
 import { ProofWithCredDto } from './dtos/accept-proof-request-with-cred.dto';
 import { DeclineProofRequestDto } from './dtos/decline-proof-request.dto';
 import { SelfAttestedCredentialDto } from './dtos/self-attested-credential.dto';
+import { ProofRequestType } from '../verification/enum/verification.enum';
+import { SendCloudWalletProofRequestPayload } from './dtos/request-proof.dto';
 
 
 @UseFilters(CustomExceptionFilter)
@@ -232,6 +234,46 @@ export class CloudWalletController {
             statusCode: HttpStatus.CREATED,
             message: ResponseMessages.cloudWallet.success.acceptProofRequest,
             data: acceptProofRequestDetails
+        };
+        return res.status(HttpStatus.CREATED).json(finalResponse);
+    }
+
+
+    /**
+     * Out-Of-Band Proof Presentation
+     * @param orgId 
+     * @returns Out-of-band requested proof presentation details
+     */
+    @Post('/proofs/oob')
+    @ApiOperation({
+        summary: `Sends a out-of-band proof request`,
+        description: `Sends a out-of-band proof request`
+    })
+    @ApiResponse({ status: HttpStatus.CREATED, description: 'Success', type: ApiResponseDto })
+    @ApiUnauthorizedResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized', type: UnauthorizedErrorDto })
+    @ApiForbiddenResponse({ status: HttpStatus.FORBIDDEN, description: 'Forbidden', type: ForbiddenErrorDto })
+    @ApiBody({ type: SendCloudWalletProofRequestPayload })
+    @ApiQuery({
+        name: 'requestType',
+        enum: ProofRequestType
+      })
+    @ApiBearerAuth()
+    @UseGuards(AuthGuard('jwt'), UserRoleGuard)
+    async sendOutOfBandPresentationRequest(
+        @Res() res: Response,
+        @User() user: user,
+        @Body() outOfBandRequestProof: SendCloudWalletProofRequestPayload,
+        @Query('requestType') requestType:ProofRequestType = ProofRequestType.INDY
+    ): Promise<Response> {
+        const { id, email } = user;
+        outOfBandRequestProof.email = email;
+        outOfBandRequestProof.userId = id;
+        outOfBandRequestProof.type = requestType;
+        const result = await this.cloudWalletService.sendOutOfBandPresentationRequest(outOfBandRequestProof);
+        const finalResponse: IResponse = {
+            statusCode: HttpStatus.CREATED,
+            message: ResponseMessages.verification.success.send,
+            data: result
         };
         return res.status(HttpStatus.CREATED).json(finalResponse);
     }

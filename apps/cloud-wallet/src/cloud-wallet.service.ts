@@ -3,6 +3,7 @@ import { CommonService } from '@credebl/common';
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   HttpStatus,
   Inject,
   Injectable,
@@ -48,20 +49,26 @@ import {
   IDeleteCloudWallet,
   ICheckCloudWalletStatus,
   IExportCloudWallet,
-  IAddConnectionType
+  IAddConnectionType,
+  ICloudWalletSendProofRequestPayload
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
 import { ResponseMessages } from '@credebl/common/response-messages';
-import { CloudWalletType } from '@credebl/enum/enum';
+import { AutoAccept, CloudWalletType, DidMethod } from '@credebl/enum/enum';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { cloud_wallet_user_info, user } from '@prisma/client';
 import { UpdateBaseWalletDto } from 'apps/api-gateway/src/cloud-wallet/dtos/cloudWallet.dto';
+import { ISendPresentationExchangeProofRequestPayload } from 'apps/verification/src/interfaces/verification.interface';
+import { ISendProofRequestPayload } from 'apps/agent-service/src/interface/agent-service.interface';
+import { convertUrlToDeepLinkUrl } from '@credebl/common/common.utils';
+import { map } from 'rxjs';
 // import { ClientRegistrationService } from '@credebl/client-registration';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const md5 = require('md5');
 
 @Injectable()
 export class CloudWalletService {
+  
   constructor(
     private readonly commonService: CommonService,
     @Inject('NATS_CLIENT') private readonly cloudWalletServiceProxy: ClientProxy,
@@ -597,10 +604,10 @@ export class CloudWalletService {
    * @param createDidDetails
    * @returns DID details
    */
-  async createDid(createDidDetails: ICreateCloudWalletDid): Promise<Response> {
+  async createDid(createDidDetails: ICreateCloudWalletDid): Promise<{did:string}> {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { email, userId, ...didDetails } = createDidDetails;
+      const { email, userId, reuse, ...didDetails } = createDidDetails;
 
       const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
 
@@ -612,6 +619,12 @@ export class CloudWalletService {
       const { tenantId } = getTenant;
       const { agentEndpoint } = getTenant;
 
+      if (DidMethod.PEER === createDidDetails.method && getTenant.invitationDid) {
+        return {
+          did:getTenant.invitationDid
+        };
+      }
+
       const url = `${agentEndpoint}${CommonConstants.URL_SHAGENT_CREATE_DID}${tenantId}`;
 
       const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
@@ -622,7 +635,11 @@ export class CloudWalletService {
       const didDetailsResponse = await this.commonService.httpPost(url, didDetails, {
         headers: { authorization: decryptedApiKey }
       });
-
+      if (reuse && createDidDetails.method === DidMethod.PEER) {
+        await this.cloudWalletRepository.updateCloudWalletDetails({id: getTenant.id}, {
+          invitationDid:didDetailsResponse.did
+        });
+      }
       if (!didDetailsResponse) {
         throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.receiveInvitation, {
           cause: new Error(),
@@ -1063,4 +1080,116 @@ export class CloudWalletService {
       throw error;
     }
   }
+
+
+    async storeVerificationObjectAndReturnUrl(storeObj: string, persistent: boolean): Promise<string> {
+    //nats call in agent-service to create an invitation url
+    const pattern = { cmd: 'store-object-return-url' };
+    const payload = { persistent, storeObj };
+    const message = await this.natsCall(pattern, payload);
+    return message.response;
+  }
+
+    async natsCall(pattern: object, payload: object): Promise<{
+      response: string;
+    }> {
+        return this.cloudWalletServiceProxy
+          .send<string>(pattern, payload)
+          .pipe(
+            map((response) => (
+              {
+                response
+              }))
+          )
+          .toPromise()
+          .catch(error => {
+              this.logger.error(`catch: ${JSON.stringify(error)}`);
+              throw new HttpException({         
+                  status: error.statusCode, 
+                  error: error.error,
+                  message: error.message
+                }, error.error);
+          });
+      }
+
+    /**
+   * Request out-of-band proof presentation
+   * @param outOfBandRequestProof 
+   * @returns Get requested proof presentation details
+   */
+    async sendOutOfBandPresentationRequest(outOfBandRequestProof: ICloudWalletSendProofRequestPayload): Promise<boolean | object> {
+      try {
+  
+      const { userId } = outOfBandRequestProof;
+      const [getTenant, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+           
+      const {tenantId} = getTenant;
+      const { agentEndpoint } = getTenant;
+
+      // return credentialDetailResponse;
+  
+        if (getTenant.connectionImageUrl) {
+          outOfBandRequestProof['imageUrl'] = getTenant.connectionImageUrl;
+        }
+        
+        // outOfBandRequestProof['label'] = label;
+  
+        // const verificationMethodLabel = 'create-request-out-of-band';
+        
+  
+        // Destructuring 'outOfBandRequestProof' to remove emailId, as it is not used while agent operation
+        // const { isShortenUrl, emailId, type, reuseConnection } = outOfBandRequestProof;
+        let invitationDid: string | undefined;
+        if (true === outOfBandRequestProof.reuseConnection) {
+          ({ invitationDid } = getTenant);
+        }
+        outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
+  
+            const proofRequestPayload:ISendProofRequestPayload | ISendPresentationExchangeProofRequestPayload = {
+              goalCode: outOfBandRequestProof.goalCode,
+              parentThreadId: outOfBandRequestProof.parentThreadId,
+              protocolVersion:outOfBandRequestProof.protocolVersion || 'v2',
+              comment:outOfBandRequestProof.comment,
+              label:outOfBandRequestProof.label,
+              imageUrl: getTenant.connectionImageUrl,
+              proofFormats: {
+                presentationExchange: {
+                  presentationDefinition: {
+                    id: outOfBandRequestProof.presentationDefinition.id,
+                    name: outOfBandRequestProof.presentationDefinition.name,
+                    purpose: outOfBandRequestProof.presentationDefinition.purpose,
+                    input_descriptors: [...outOfBandRequestProof.presentationDefinition.input_descriptors]
+                  }
+                }
+              },
+              autoAcceptProof:outOfBandRequestProof.autoAcceptProof,
+              invitationDid:invitationDid || undefined
+            };
+            
+
+          const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_OOB_PROOF_REQUEST}/${tenantId}`;
+          const presentationProof = await this.commonService.httpPost(url, proofRequestPayload, {
+            headers: { authorization: decryptedApiKey }
+          });
+
+          const proofRequestInvitationUrl: string = presentationProof.invitationUrl;
+          if (outOfBandRequestProof.isShortenUrl) {
+            const shortenedUrl: string = await this.storeVerificationObjectAndReturnUrl(proofRequestInvitationUrl, false);
+            this.logger.log('shortenedUrl', shortenedUrl);
+            if (shortenedUrl) {
+              presentationProof.invitationUrl = shortenedUrl;
+              presentationProof.deepLinkURL = convertUrlToDeepLinkUrl(shortenedUrl);
+            }
+          }
+          if (!proofRequestInvitationUrl) {
+            throw new Error(ResponseMessages.verification.error.proofPresentationNotFound);
+          }
+          return presentationProof;
+              
+      } catch (error) {
+        this.logger.error(`[sendOutOfBandPresentationRequest] - error in out of band proof request : ${error.message}`);
+        await this.commonService.handleError(error);
+        throw error;
+      }
+    }
 }
