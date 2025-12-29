@@ -1,8 +1,9 @@
-import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Matches, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Matches, MaxLength, Min } from 'class-validator';
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotSQLInjection, trim } from '@credebl/common/cast.helper';
 import { Transform } from 'class-transformer';
+import { DidMethod } from '@credebl/enum/enum';
 
 export class CreateCloudWalletDto {
     @ApiProperty({ example: 'Credential Wallet', description: 'Cloud wallet label' })
@@ -144,11 +145,16 @@ export class ReceiveInvitationUrlDTO {
     @IsString({ message: 'key type be in string format.' })
     keyType: string;
 
-    @ApiProperty({ example: 'indy'})
+    @ApiProperty({
+      example: DidMethod.INDY,
+      enum: DidMethod
+    })
     @IsNotEmpty({ message: 'method is required' })
-    @Transform(({ value }) => trim(value))
-    @IsString({ message: 'method must be in string format.' })
-    method: string;
+    @IsEnum(DidMethod, {
+      message: `method must be one of: ${Object.values(DidMethod).join(', ')}`
+    })
+    @Transform(({ value }) => value?.trim())
+    method: DidMethod;
 
     @ApiPropertyOptional({example: 'bcovrin:testnet'})
     @IsOptional()
@@ -195,6 +201,11 @@ export class ReceiveInvitationUrlDTO {
     @IsOptional()
     @IsBoolean({ message: 'isDefault must be boolean value.' })
     isDefault?: boolean = false;
+
+    @ApiPropertyOptional({example: 'false'})
+    @IsOptional()
+    @IsBoolean({ message: 'reuse must be boolean value.' })
+    reuse?: boolean = false;
 
     email?: string;
     

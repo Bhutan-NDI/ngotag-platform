@@ -332,6 +332,9 @@ export interface ISendProofRequestPayload {
   parentThreadId?: string;
   willConfirm?: boolean;
   protocolVersion?: string;
+  imageUrl: string,
+  label: string,
+  invitationDid: string
 }
 
 export interface IAgentStatus {
@@ -375,12 +378,12 @@ export interface IPresentationExchange {
   presentationDefinition: IProofRequestPresentationDefinition;
 }
 
-interface IProofFormats {
+export interface IProofFormats {
   indy?: IndyProof;
   presentationExchange?: IPresentationExchange;
 }
 
-interface IndyProof {
+export interface IndyProof {
   name: string;
   version: string;
   requested_attributes: IRequestedAttributes;

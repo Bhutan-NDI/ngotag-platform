@@ -1,6 +1,9 @@
-import { CloudWalletType } from '@credebl/enum/enum';
+import { AutoAccept, CloudWalletType, DidMethod } from '@credebl/enum/enum';
 import { $Enums } from '@prisma/client';
+import { IndyProof, IProofRequestPresentationDefinition } from 'apps/agent-service/src/interface/agent-service.interface';
 import { JsonValue, SingleOrArray } from 'apps/api-gateway/src/issuance/utils/helper';
+import { IPresentationExchange } from 'apps/verification/src/interfaces/verification.interface';
+
 
 export class ICreateCloudWallet {
     label: string;
@@ -63,10 +66,11 @@ export interface IAcceptOffer {
   userId?: string;
 }
 
+
 export interface ICreateCloudWalletDid {
   seed?: string;
   keyType: string;
-  method: string;
+  method: DidMethod;
   network?: string;
   domain?: string;
   role?: string;
@@ -77,6 +81,7 @@ export interface ICreateCloudWalletDid {
   email?: string;
   userId?: string;
   isDefault?: boolean;
+  reuse?:boolean
 }
 export interface IGetStoredWalletInfo {
   email: string;
@@ -197,6 +202,32 @@ export interface ICloudBaseWalletConfigure {
   // orgId: string;
 }
 
+interface IProofFormats {
+  indy?: IndyProof;
+  presentationExchange?: IPresentationExchange;
+}
+export interface ICloudWalletSendProofRequestPayload {
+    protocolVersion?: string;
+    comment?: string;
+    connectionId?: string;
+    proofFormats?: IProofFormats;
+    autoAcceptProof?: AutoAccept;
+    label?: string;
+    goalCode?: string;
+    parentThreadId?: string;
+    willConfirm?: boolean;
+    imageUrl?: string;
+    emailId?: string[]
+    isShortenUrl?: boolean;
+    type?:string;
+    presentationDefinition?:IProofRequestPresentationDefinition;
+    reuseConnection?: boolean;
+    recipientKey?:string;
+    invitationDid?: string;
+    email?: string;
+    userId?: string;
+}
+
 export interface Tags {
   connectionId: string;
   role: string;
@@ -232,6 +263,7 @@ export interface CloudWallet {
   agentApiKey: string;
   key: string;
   connectionImageUrl: string;
+  invitationDid?:string;
 }
 
 export interface IWalletDetailsForDidList {

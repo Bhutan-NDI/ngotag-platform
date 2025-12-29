@@ -102,10 +102,13 @@ export class WebhookService {
 
   async webhookResponse(webhookUrl: string, data: object): Promise<object> {
     try {
+      this.logger.debug(`webhookUrl: ${webhookUrl} `);
+      this.logger.debug(`data: ${JSON.stringify(data)} `);
       const webhookResponse = async (): Promise<Response> => this.webhookFunc(webhookUrl, data);
       const response = await AsyncRetry(webhookResponse, this.retryOptions(this.logger));
       return response;
     } catch (error) {
+      this.logger.error(JSON.stringify(error));
       this.logger.error(`Error in sending webhook response to org webhook url: ${error}`);
       throw new RpcException(error.response ? error.response : error);
     }

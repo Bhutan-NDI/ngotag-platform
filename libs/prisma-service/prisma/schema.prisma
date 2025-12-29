@@ -628,6 +628,7 @@ model cloud_wallet_user_info {
   isActive            Boolean         @default(true) // Active/Deactive flag
   useCount            Int             @default(0) // Current usage count
   maxSubWallets       Int             @default(5000) // Max allowed count
+  invitationDid       String?
 }
 
 enum CloudWalletType {

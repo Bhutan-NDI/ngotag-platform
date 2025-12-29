@@ -1,5 +1,5 @@
 
-import { IAcceptOffer, ICreateCloudWallet, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, ICreateConnection, IConnectionInvitationResponse, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, IW3cCredentials, IDeleteCloudWallet, IExportCloudWallet, ICheckCloudWalletStatus, IAddConnectionType, IImportCloudWallet } from '@credebl/common/interfaces/cloud-wallet.interface';
+import { IAcceptOffer, ICreateCloudWallet, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, ICreateConnection, IConnectionInvitationResponse, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, IW3cCredentials, IDeleteCloudWallet, IExportCloudWallet, ICheckCloudWalletStatus, IAddConnectionType, IImportCloudWallet, ICloudWalletSendProofRequestPayload } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { Inject, Injectable} from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 // eslint-disable-next-line camelcase
@@ -25,6 +25,10 @@ export class CloudWalletService extends BaseService {
     acceptProofRequest: ICheckCloudWalletStatus
   ): Promise<IProofRequestRes> {
     return this.sendNatsMessage(this.cloudWalletServiceProxy, 'check-cloud-wallet-status', acceptProofRequest);
+  }
+
+  async sendOutOfBandPresentationRequest(outOfBandRequestProof: ICloudWalletSendProofRequestPayload): Promise<boolean | object> {
+    return this.sendNatsMessage(this.cloudWalletServiceProxy, 'cloud-wallet-send-proof-request-payload', outOfBandRequestProof);
   }
 
   createConnection(
@@ -106,7 +110,7 @@ export class CloudWalletService extends BaseService {
     return this.sendNatsMessage(this.cloudWalletServiceProxy, 'accept-credential-offer', acceptOfferDetails);
   }
 
-  createDid(createDidDetails: ICreateCloudWalletDid): Promise<Response> {
+  createDid(createDidDetails: ICreateCloudWalletDid): Promise<{did:string}> {
   return this.sendNatsMessage(this.cloudWalletServiceProxy, 'create-cloud-wallet-did', createDidDetails);
   }
 

@@ -2,7 +2,7 @@
 import { Controller } from '@nestjs/common'; // Import the common service in the library
 import { CloudWalletService } from './cloud-wallet.service'; // Import the common service in connection module
 import { MessagePattern } from '@nestjs/microservices'; // Import the nestjs microservices package
-import { IAcceptOffer, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, ICreateCloudWallet, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, ICreateConnection, IConnectionInvitationResponse, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, ISelfAttestedCredential, IW3cCredentials, ICheckCloudWalletStatus, IDeleteCloudWallet, IExportCloudWallet, IAddConnectionType, IImportCloudWallet } from '@credebl/common/interfaces/cloud-wallet.interface';
+import { IAcceptOffer, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, ICreateCloudWallet, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, ICreateConnection, IConnectionInvitationResponse, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, ISelfAttestedCredential, IW3cCredentials, ICheckCloudWalletStatus, IDeleteCloudWallet, IExportCloudWallet, IAddConnectionType, IImportCloudWallet, ICloudWalletSendProofRequestPayload } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
 import { cloud_wallet_user_info, user as User } from '@prisma/client';
 import { UpdateBaseWalletDto } from 'apps/api-gateway/src/cloud-wallet/dtos/cloudWallet.dto';
@@ -25,6 +25,12 @@ export class CloudWalletController {
   async checkCloudWalletStatus(createConnection: ICheckCloudWalletStatus): Promise<IConnectionInvitationResponse> {
     return this.cloudWalletService.checkCloudWalletStatus(createConnection);
   }
+
+  @MessagePattern({ cmd: 'cloud-wallet-send-proof-request-payload' })
+  async ICloudWalletSendProofRequestPayload(createProofRequestPayload: ICloudWalletSendProofRequestPayload): Promise<boolean | object> {
+    return this.cloudWalletService.sendOutOfBandPresentationRequest(createProofRequestPayload);
+  }
+
 
   @MessagePattern({ cmd: 'accept-proof-request-by-holder' })
   async acceptProofRequest(acceptProofRequestPayload: IAcceptProofRequest): Promise<IProofRequestRes> {
@@ -88,7 +94,7 @@ export class CloudWalletController {
   }
 
   @MessagePattern({ cmd: 'create-cloud-wallet-did' })
-  async createDid(createDidDetails: ICreateCloudWalletDid): Promise<Response> {
+  async createDid(createDidDetails: ICreateCloudWalletDid): Promise<{did:string}> {
     return this.cloudWalletService.createDid(createDidDetails);
   }
   
