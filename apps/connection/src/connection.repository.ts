@@ -134,6 +134,10 @@ export class ConnectionRepository {
         organisationId = orgId;
       }
 
+      if ('Connection-did-rotate' === connectionDto.type) {
+        return agentOrg;
+      }
+
       const walletLabelName = connectionDto?.theirLabel;
       let maskedTheirLabel: string;
       let firstLetters: string;

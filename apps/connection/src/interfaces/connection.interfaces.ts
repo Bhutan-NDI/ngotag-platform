@@ -74,6 +74,7 @@ export interface ICreateConnectionPayload {
   outOfBandId: string;
   orgId: string;
   contextCorrelationId: string;
+  type: string;
 }
 
 export interface IFetchConnections {

@@ -1,6 +1,7 @@
 import { AutoAccept, CloudWalletType, DidMethod } from '@credebl/enum/enum';
 import { $Enums } from '@prisma/client';
 import { IndyProof, IProofRequestPresentationDefinition } from 'apps/agent-service/src/interface/agent-service.interface';
+import { IRecordOfString } from 'apps/api-gateway/src/cloud-wallet/dtos/cloudWallet.dto';
 import { JsonValue, SingleOrArray } from 'apps/api-gateway/src/issuance/utils/helper';
 import { IPresentationExchange } from 'apps/verification/src/interfaces/verification.interface';
 
@@ -135,6 +136,12 @@ export interface IAcceptProofRequest {
 export interface ICheckCloudWalletStatus {
   userId: string;
   email: string;
+}
+
+export interface UpdateDIDByConnectionId {
+  userId: string;
+  email: string;
+  dids:IRecordOfString
 }
 
 export interface IDeclineProofRequest {

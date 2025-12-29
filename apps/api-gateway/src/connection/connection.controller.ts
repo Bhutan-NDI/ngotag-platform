@@ -305,6 +305,51 @@ export class ConnectionController {
   }
 
 
+      /**
+   * Catch connection webhook responses.
+   * @Body connectionDto
+   * @param orgId
+   * @returns Callback URL for connection and created connections details
+   */
+  @Post('wh/:orgId/connections/did-rotated')
+  @ApiExcludeEndpoint()
+  @ApiOperation({
+    summary: 'Catch connection webhook responses',
+    description: 'Callback URL for connection'
+  })
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
+  async getConnectionDidRotatedWebhook(
+    @Body() connectionDto: ConnectionDto,
+    @Param('orgId') orgId: string,
+    @Res() res: Response
+  ): Promise<Response> {
+    connectionDto.type = 'Connection-did-rotate';
+    this.logger.log(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
+
+    this.logger.debug(`connectionDto ::: ${JSON.stringify(connectionDto)} ${orgId}`);
+  
+    if (orgId && 'default' === connectionDto?.contextCorrelationId) {
+      connectionDto.orgId = orgId;
+    }
+
+    const orgAgent = await this.connectionService.getConnectionWebhook(connectionDto, orgId).catch(error => {
+        this.logger.debug(`error in saving connection webhook ::: ${JSON.stringify(error)}`);
+     });
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.CREATED,
+      message: ResponseMessages.connection.success.create,
+      data: orgAgent
+    };
+    const webhookUrl = orgAgent ? orgAgent.webhookUrl : false;
+    if (webhookUrl) {     
+        await this.connectionService._postWebhookResponse(webhookUrl, { data: connectionDto }).catch(error => {
+            this.logger.debug(`error in posting webhook  response to webhook url ::: ${JSON.stringify(error)}`);
+        });
+    } 
+    return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
+
+
   @Post('wh/:orgId/question-answer/')
   @ApiExcludeEndpoint()
   @ApiOperation({

@@ -397,6 +397,8 @@ SEED_LENGTH = 32,
 // sign data from agent
 URL_AGENT_SIGN_DATA = '/sign',
 URL_AGENT_VERIFY_SIGNED_DATA = '/verify',
+
+UPDATE_DID_BY_CONNECTION_ID = '/multi-tenancy/dids/'
 }
 
 export const ATTRIBUTE_NAME_REGEX = /\['(.*?)'\]/;

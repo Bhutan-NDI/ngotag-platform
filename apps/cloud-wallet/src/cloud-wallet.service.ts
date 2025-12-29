@@ -51,7 +51,8 @@ import {
   IExportCloudWallet,
   IAddConnectionType,
   IImportCloudWallet,
-  ICloudWalletSendProofRequestPayload
+  ICloudWalletSendProofRequestPayload,
+  UpdateDIDByConnectionId
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -506,6 +507,41 @@ export class CloudWalletService {
         return baseWalletDetails;
       } catch (error) {
         this.logger.error(`[createCloudWallet] - error in create cloud wallet: ${error}`);
+        await this.commonService.handleError(error);
+      }
+    }
+
+    async updateDIDbyConnectionId(updateDIDByConnectionId:UpdateDIDByConnectionId): Promise<BaseAgentInfo> {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { email, userId, ...dids } = updateDIDByConnectionId;
+
+        const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
+
+        if (!checkUserExist) {
+          throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
+        }
+
+        const [getTenant, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+
+        const { tenantId } = getTenant;
+        const { agentEndpoint } = getTenant;
+        const url = `${agentEndpoint}${CommonConstants.UPDATE_DID_BY_CONNECTION_ID}${tenantId}`;
+
+        const updateDIDByConnectionIdResponse = await this.commonService.httpPatch(url, dids.dids, {
+          headers: { authorization: decryptedApiKey }
+        });
+
+        if (!updateDIDByConnectionIdResponse) {
+          throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.updateDIDByCOnnectionID, {
+            cause: new Error(),
+            description: ResponseMessages.errorMessages.serverError
+          });
+        }
+
+        return updateDIDByConnectionIdResponse;
+      } catch (error) {
+        this.logger.error(`[updateDIDbyCOnnectionID] - error: ${error}`);
         await this.commonService.handleError(error);
       }
     }

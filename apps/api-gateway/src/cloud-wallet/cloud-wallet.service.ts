@@ -1,5 +1,5 @@
 
-import { IAcceptOffer, ICreateCloudWallet, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, ICreateConnection, IConnectionInvitationResponse, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, IW3cCredentials, IDeleteCloudWallet, IExportCloudWallet, ICheckCloudWalletStatus, IAddConnectionType, IImportCloudWallet, ICloudWalletSendProofRequestPayload } from '@credebl/common/interfaces/cloud-wallet.interface';
+import { IAcceptOffer, ICreateCloudWallet, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, ICreateConnection, IConnectionInvitationResponse, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, IW3cCredentials, IDeleteCloudWallet, IExportCloudWallet, ICheckCloudWalletStatus, IAddConnectionType, IImportCloudWallet, ICloudWalletSendProofRequestPayload, UpdateDIDByConnectionId } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { Inject, Injectable} from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 // eslint-disable-next-line camelcase
@@ -96,6 +96,10 @@ export class CloudWalletService extends BaseService {
   
   updateBaseWalletDetails(updateBaseWalletDto: UpdateBaseWalletDto): Promise<BaseAgentInfo[]> {
     return this.sendNatsMessage(this.cloudWalletServiceProxy, 'update-base-wallet-details', updateBaseWalletDto);
+  }
+
+  updateDIDByConnectionId(updateDIDByConnectionId: UpdateDIDByConnectionId): Promise<BaseAgentInfo[]> {
+    return this.sendNatsMessage(this.cloudWalletServiceProxy, 'update-did-by-connectionId', updateDIDByConnectionId);
   }
 
   receiveInvitationByUrl(

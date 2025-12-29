@@ -560,6 +560,7 @@ export const ResponseMessages = {
       agentDetails: 'Invalid agent details',
       agentNotRunning: 'Agent is not up and running',
       receiveInvitation: 'Error while receiving invitation by url',
+      updateDIDByCOnnectionID: 'Error while updating did by connection id',
       exportWallet: 'Error while exporting wallet',
       AcceptOffer: 'Error while  invitation by url',
       notReachable: 'The agent endpoint is not reachable.',

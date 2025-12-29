@@ -2,7 +2,7 @@
 import { Controller } from '@nestjs/common'; // Import the common service in the library
 import { CloudWalletService } from './cloud-wallet.service'; // Import the common service in connection module
 import { MessagePattern } from '@nestjs/microservices'; // Import the nestjs microservices package
-import { IAcceptOffer, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, ICreateCloudWallet, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, ICreateConnection, IConnectionInvitationResponse, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, ISelfAttestedCredential, IW3cCredentials, ICheckCloudWalletStatus, IDeleteCloudWallet, IExportCloudWallet, IAddConnectionType, IImportCloudWallet, ICloudWalletSendProofRequestPayload } from '@credebl/common/interfaces/cloud-wallet.interface';
+import { IAcceptOffer, ICreateCloudWalletDid, IReceiveInvitation, IAcceptProofRequest, IProofRequestRes, ICloudBaseWalletConfigure, ICreateCloudWallet, IGetProofPresentation, IGetProofPresentationById, IGetStoredWalletInfo, IStoredWalletDetails, ICreateConnection, IConnectionInvitationResponse, IWalletDetailsForDidList, IConnectionDetailsById, ITenantDetail, ICredentialDetails, GetAllCloudWalletConnections, IBasicMessage, IBasicMessageDetails, IProofPresentationDetails, IGetCredentialsForRequest, ICredentialForRequestRes, IProofPresentationPayloadWithCred, IDeclineProofRequest, BaseAgentInfo, ISelfAttestedCredential, IW3cCredentials, ICheckCloudWalletStatus, IDeleteCloudWallet, IExportCloudWallet, IAddConnectionType, IImportCloudWallet, ICloudWalletSendProofRequestPayload, UpdateDIDByConnectionId } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
 import { cloud_wallet_user_info, user as User } from '@prisma/client';
 import { UpdateBaseWalletDto } from 'apps/api-gateway/src/cloud-wallet/dtos/cloudWallet.dto';
@@ -81,6 +81,11 @@ export class CloudWalletController {
   @MessagePattern({ cmd: 'update-base-wallet-details' })
   async updateBaseWalletDetails(updateBaseWalletDto:UpdateBaseWalletDto): Promise<BaseAgentInfo> {
     return this.cloudWalletService.updateBaseWalletDetails(updateBaseWalletDto);
+  }
+  
+  @MessagePattern({ cmd: 'update-did-by-connectionId' })
+  async updateDIDByConnectionId(updateDIDByConnectionId:UpdateDIDByConnectionId): Promise<BaseAgentInfo> {
+    return this.cloudWalletService.updateDIDbyConnectionId(updateDIDByConnectionId);
   }
 
   @MessagePattern({ cmd: 'receive-invitation-by-url' })

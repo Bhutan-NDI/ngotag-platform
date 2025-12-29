@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Matches, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, IsUrl, Matches, MaxLength, Min } from 'class-validator';
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotSQLInjection, trim } from '@credebl/common/cast.helper';
@@ -361,6 +361,24 @@ export class UpdateBaseWalletDto {
 
 }
 
+export interface IRecordOfString {
+  [key: string]: string
+}
+
+export class UpdateDIDByConnectionDto {
+
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: { type: 'string' },
+    example: {
+      connectionId1: 'did:peer:xyz',
+      connectionId2: 'did:web:abc'
+    },
+    description: 'A record of key-value pairs where both keys(connection id) and values(DIDs) are strings'
+  })
+  @IsObject()
+  data: Record<string, string>;
+}
 export class AddConnectionTypeDto {
   @ApiProperty({ example: 'type'})
   @IsNotEmpty({ message: 'connectionType is required' })
