@@ -234,28 +234,30 @@ export class ReceiveInvitationUrlDTO {
 }
 
 export class ImportCloudWalletDto {
+  @ApiProperty({ example: '72956b02-5a94-4b84-addd-d5e0694eb961' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'Export ID is required' })
-  @IsUrl()
   exportId: string;
 
+  @ApiProperty({ example: 'https://s3.ap-southeast-1.amazonaws.com/' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'Export URL is required' })
   @IsUrl()
   exportUrl: string;
 
+  @ApiProperty({ example: '7404117516f051f641160e73a0194c198de51e187a2839546cd4fff96be97b6e' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'checksum for uploaded file is required' })
   @IsString({ message: 'checksum must be in string format.' })
   checksum: string;
 
-  @ApiPropertyOptional({ example: 'walletID' })
+  @ApiProperty({ example: 'walletID' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'walletID is required' })
   @IsString({ message: 'walletID must be in string format.' })
   walletID: string;
 
-  @ApiPropertyOptional({ example: 'XzFjo1RTZ2h9UVFCnPUyaQ' })
+  @ApiProperty({ example: 'XzFjo1RTZ2h9UVFCnPUyaQ' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'passKey is required' })
   @IsString({ message: 'passKey must be in string format.' })
