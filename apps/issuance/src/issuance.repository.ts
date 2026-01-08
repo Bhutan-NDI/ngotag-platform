@@ -93,11 +93,20 @@ export class IssuanceRepository {
     }
   }
 
-  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations[]> {
+  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations> {
     try {
-      return this.prisma.agent_invitations.findMany({
+      return this.prisma.agent_invitations.findFirst({
         where: {
-          orgId
+          AND: [
+            {
+              orgId
+            },
+            {
+              invitationDid: {
+                not: null
+              }
+            }
+          ]
         },
         orderBy: {
           createDateTime: 'asc'
@@ -727,7 +736,9 @@ export class IssuanceRepository {
         .filter(Boolean);
 
       if (0 < referencedTables.length) {
-        let errorMessage = `Organization ID ${orgId} is referenced in the following table(s): ${referencedTables.join(', ')}`;
+        let errorMessage = `Organization ID ${orgId} is referenced in the following table(s): ${referencedTables.join(
+          ', '
+        )}`;
 
         if (1 === referencedTables.length) {
           if (referencedTables.includes(`${PrismaTables.PRESENTATIONS}`)) {

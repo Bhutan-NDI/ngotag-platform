@@ -491,11 +491,8 @@ export class VerificationService {
       const { isShortenUrl, emailId, type, reuseConnection, ...updateOutOfBandRequestProof } = outOfBandRequestProof;
       let invitationDid: string | undefined;
       if (true === reuseConnection) {
-        const data: agent_invitations[] = await this.verificationRepository.getInvitationDidByOrgId(user.orgId);
-        if (data && 0 < data.length) {
-          const [firstElement] = data;
-          invitationDid = firstElement?.invitationDid ?? undefined;
-        }
+        const invitation: agent_invitations = await this.verificationRepository.getInvitationDidByOrgId(user.orgId);
+        invitationDid = invitation?.invitationDid ?? undefined;
       }
       outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
 
@@ -520,7 +517,7 @@ export class VerificationService {
             goalCode: outOfBandRequestProof.goalCode,
             // TODO: [Credo-ts] Issue with parentThreadId in creating an OOB proof request.
             // This causes failures in OOB connection establishment.
-            // parentThreadId: outOfBandRequestProof?.parentThreadId,
+            parentThreadId: outOfBandRequestProof?.parentThreadId, // TODO: Test with latest agent versions, uncommented for NGOTAG testing
             protocolVersion: outOfBandRequestProof.protocolVersion || 'v2',
             comment: outOfBandRequestProof.comment,
             label,

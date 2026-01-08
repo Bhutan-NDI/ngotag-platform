@@ -96,7 +96,7 @@ export class AgentController {
   }
 
   /**
-   * Get Organization agent health
+   * Sign data
    * @param orgId The ID of the organization
    * @param reqUser The user making the request
    * @param res The response object
@@ -135,7 +135,7 @@ export class AgentController {
   }
 
   /**
-   * Get Organization agent health
+   * Verify signature of the data
    * @param orgId The ID of the organization
    * @param reqUser The user making the request
    * @param res The response object
