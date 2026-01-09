@@ -9,7 +9,7 @@ import {
   ReceiveInvitationUrlDto
 } from './dtos/connection.dto';
 import { IReceiveInvitationRes, IUserRequestInterface } from './interfaces';
-import { IConnectionList, IDeletedConnectionsRecord } from '@credebl/common/interfaces/connection.interface';
+import { IConnectionList, IDeletedConnectionsRecord, orgAgents } from '@credebl/common/interfaces/connection.interface';
 import {
   AgentConnectionSearchCriteria,
   IConnectionDetailsById,
@@ -48,7 +48,7 @@ export class ConnectionService extends BaseService {
     }
   }
 
-  getConnectionWebhook(connectionDto: ConnectionDto, orgId: string): Promise<object> {
+  getConnectionWebhook(connectionDto: ConnectionDto, orgId: string): Promise<orgAgents> {
     const payload = { connectionDto, orgId };
     return this.natsClient.sendNatsMessage(this.connectionServiceProxy, 'webhook-get-connection', payload);
   }

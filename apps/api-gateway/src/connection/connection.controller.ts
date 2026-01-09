@@ -375,19 +375,16 @@ export class ConnectionController {
       connectionDto.orgId = orgId;
     }
 
-    const connectionData = await this.connectionService.getConnectionWebhook(connectionDto, orgId).catch((error) => {
+    const orgAgent = await this.connectionService.getConnectionWebhook(connectionDto, orgId).catch((error) => {
       this.logger.debug(`error in saving connection webhook ::: ${JSON.stringify(error)}`);
     });
     const finalResponse: IResponse = {
       statusCode: HttpStatus.CREATED,
       message: ResponseMessages.connection.success.create,
-      data: connectionData
+      data: orgAgent
     };
-    const webhookUrl = await this.connectionService
-      ._getWebhookUrl(connectionDto?.contextCorrelationId, orgId)
-      .catch((error) => {
-        this.logger.debug(`error in getting webhook url ::: ${JSON.stringify(error)}`);
-      });
+    const webhookUrl = orgAgent ? orgAgent.webhookUrl : false;
+
     if (webhookUrl) {
       await this.connectionService._postWebhookResponse(webhookUrl, { data: connectionDto }).catch((error) => {
         this.logger.debug(`error in posting webhook  response to webhook url ::: ${JSON.stringify(error)}`);

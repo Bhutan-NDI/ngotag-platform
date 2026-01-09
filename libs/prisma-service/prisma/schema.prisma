@@ -15,7 +15,7 @@ model user {
   firstName              String?                  @db.VarChar(500)
   lastName               String?                  @db.VarChar(500)
   email                  String?                  @unique(map: "UQ_e12875dfb3b1d92d7d7c5377e22") @db.VarChar(500)
-  username               String?                  @db.VarChar(500)
+  username               String?                  @unique(map: "UQ_username") @db.VarChar(255)
   verificationCode       String?                  @db.VarChar(500)
   isEmailVerified        Boolean                  @default(false)
   supabaseUserId         String?                  @db.VarChar(500)
@@ -114,7 +114,7 @@ model user_org_roles {
   idpRoleId    String?       @db.Uuid
   organisation organisation? @relation(fields: [orgId], references: [id])
   orgRole      org_roles     @relation(fields: [orgRoleId], references: [id])
-  user         user          @relation(fields: [userId], references: [id])
+  user         user          @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model organisation {
@@ -533,7 +533,7 @@ enum UserRole {
 model user_role_mapping {
   id         String    @id @default(uuid()) @db.Uuid
   userId     String    @db.Uuid
-  user       user      @relation(fields: [userId], references: [id])
+  user       user      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userRoleId String    @db.Uuid
   user_role  user_role @relation(fields: [userRoleId], references: [id])
 }
@@ -542,18 +542,21 @@ model cloud_wallet_user_info {
   id                  String          @id @default(uuid()) @db.Uuid
   label               String?
   tenantId            String?
-  email               String?         @unique() @db.VarChar(500)
+  email               String?         @db.VarChar(500)
   type                CloudWalletType
   createDateTime      DateTime        @default(now()) @db.Timestamptz(6)
   createdBy           String          @db.Uuid
   lastChangedDateTime DateTime        @default(now()) @db.Timestamptz(6)
   lastChangedBy       String          @db.Uuid
-  userId              String?          @db.Uuid
+  userId              String?         @unique() @db.Uuid
   agentEndpoint       String?
   agentApiKey         String?
   key                 String?
   connectionImageUrl  String?
-  user                user?            @relation(fields: [userId], references: [id])
+  user                user?           @relation(fields: [userId], references: [id])
+  isActive            Boolean         @default(true) // Active/Deactive flag
+  useCount            Int             @default(0) // Current usage count
+  maxSubWallets       Int             @default(5000) // Max allowed count
 }
 
 enum CloudWalletType {

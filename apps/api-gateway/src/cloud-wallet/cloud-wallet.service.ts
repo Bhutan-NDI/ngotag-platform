@@ -34,11 +34,19 @@ export class CloudWalletService extends BaseService {
     super('CloudWalletServiceProxy');
   }
 
-  configureBaseWallet(cloudBaseWalletConfigure: ICloudBaseWalletConfigure): Promise<IGetStoredWalletInfo> {
+  async configureBaseWallet(cloudBaseWalletConfigure: ICloudBaseWalletConfigure): Promise<IGetStoredWalletInfo> {
     return this.natsClient.sendNatsMessage(
       this.cloudWalletServiceProxy,
       'configure-cloud-base-wallet',
       cloudBaseWalletConfigure
+    );
+  }
+
+  checkCloudWalletStatus(acceptProofRequest: ICheckCloudWalletStatus): Promise<IProofRequestRes> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'check-cloud-wallet-status',
+      acceptProofRequest
     );
   }
 
@@ -58,6 +66,14 @@ export class CloudWalletService extends BaseService {
     );
   }
 
+  declineProofRequest(acceptProofRequest: IDeclineProofRequest): Promise<IProofRequestRes> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'decline-proof-request-by-holder',
+      acceptProofRequest
+    );
+  }
+
   getProofById(proofPresentationByIdPayload: IGetProofPresentationById): Promise<IProofRequestRes> {
     return this.natsClient.sendNatsMessage(
       this.cloudWalletServiceProxy,
@@ -66,6 +82,20 @@ export class CloudWalletService extends BaseService {
     );
   }
 
+  submitProofWithCred(proofPresentationByIdPayload: IProofPresentationPayloadWithCred): Promise<IProofRequestRes> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'submit-proof-with-cred',
+      proofPresentationByIdPayload
+    );
+  }
+  getCredentialsForRequest(proofPresentationByIdPayload: IGetCredentialsForRequest): Promise<ICredentialForRequestRes> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'get-credentials-for-request',
+      proofPresentationByIdPayload
+    );
+  }
   getProofPresentation(proofPresentationPayload: IGetProofPresentation): Promise<IProofRequestRes[]> {
     return this.natsClient.sendNatsMessage(
       this.cloudWalletServiceProxy,
@@ -76,6 +106,34 @@ export class CloudWalletService extends BaseService {
 
   createCloudWallet(cloudWalletDetails: ICreateCloudWallet): Promise<IStoredWalletDetails> {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'create-cloud-wallet', cloudWalletDetails);
+  }
+
+  async deleteCloudWallet(
+    cloudWalletDetails: IDeleteCloudWallet
+    // eslint-disable-next-line camelcase
+  ): Promise<cloud_wallet_user_info> {
+    // eslint-disable-next-line camelcase
+    const res: cloud_wallet_user_info = await this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'delete-cloud-wallet',
+      cloudWalletDetails
+    );
+    if (cloudWalletDetails.deleteHolder) {
+      await this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'delete-user', res.userId);
+    }
+    return res;
+  }
+
+  getBaseWalletDetails(user: user): Promise<BaseAgentInfo[]> {
+    return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'get-base-wallet-details', user);
+  }
+
+  updateBaseWalletDetails(updateBaseWalletDto: UpdateBaseWalletDto): Promise<BaseAgentInfo[]> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'update-base-wallet-details',
+      updateBaseWalletDto
+    );
   }
 
   receiveInvitationByUrl(ReceiveInvitationDetails: IReceiveInvitation): Promise<Response> {
@@ -92,6 +150,10 @@ export class CloudWalletService extends BaseService {
 
   createDid(createDidDetails: ICreateCloudWalletDid): Promise<Response> {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'create-cloud-wallet-did', createDidDetails);
+  }
+
+  exportWallet(exportWallet: IExportCloudWallet): Promise<Response> {
+    return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'export-cloud-wallet', exportWallet);
   }
 
   getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {
@@ -117,10 +179,54 @@ export class CloudWalletService extends BaseService {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'wallet-credential-by-id', tenantDetails);
   }
 
+  getAllW3cCredentials(w3cCredentials: IW3cCredentials): Promise<Response> {
+    return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'get-all-w3c-credenentials', w3cCredentials);
+  }
+
+  getW3cCredentialByCredentialRecordId(w3CcredentialDetail: IW3cCredentials): Promise<Response> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'get-w3c-credential-by-record-id',
+      w3CcredentialDetail
+    );
+  }
+
   getCredentialByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<Response> {
     return this.natsClient.sendNatsMessage(
       this.cloudWalletServiceProxy,
       'wallet-credential-by-record-id',
+      credentialDetails
+    );
+  }
+
+  getCredentialFormatDataByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<Response> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'wallet-credentialFormatData-by-record-id',
+      credentialDetails
+    );
+  }
+
+  getProofFormatDataByProofRecordId(credentialDetails: IProofPresentationDetails): Promise<Response> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'wallet-Proof-presentation-FormatData-by-record-id',
+      credentialDetails
+    );
+  }
+
+  deleteCredentialByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<Response> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'delete-credential-by-record-id',
+      credentialDetails
+    );
+  }
+
+  deleteW3cCredentialByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<Response> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'delete-w3c-credential-by-record-id',
       credentialDetails
     );
   }
@@ -135,5 +241,13 @@ export class CloudWalletService extends BaseService {
 
   sendBasicMessage(messageDetails: IBasicMessageDetails): Promise<Response> {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'send-basic-message', messageDetails);
+  }
+
+  createSelfAttestedW3cCredential(selfAttestedCredentialDto: SelfAttestedCredentialDto): Promise<Response> {
+    return this.natsClient.sendNatsMessage(
+      this.cloudWalletServiceProxy,
+      'create-self-attested-w3c-credential',
+      selfAttestedCredentialDto
+    );
   }
 }

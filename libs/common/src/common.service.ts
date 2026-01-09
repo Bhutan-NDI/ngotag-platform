@@ -68,7 +68,7 @@ export class CommonService {
         .delete(url, config)
         .toPromise()
         .then((data) => {
-          return data;
+          return data.data;
         });
     } catch (error) {
       this.logger.error(`ERROR in DELETE : ${JSON.stringify(error.response.data)}`);

@@ -10,4 +10,6 @@ export interface JwtPayload {
   permissions: string[];
   email?: string;
   sid: string;
+  preferred_username: string;
+  client_id: string;
 }

@@ -75,8 +75,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
-    if (payload?.email) {
-      userInfo = await this.usersService.getUserByUserIdInKeycloak(payload?.email);
+    if (payload && !payload.preferred_username.includes('service-account')) {
+      userInfo = await this.usersService.getUserByUserIdInKeycloak(payload?.preferred_username);
     }
 
     if (payload.hasOwnProperty('client_id')) {

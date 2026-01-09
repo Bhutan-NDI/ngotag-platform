@@ -328,13 +328,24 @@ export enum CommonConstants {
   CACHE_TTL_SECONDS = 604800,
 
   CLOUD_WALLET_GET_PROOF_REQUEST = '/didcomm/proofs',
-  CLOUD_WALLET_ACCEPT_PROOF_REQUEST = '/accept-request',
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
-  CLOUD_WALLET_CONNECTION_BY_ID = '/didcomm/connections',
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
   RECEIVE_INVITATION_BY_URL = '/didcomm/oob/receive-invitation-url',
-  CLOUD_WALLET_CREDENTIAL = '/didcomm/credentials',
-  CLOUD_WALLET_BASIC_MESSAGE = '/didcomm/basic-messages/',
+  URL_CLOUD_WALLET_EXPORT = '/multi-tenancy/export/',
+  CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED = '/multi-tenancy/proofs/accept-request-with-cred',
+  CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST = '/multi-tenancy/credentialsForRequest',
+  CLOUD_WALLET_DELETE_BY_TENANT_ID = '/multi-tenancy/',
+  CLOUD_WALLET_CHECK_CLOUD_WALLET_EXISTS = '/multi-tenancy/checkCloudWalletExists',
+  CLOUD_WALLET_ACCEPT_PROOF_REQUEST = '/accept-request/',
+  CLOUD_WALLET_DECLINE_PROOF_REQUEST = '/decline-request/',
+  CLOUD_WALLET_DID_LIST = '/multi-tenancy/dids/',
+  CLOUD_WALLET_CONNECTION_BY_ID = '/multi-tenancy/connections/',
+  CLOUD_WALLET_CREDENTIAL = '/multi-tenancy/credentials',
+  CLOUD_WALLET_W3C_CREDENTIAL = '/multi-tenancy/credentials/w3c/',
+  CLOUD_WALLET_CREDENTIAL_FORMAT_DATA = '/multi-tenancy/credentialsFormatData',
+  CLOUD_WALLET_PROOF_FORM_DATA = '/multi-tenancy/form-data',
+  CLOUD_WALLET_DELETE_CREDENTIAL = '/multi-tenancy/credential',
+  CLOUD_WALLET_DELETE_W3C_CREDENTIAL = '/multi-tenancy/credential/w3c',
+  CLOUD_WALLET_BASIC_MESSAGE = '/multi-tenancy/basic-messages/',
+  CLOUD_WALLET_SELF_ATTESTED_W3C_CREDENTIAL = '/multi-tenancy/credentials/w3c/self-attested/',
 
   // Bulk-issuance
   BATCH_SIZE = 100,
