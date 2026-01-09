@@ -320,7 +320,7 @@ export class SchemaService extends BaseService {
       if (schemaPayload.schemaType === JSONSchemaType.POLYGON_W3C) {
         const createSchemaPayload = await this._createW3CSchema(W3cSchemaPayload);
         createSchema = createSchemaPayload.response;
-        createSchema.type = JSONSchemaType.POLYGON_W3C;
+        createSchema.type = schemaPayload.schemaType;
       } else {
         const createSchemaPayload = await this._createW3CledgerAgnostic(schemaObject);
         if (!createSchemaPayload) {
