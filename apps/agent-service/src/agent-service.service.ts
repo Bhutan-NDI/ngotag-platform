@@ -937,6 +937,9 @@ export class AgentServiceService {
       if (createDidPayload.method === DidMethod.POLYGON) {
         createDidPayload.endpoint = agentDetails.agentEndPoint;
       }
+      if (createDidPayload.method === DidMethod.ETHEREUM) {
+        createDidPayload.endpoint = agentDetails.agentEndPoint;
+      }
 
       const { isPrimaryDid, ...payload } = createDidPayload;
       const didDetails = await this.getDidDetails(url, payload, getApiKey);
@@ -1804,8 +1807,9 @@ export class AgentServiceService {
       // Perform the deletion in a transaction
       return await this.prisma.$transaction(async (prisma) => {
         // Delete org agent and related records
-        const { orgDid, agentInvitation, deleteOrgAgent } =
-          await this.agentServiceRepository.deleteOrgAgentByOrg(orgId);
+        const { orgDid, agentInvitation, deleteOrgAgent } = await this.agentServiceRepository.deleteOrgAgentByOrg(
+          orgId
+        );
 
         // Make the HTTP DELETE request
         const deleteWallet = await this.commonService.httpDelete(url, {
@@ -2089,6 +2093,32 @@ export class AgentServiceService {
       return encryptedToken;
     } catch (error) {
       throw error;
+    }
+  }
+
+  /**
+   * @returns ethereum key pair for Ethr DID
+   */
+  async createEthereumKeyPair(orgId: string): Promise<object> {
+    try {
+      const platformAdminSpinnedUp = await this.agentServiceRepository.platformAdminAgent(
+        CommonConstants.PLATFORM_ADMIN_ORG
+      );
+
+      const getPlatformAgentEndPoint = platformAdminSpinnedUp.org_agents[0].agentEndPoint;
+      const getDcryptedToken = await this.commonService.decryptPassword(platformAdminSpinnedUp?.org_agents[0].apiKey);
+
+      const url = `${getPlatformAgentEndPoint}${CommonConstants.CREATE_ETH_KEY}`;
+
+      const createKeyPairResponse = await this.commonService.httpPost(
+        url,
+        {},
+        { headers: { authorization: getDcryptedToken } }
+      );
+      return createKeyPairResponse;
+    } catch (error) {
+      this.logger.error(`error in create ethereum KeyPair : ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
     }
   }
 }

@@ -53,7 +53,8 @@ export enum DidMethod {
   INDY = 'indy',
   KEY = 'key',
   WEB = 'web',
-  POLYGON = 'polygon'
+  POLYGON = 'polygon',
+  ETHEREUM = 'ethereum'
 }
 
 export enum Ledgers {
@@ -222,7 +223,8 @@ export enum IndySchemaDataType {
 
 export enum JSONSchemaType {
   POLYGON_W3C = 'polygon',
-  LEDGER_LESS = 'no_ledger'
+  LEDGER_LESS = 'no_ledger',
+  ETHEREUM_W3C = 'ethr'
 }
 
 export enum NetworkNamespace {

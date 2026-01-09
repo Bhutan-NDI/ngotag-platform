@@ -298,6 +298,7 @@ export enum CommonConstants {
   BUILDERNET = 'buildernet',
   MAINNET = 'mainnet',
   LIVENET = 'livenet',
+  SEPOLIA = 'sepolia',
 
   // Features Id
   // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
@@ -383,7 +384,11 @@ export enum CommonConstants {
   GET_VERIFIED_PROOF = 'get-verified-proof',
   GET_QUESTION_ANSWER_RECORD = 'get-question-answer-record',
   SEND_QUESTION = 'send-question',
-  SEND_BASIC_MESSAGE = 'send-basic-message'
+  SEND_BASIC_MESSAGE = 'send-basic-message',
+  // Ethereum
+  CREATE_ETHEREUM_W3C_SCHEMA = '/ethereum/create-schema', // TODO: Update this in ngotag-controller also
+  // SHARED_CREATE_ETHEREUM_W3C_SCHEMA = '/multi-tenancy/ethereum-wc3/schema/', // TODO: we've to change ngotag-controller since now dedicated and multi-tenant both will have same URL
+  CREATE_ETH_KEY = '/ethereum/create-keys'
 }
 export const MICRO_SERVICE_NAME = Symbol('MICRO_SERVICE_NAME');
 export const ATTRIBUTE_NAME_REGEX = /\['(.*?)'\]/;

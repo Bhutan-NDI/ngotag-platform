@@ -283,6 +283,7 @@ export class SchemaService extends BaseService {
       let createSchema;
 
       const { description, attributes, schemaName } = schemaPayload;
+      let url;
       const agentDetails = await this.schemaRepository.getAgentDetailsByOrgId(orgId);
       if (!agentDetails) {
         throw new NotFoundException(ResponseMessages.schema.error.agentDetailsNotFound, {
@@ -299,7 +300,11 @@ export class SchemaService extends BaseService {
           description: ResponseMessages.errorMessages.badRequest
         });
       }
-      const url = `${agentEndPoint}${CommonConstants.CREATE_POLYGON_W3C_SCHEMA}`;
+      if (agentDetails.orgDid.includes(JSONSchemaType.POLYGON_W3C)) {
+        url = `${agentEndPoint}${CommonConstants.CREATE_POLYGON_W3C_SCHEMA}`;
+      } else if (agentDetails.orgDid.includes(JSONSchemaType.ETHEREUM_W3C)) {
+        url = `${agentEndPoint}${CommonConstants.CREATE_ETHEREUM_W3C_SCHEMA}`;
+      }
       const schemaObject = await w3cSchemaBuilder(attributes, schemaName, description);
       if (!schemaObject) {
         throw new BadRequestException(ResponseMessages.schema.error.schemaBuilder, {
@@ -317,7 +322,11 @@ export class SchemaService extends BaseService {
         orgId,
         schemaRequestPayload: agentSchemaPayload
       };
-      if (schemaPayload.schemaType === JSONSchemaType.POLYGON_W3C) {
+      if (
+        schemaPayload.schemaType === JSONSchemaType.POLYGON_W3C ||
+        schemaPayload.schemaType === JSONSchemaType.ETHEREUM_W3C
+      ) {
+        // TODO: Test for Ethereum schema
         const createSchemaPayload = await this._createW3CSchema(W3cSchemaPayload);
         createSchema = createSchemaPayload.response;
         createSchema.type = JSONSchemaType.POLYGON_W3C;

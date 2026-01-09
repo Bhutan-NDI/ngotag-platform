@@ -101,4 +101,10 @@ export class AgentService extends BaseService {
 
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'delete-wallet', payload);
   }
+
+  async createEthKeyPair(orgId: string): Promise<object> {
+    const payload = { orgId };
+    // NATS call
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'ethereum-create-keys', payload);
+  }
 }

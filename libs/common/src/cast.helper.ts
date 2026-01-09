@@ -416,6 +416,10 @@ export function checkDidLedgerAndNetwork(schemaType: string, did: string): boole
     return cleanDid.includes(JSONSchemaType.POLYGON_W3C);
   }
 
+  if (JSONSchemaType.ETHEREUM_W3C === cleanSchemaType) {
+    return cleanDid.includes(JSONSchemaType.ETHEREUM_W3C);
+  }
+
   if (JSONSchemaType.LEDGER_LESS === cleanSchemaType) {
     return cleanDid.startsWith(ledgerLessDIDType.DID_KEY) || cleanDid.startsWith(ledgerLessDIDType.DID_WEB);
   }
