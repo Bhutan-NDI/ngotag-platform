@@ -1,0 +1,117 @@
+name: Release to Production
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.0.0)'
+        required: true
+
+env:
+  ACR_DEV: phenixdevacr.azurecr.io
+  ACR_PROD: phenixprodacr.azurecr.io
+
+jobs:
+  promote-images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - api-gateway
+          - user
+          - organization
+          - connection
+          - issuance
+          - ledger
+          - verification
+          - agent-provisioning
+          - agent-service
+          - ecosystem
+          - webhook
+          - notification
+          - utility
+    
+    steps:
+      - name: Get tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG=${GITHUB_REF#refs/tags/}
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Login to Dev ACR
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ env.ACR_DEV }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Login to Prod ACR
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ env.ACR_PROD }}
+          username: ${{ secrets.ACR_PROD_USERNAME }}
+          password: ${{ secrets.ACR_PROD_PASSWORD }}
+
+      - name: Pull from Dev, tag for Prod, push
+        run: |
+          SERVICE="${{ matrix.service }}"
+          TAG="${{ steps.tag.outputs.tag }}"
+          
+          # Pull latest from dev
+          docker pull ${{ env.ACR_DEV }}/phenix-platform-${SERVICE}:latest
+          
+          # Tag for prod with version and latest
+          docker tag ${{ env.ACR_DEV }}/phenix-platform-${SERVICE}:latest \
+            ${{ env.ACR_PROD }}/phenix-platform-${SERVICE}:${TAG}
+          docker tag ${{ env.ACR_DEV }}/phenix-platform-${SERVICE}:latest \
+            ${{ env.ACR_PROD }}/phenix-platform-${SERVICE}:latest
+          
+          # Push to prod
+          docker push ${{ env.ACR_PROD }}/phenix-platform-${SERVICE}:${TAG}
+          docker push ${{ env.ACR_PROD }}/phenix-platform-${SERVICE}:latest
+
+  update-prod-manifests:
+    needs: promote-images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG=${GITHUB_REF#refs/tags/}
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Checkout manifests repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/phenix-iac-manifests
+          token: ${{ secrets.MANIFEST_REPO_TOKEN }}
+          path: manifests
+
+      - name: Update prod image tags
+        run: |
+          cd manifests
+          TAG="${{ steps.tag.outputs.tag }}"
+          
+          # Update all phenix-platform image tags in prod kustomization
+          sed -i "s/newTag: .*/newTag: ${TAG}/g" apps/prod/kustomization.yaml
+
+      - name: Commit and push
+        run: |
+          cd manifests
+          TAG="${{ steps.tag.outputs.tag }}"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "Release ${TAG} to production"
+          git push

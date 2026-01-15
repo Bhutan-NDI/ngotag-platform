@@ -1,0 +1,201 @@
+name: Build and Push to Azure ACR
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'apps/**'
+      - 'libs/**'
+      - 'Dockerfiles/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      services:
+        description: 'Comma-separated list of services to build (e.g., api-gateway,user) or "all"'
+        required: false
+        default: 'all'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ACR_NAME: phenixdevacr
+  ACR_LOGIN_SERVER: phenixdevacr.azurecr.io
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_changes: ${{ steps.set-matrix.outputs.has_changes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed services
+        id: set-matrix
+        run: |
+          # All available services
+          ALL_SERVICES="api-gateway user organization connection issuance ledger verification agent-provisioning agent-service ecosystem webhook notification utility"
+          
+          # If workflow_dispatch with specific services
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.services }}" != "all" ]; then
+            SERVICES="${{ github.event.inputs.services }}"
+            SERVICES=$(echo $SERVICES | tr ',' ' ')
+          # For push events, detect changes
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+            SERVICES=""
+            
+            # Check if libs changed (rebuild all)
+            if echo "$CHANGED_FILES" | grep -q "^libs/"; then
+              SERVICES="$ALL_SERVICES"
+            else
+              # Check each service directory
+              for svc in $ALL_SERVICES; do
+                if echo "$CHANGED_FILES" | grep -q "^apps/$svc/\|^Dockerfiles/Dockerfile.$svc"; then
+                  SERVICES="$SERVICES $svc"
+                fi
+              done
+            fi
+          else
+            # For workflow_dispatch with 'all' or PR, build all
+            SERVICES="$ALL_SERVICES"
+          fi
+          
+          # Trim whitespace
+          SERVICES=$(echo $SERVICES | xargs)
+          
+          if [ -z "$SERVICES" ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "matrix={\"service\":[]}" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            # Convert to JSON array
+            JSON_ARRAY=$(echo $SERVICES | tr ' ' '\n' | jq -R . | jq -s -c .)
+            echo "matrix={\"service\":$JSON_ARRAY}" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "Services to build: $SERVICES"
+
+  build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Set image tag
+        id: tag
+        run: |
+          BRANCH=${GITHUB_REF#refs/heads/}
+          SHORT_SHA=${GITHUB_SHA::8}
+          if [ "$BRANCH" == "main" ]; then
+            TAG="latest"
+            ENV="prod"
+          elif [ "$BRANCH" == "develop" ]; then
+            TAG="dev"
+            ENV="dev"
+          else
+            TAG="$SHORT_SHA"
+            ENV="dev"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "env=$ENV" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfiles/Dockerfile.${{ matrix.service }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/phenix-platform-${{ matrix.service }}:${{ steps.tag.outputs.tag }}
+            ${{ env.ACR_LOGIN_SERVER }}/phenix-platform-${{ matrix.service }}:${{ steps.tag.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  update-manifests:
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout manifests repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/phenix-iac-manifests
+          token: ${{ secrets.MANIFEST_REPO_TOKEN }}
+          path: manifests
+
+      - name: Determine environment
+        id: env
+        run: |
+          BRANCH=${GITHUB_REF#refs/heads/}
+          if [ "$BRANCH" == "main" ]; then
+            echo "dir=apps/prod" >> $GITHUB_OUTPUT
+            echo "name=prod" >> $GITHUB_OUTPUT
+          else
+            echo "dir=apps/dev" >> $GITHUB_OUTPUT
+            echo "name=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update image tags in kustomization
+        run: |
+          cd manifests/${{ steps.env.outputs.dir }}
+          SHORT_SHA=${GITHUB_SHA::8}
+          
+          # Update all phenix-platform microservice image tags
+          SERVICES="api-gateway user organization connection issuance ledger verification agent-provisioning agent-service ecosystem webhook notification utility"
+          
+          for svc in $SERVICES; do
+            # Use yq to update specific image tags
+            if command -v yq &> /dev/null; then
+              yq -i "(.images[] | select(.name == \"*phenix-platform-$svc\") | .newTag) = \"$SHORT_SHA\"" kustomization.yaml
+            else
+              # Fallback to sed
+              sed -i "/phenix-platform-$svc/,/newTag:/s/newTag: .*/newTag: $SHORT_SHA/" kustomization.yaml
+            fi
+          done
+
+      - name: Commit and push
+        run: |
+          cd manifests
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add -A
+          if ! git diff --staged --quiet; then
+            git commit -m "[${{ steps.env.outputs.name }}] Update phenix-platform images to ${GITHUB_SHA::8}"
+            git push
+          else
+            echo "No changes to commit"
+          fi
