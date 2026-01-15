@@ -77,7 +77,8 @@ jobs:
       - name: Detect changed services
         id: set-matrix
         run: |
-          ALL_SERVICES="api-gateway user organization connection issuance ledger verification agent-provisioning agent-service ecosystem webhook notification utility"
+          # Deployment order based on service dependencies (NATS message-based architecture)
+          ALL_SERVICES="utility notification ledger agent-provisioning user organization agent-service connection ecosystem issuance verification webhook api-gateway"
           
           if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.services }}" != "all" ]; then
             SERVICES="${{ github.event.inputs.services }}"
@@ -119,6 +120,7 @@ jobs:
     environment: ${{ needs.detect-changes.outputs.environment }}
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
     
     steps:
@@ -172,11 +174,20 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.MANIFEST_APP_ID }}
+          private-key: ${{ secrets.MANIFEST_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: phenix-iac-manifests
+
       - name: Checkout manifests repo
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/phenix-iac-manifests
-          token: ${{ secrets.MANIFEST_REPO_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: manifests
 
       - name: Update image tags in kustomization
@@ -185,18 +196,20 @@ jobs:
           cd manifests/apps/$ENV
           SHORT_SHA=${GITHUB_SHA::8}
           
-          SERVICES="api-gateway user organization connection issuance ledger verification agent-provisioning agent-service ecosystem webhook notification utility"
+          SERVICES="utility notification ledger agent-provisioning user organization agent-service connection ecosystem issuance verification webhook api-gateway"
           
           for svc in $SERVICES; do
-            sed -i "/phenix-platform-$svc/,/newTag:/s/newTag: .*/newTag: $SHORT_SHA/" kustomization.yaml
+            if grep -q "phenix-platform-$svc" kustomization.yaml; then
+              sed -i "/phenix-platform-$svc/,/newTag:/s/newTag: .*/newTag: $SHORT_SHA/" kustomization.yaml
+            fi
           done
 
       - name: Commit and push
         run: |
           cd manifests
           ENV="${{ needs.detect-changes.outputs.environment }}"
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          git config user.name "phenix-ci[bot]"
+          git config user.email "phenix-ci[bot]@users.noreply.github.com"
           git add -A
           if ! git diff --staged --quiet; then
             git commit -m "[$ENV] Update phenix-platform images to ${GITHUB_SHA::8}"
