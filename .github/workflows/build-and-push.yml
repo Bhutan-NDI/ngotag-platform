@@ -193,26 +193,55 @@ jobs:
       - name: Update image tags in kustomization
         run: |
           ENV="${{ needs.detect-changes.outputs.environment }}"
-          cd manifests/apps/$ENV
+          ACR="${{ needs.detect-changes.outputs.acr_name }}"
           SHORT_SHA=${GITHUB_SHA::8}
+          SERVICES='${{ needs.detect-changes.outputs.matrix }}'
           
-          SERVICES="utility notification ledger agent-provisioning user organization agent-service connection ecosystem issuance verification webhook api-gateway"
+          cd manifests/apps/$ENV
           
-          for svc in $SERVICES; do
+          # Parse the services that were built from the matrix
+          BUILT_SERVICES=$(echo "$SERVICES" | jq -r '.service[]' 2>/dev/null || echo "")
+          
+          for svc in $BUILT_SERVICES; do
+            echo "Processing service: $svc"
+            
+            # 1. Enable the service resource (uncomment if commented)
+            if grep -q "# - \.\./base/phenix-platform/$svc\$" kustomization.yaml; then
+              echo "Enabling service resource: $svc"
+              sed -i "s|# - \.\./base/phenix-platform/$svc\$|  - ../base/phenix-platform/$svc|" kustomization.yaml
+            fi
+            
+            # 2. Check if image entry exists
             if grep -q "phenix-platform-$svc" kustomization.yaml; then
+              # Update existing image tag
+              echo "Updating existing image tag for: $svc"
               sed -i "/phenix-platform-$svc/,/newTag:/s/newTag: .*/newTag: $SHORT_SHA/" kustomization.yaml
+            else
+              # Add new image entry before patches section
+              echo "Adding new image entry for: $svc"
+              # Find the line number of patches: and insert before it
+              PATCHES_LINE=$(grep -n "^patches:" kustomization.yaml | cut -d: -f1)
+              if [ -n "$PATCHES_LINE" ]; then
+                sed -i "${PATCHES_LINE}i\\  - name: phenixdevacr.azurecr.io/phenix-platform-$svc\n    newName: ${ACR}.azurecr.io/phenix-platform-$svc\n    newTag: $SHORT_SHA" kustomization.yaml
+              fi
             fi
           done
+          
+          echo "Updated kustomization.yaml:"
+          cat kustomization.yaml
 
       - name: Commit and push
         run: |
           cd manifests
           ENV="${{ needs.detect-changes.outputs.environment }}"
+          SERVICES='${{ needs.detect-changes.outputs.matrix }}'
+          BUILT_SERVICES=$(echo "$SERVICES" | jq -r '.service | join(", ")' 2>/dev/null || echo "unknown")
+          
           git config user.name "phenix-ci[bot]"
           git config user.email "phenix-ci[bot]@users.noreply.github.com"
           git add -A
           if ! git diff --staged --quiet; then
-            git commit -m "[$ENV] Update phenix-platform images to ${GITHUB_SHA::8}"
+            git commit -m "[$ENV] Update phenix-platform ($BUILT_SERVICES) to ${GITHUB_SHA::8}"
             git push
           else
             echo "No changes to commit"
