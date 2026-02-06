@@ -171,7 +171,7 @@ jobs:
 
   update-manifests:
     needs: [detect-changes, build]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App Token
