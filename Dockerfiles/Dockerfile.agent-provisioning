@@ -69,8 +69,8 @@ RUN chmod 777 /app/agent-provisioning/AFJ/token
 # Copy the libs folder
 COPY libs/ ./libs/
 
-# Set the command to run the microservice
-CMD ["sh", "-c", "cd libs/prisma-service && npx prisma migrate deploy && cd ../.. && node dist/apps/agent-provisioning/main.js"]
+# Set the command to run the microservice (migrations run via seed service, not here)
+CMD ["sh", "-c", "cd libs/prisma-service && npx prisma generate && cd ../.. && node dist/apps/agent-provisioning/main.js"]
 
 # docker build -t agent-provisioning-service -f Dockerfiles/Dockerfile.agent-provisioning .
 # docker run -d --env-file .env --name agent-provisioning-service docker.io/library/agent-provisioning-service
