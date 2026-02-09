@@ -77,7 +77,6 @@ jobs:
       - name: Detect changed services
         id: set-matrix
         run: |
-          # Deployment order based on service dependencies (NATS message-based architecture)
           ALL_SERVICES="utility notification ledger agent-provisioning user organization agent-service connection ecosystem issuance verification webhook api-gateway"
           
           if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.services }}" != "all" ]; then
@@ -199,36 +198,28 @@ jobs:
           
           cd manifests/apps/$ENV
           
-          # Parse the services that were built from the matrix
           BUILT_SERVICES=$(echo "$SERVICES" | jq -r '.service[]' 2>/dev/null || echo "")
           
           for svc in $BUILT_SERVICES; do
             echo "Processing service: $svc"
             
-            # 1. Enable the service resource (uncomment if commented)
-            if grep -q "# - \.\./base/phenix-platform/$svc\$" kustomization.yaml; then
-              echo "Enabling service resource: $svc"
-              sed -i "s|# - \.\./base/phenix-platform/$svc\$|  - ../base/phenix-platform/$svc|" kustomization.yaml
-            fi
+            # 1. Enable the service resource (uncomment if commented) - fixed regex for proper indentation
+            # Match "  # - ../base/phenix-platform/SERVICE" and replace with "  - ../base/phenix-platform/SERVICE"
+            sed -i "s|^  # - \.\./base/phenix-platform/${svc}\$|  - ../base/phenix-platform/${svc}|" kustomization.yaml
             
             # 2. Check if image entry exists
             if grep -q "phenix-platform-$svc" kustomization.yaml; then
-              # Update existing image tag
               echo "Updating existing image tag for: $svc"
               sed -i "/phenix-platform-$svc/,/newTag:/s/newTag: .*/newTag: $SHORT_SHA/" kustomization.yaml
             else
-              # Add new image entry before patches section
               echo "Adding new image entry for: $svc"
-              # Find the line number of patches: and insert before it
-              PATCHES_LINE=$(grep -n "^patches:" kustomization.yaml | cut -d: -f1)
-              if [ -n "$PATCHES_LINE" ]; then
-                sed -i "${PATCHES_LINE}i\\  - name: phenixdevacr.azurecr.io/phenix-platform-$svc\n    newName: ${ACR}.azurecr.io/phenix-platform-$svc\n    newTag: $SHORT_SHA" kustomization.yaml
-              fi
+              # Insert image entry before patches section
+              sed -i "/^patches:/i\\  - name: phenixdevacr.azurecr.io/phenix-platform-$svc\\n    newName: ${ACR}.azurecr.io/phenix-platform-$svc\\n    newTag: $SHORT_SHA" kustomization.yaml
             fi
           done
           
           echo "Updated kustomization.yaml:"
-          cat kustomization.yaml
+          head -60 kustomization.yaml
 
       - name: Commit and push
         run: |
