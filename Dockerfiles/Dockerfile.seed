@@ -8,11 +8,17 @@ RUN apk add --no-cache postgresql-client openssl
 # Set working directory
 WORKDIR /app
 
+# Copy package files first for better caching
+COPY package.json pnpm-lock.yaml* ./
+
+# Install dependencies
+RUN pnpm install --ignore-scripts
+
 # Copy the rest of the source code
 COPY . .
 RUN chmod +x /app/libs/prisma-service/prisma/scripts/geo_location_data_import.sh
 RUN chmod +x /app/libs/prisma-service/prisma/scripts/update_client_credential_data.sh
 
-
 # Set the command to run the microservice
-CMD ["sh", "-c", "cd libs/prisma-service && npx prisma migrate deploy && npx prisma generate && npx prisma db seed"]
+# Run migrations from prisma-service folder, then seed from root (where seed.ts is configured)
+CMD ["sh", "-c", "cd libs/prisma-service && npx prisma migrate deploy && npx prisma generate && cd ../.. && npx prisma db seed"]
