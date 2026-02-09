@@ -20,5 +20,5 @@ RUN chmod +x /app/libs/prisma-service/prisma/scripts/geo_location_data_import.sh
 RUN chmod +x /app/libs/prisma-service/prisma/scripts/update_client_credential_data.sh
 
 # Set the command to run the microservice
-# Run migrations from prisma-service folder, then seed from root (where seed.ts is configured)
-CMD ["sh", "-c", "cd libs/prisma-service && npx prisma migrate deploy && npx prisma generate && cd ../.. && npx prisma db seed"]
+# Run migrations and seed from prisma-service folder
+CMD ["sh", "-c", "cd libs/prisma-service && npx prisma migrate deploy && npx prisma generate && npx ts-node prisma/seed.ts"]
