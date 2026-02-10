@@ -1,31 +1,72 @@
 name: Build and Push to Azure ACR
 
 on:
-  push:
-    branches:
-      - pipeline-implementation
-      - deployment
-    paths:
-      - 'apps/**'
-      - 'libs/**'
-      - 'Dockerfiles/**'
-  pull_request:
-    branches:
-      - pipeline-implementation
-      - deployment
   workflow_dispatch:
     inputs:
-      services:
-        description: 'Comma-separated list of services to build (e.g., api-gateway,user) or "all"'
-        required: false
-        default: 'all'
       environment:
         description: 'Target environment'
         required: true
         type: choice
         options:
-          - dev
           - prod
+          - dev
+        default: 'prod'
+      api-gateway:
+        description: 'Build api-gateway'
+        type: boolean
+        default: false
+      user:
+        description: 'Build user'
+        type: boolean
+        default: false
+      organization:
+        description: 'Build organization'
+        type: boolean
+        default: false
+      agent-provisioning:
+        description: 'Build agent-provisioning'
+        type: boolean
+        default: false
+      agent-service:
+        description: 'Build agent-service'
+        type: boolean
+        default: false
+      connection:
+        description: 'Build connection'
+        type: boolean
+        default: false
+      ecosystem:
+        description: 'Build ecosystem'
+        type: boolean
+        default: false
+      issuance:
+        description: 'Build issuance'
+        type: boolean
+        default: false
+      verification:
+        description: 'Build verification'
+        type: boolean
+        default: false
+      webhook:
+        description: 'Build webhook'
+        type: boolean
+        default: false
+      notification:
+        description: 'Build notification'
+        type: boolean
+        default: false
+      ledger:
+        description: 'Build ledger'
+        type: boolean
+        default: false
+      utility:
+        description: 'Build utility'
+        type: boolean
+        default: false
+      build_all:
+        description: 'Build ALL services (overrides individual selections)'
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
@@ -53,16 +94,7 @@ jobs:
       - name: Determine environment
         id: set-env
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            ENV="${{ github.event.inputs.environment }}"
-          else
-            BRANCH=${GITHUB_REF#refs/heads/}
-            if [ "$BRANCH" == "pipeline-implementation" ]; then
-              ENV="prod"
-            else
-              ENV="dev"
-            fi
-          fi
+          ENV="${{ github.event.inputs.environment }}"
           
           if [ "$ENV" == "prod" ]; then
             ACR="phenixprodacr"
@@ -74,36 +106,39 @@ jobs:
           echo "acr_name=$ACR" >> $GITHUB_OUTPUT
           echo "Environment: $ENV, ACR: $ACR"
 
-      - name: Detect changed services
+      - name: Build service list from inputs
         id: set-matrix
         run: |
           ALL_SERVICES="utility notification ledger agent-provisioning user organization agent-service connection ecosystem issuance verification webhook api-gateway"
+          SERVICES=""
           
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.services }}" != "all" ]; then
-            SERVICES="${{ github.event.inputs.services }}"
-            SERVICES=$(echo $SERVICES | tr ',' ' ')
-          elif [ "${{ github.event_name }}" == "push" ]; then
-            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
-            SERVICES=""
-            
-            if echo "$CHANGED_FILES" | grep -q "^libs/"; then
-              SERVICES="$ALL_SERVICES"
-            else
-              for svc in $ALL_SERVICES; do
-                if echo "$CHANGED_FILES" | grep -q "^apps/$svc/\|^Dockerfiles/Dockerfile.$svc"; then
-                  SERVICES="$SERVICES $svc"
-                fi
-              done
-            fi
-          else
+          # If build_all is selected, build everything
+          if [ "${{ github.event.inputs.build_all }}" == "true" ]; then
             SERVICES="$ALL_SERVICES"
+          else
+            # Build services based on individual checkbox selections
+            [ "${{ github.event.inputs.api-gateway }}" == "true" ] && SERVICES="$SERVICES api-gateway"
+            [ "${{ github.event.inputs.user }}" == "true" ] && SERVICES="$SERVICES user"
+            [ "${{ github.event.inputs.organization }}" == "true" ] && SERVICES="$SERVICES organization"
+            [ "${{ github.event.inputs.agent-provisioning }}" == "true" ] && SERVICES="$SERVICES agent-provisioning"
+            [ "${{ github.event.inputs.agent-service }}" == "true" ] && SERVICES="$SERVICES agent-service"
+            [ "${{ github.event.inputs.connection }}" == "true" ] && SERVICES="$SERVICES connection"
+            [ "${{ github.event.inputs.ecosystem }}" == "true" ] && SERVICES="$SERVICES ecosystem"
+            [ "${{ github.event.inputs.issuance }}" == "true" ] && SERVICES="$SERVICES issuance"
+            [ "${{ github.event.inputs.verification }}" == "true" ] && SERVICES="$SERVICES verification"
+            [ "${{ github.event.inputs.webhook }}" == "true" ] && SERVICES="$SERVICES webhook"
+            [ "${{ github.event.inputs.notification }}" == "true" ] && SERVICES="$SERVICES notification"
+            [ "${{ github.event.inputs.ledger }}" == "true" ] && SERVICES="$SERVICES ledger"
+            [ "${{ github.event.inputs.utility }}" == "true" ] && SERVICES="$SERVICES utility"
           fi
           
           SERVICES=$(echo $SERVICES | xargs)
           
           if [ -z "$SERVICES" ]; then
+            echo "::error::No services selected! Please select at least one service to build."
             echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "matrix={\"service\":[]}" >> $GITHUB_OUTPUT
+            exit 1
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
             JSON_ARRAY=$(echo $SERVICES | tr ' ' '\n' | jq -R . | jq -s -c .)
@@ -161,7 +196,7 @@ jobs:
         with:
           context: .
           file: Dockerfiles/Dockerfile.${{ matrix.service }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: |
             ${{ steps.tag.outputs.acr_server }}/phenix-platform-${{ matrix.service }}:${{ steps.tag.outputs.tag }}
             ${{ steps.tag.outputs.acr_server }}/phenix-platform-${{ matrix.service }}:${{ steps.tag.outputs.sha }}
@@ -170,7 +205,6 @@ jobs:
 
   update-manifests:
     needs: [detect-changes, build]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App Token
