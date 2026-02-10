@@ -8,7 +8,7 @@ import { OrganizationController } from './organization.controller';
 import { OrganizationService } from './organization.service';
 import { getNatsOptions } from '@credebl/common/nats.config';
 import { ImageServiceService } from '@credebl/image-service';
-import { AwsService } from '@credebl/aws';
+import { AzureStorageService } from '@credebl/azure-storage';
 import { CommonConstants } from '@credebl/common/common.constant';
 @Module({
   imports: [
@@ -25,7 +25,7 @@ import { CommonConstants } from '@credebl/common/common.constant';
     ])
   ],
   controllers: [OrganizationController],
-  providers: [OrganizationService, CommonService, ImageServiceService, AwsService]
+  providers: [OrganizationService, CommonService, ImageServiceService, AzureStorageService]
 })
 export class OrganizationModule { }
 
