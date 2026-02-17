@@ -49,6 +49,7 @@ import { UpdateSchemaDto } from './dtos/update-schema-dto';
 import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 import { MarketplaceService } from '../marketplace/marketplace.service';
+import { MigrateW3CSchemaDto } from '../dtos/migrate-schema.dto';
 
 @UseFilters(CustomExceptionFilter)
 @Controller('orgs')
@@ -277,5 +278,24 @@ export class SchemaController {
       message: ResponseMessages.schema.success.update
     };
     return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  @Post('/:orgId/migrate-schema')
+  @ApiOperation({
+    summary: 'Migrate anchor of schemas to another ledger.',
+    description: 'Enables the migration of schemas across different ledgers'
+  }
+  )
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Success', type: ApiResponseDto })
+  async migrateSchema(@Res() res: Response, @Body() migrateSchemaDetails: MigrateW3CSchemaDto, @Param('orgId', new ParseUUIDPipe({exceptionFactory: (): Error => { throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId); }})) orgId: string, @User() user: IUserRequestInterface): Promise<Response> {
+  const schemaResponse = await this.appService.migrateSchema(migrateSchemaDetails, user, orgId);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.CREATED,
+      message: ResponseMessages.schema.success.migrate,
+      data: schemaResponse
+    };
+    return res.status(HttpStatus.CREATED).json(finalResponse);
   }
 }

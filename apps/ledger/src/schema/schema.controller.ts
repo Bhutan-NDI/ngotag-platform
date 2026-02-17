@@ -15,10 +15,9 @@ import {
   ISchemaDetails,
   ISchemasWithPagination
 } from '@credebl/common/interfaces/schema.interface';
-import { IschemaPayload } from './interfaces/schema.interface';
+import { IMigrateW3cSchemaPayload, IschemaPayload } from './interfaces/schema.interface';
 import { ISchemaId } from './schema.interface';
 import { UpdateSchemaDto } from 'apps/api-gateway/src/schema/dtos/update-schema-dto';
-
 
 @Controller('schema')
 export class SchemaController {
@@ -28,6 +27,12 @@ export class SchemaController {
   async createSchema(payload: IschemaPayload): Promise<ISchemaData> {
     const { schemaDetails, user, orgId } = payload;
     return this.schemaService.createSchema(schemaDetails, user, orgId);
+  }
+
+  @MessagePattern({ cmd: 'migrate-w3c-schema' })
+  async migrateW3cSchema(payload: IMigrateW3cSchemaPayload): Promise<ISchemaData> {
+    const { migrateSchemaDetails, user, orgId } = payload;
+    return this.schemaService.migrateW3CSchema(migrateSchemaDetails, user, orgId);
   }
 
   @MessagePattern({ cmd: 'get-schemas-details' })

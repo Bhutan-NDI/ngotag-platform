@@ -94,6 +94,11 @@ export interface ICreateW3CSchema {
   schemaType: JSONSchemaType;
   schemaVersion?: string;
 }
+
+export interface IMigrateW3CSchema {
+  schemaId: string;
+  targetSchemaType: JSONSchemaType.ETHEREUM_W3C;
+}
 export interface IGenericSchema {
   alias: string;
   type: SchemaTypeEnum;
@@ -105,6 +110,13 @@ export interface IschemaPayload {
   user: IUserRequestInterface;
   orgId: string;
 }
+
+export interface IMigrateW3cSchemaPayload {
+  migrateSchemaDetails: IMigrateW3CSchema;
+  user: IUserRequestInterface;
+  orgId: string;
+}
+
 export interface ISchemasResult {
   id: string;
   createDateTime: Date;

@@ -92,6 +92,8 @@ export enum CommonConstants {
   // POLYGON BASED W3C SCHEMAS
   CREATE_POLYGON_W3C_SCHEMA = '/polygon/create-schema',
   CREATE_ETHEREUM_W3C_SCHEMA = '/ethereum/create-schema',
+  DEDICATED_MIGRATE_ETHEREUM_W3C_SCHEMA = '/ethereum/migrate-schema',
+  SHARED_MIGRATE_ETHEREUM_W3C_SCHEMA = '/multi-tenancy/ethereum-wc3/migrate-schema/',
 
   // SHARED AGENT
   URL_SHAGENT_CREATE_TENANT = '/multi-tenancy/create-tenant',
