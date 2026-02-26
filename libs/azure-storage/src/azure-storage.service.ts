@@ -7,6 +7,10 @@ export class AzureStorageService {
   private readonly logger = new Logger(AzureStorageService.name);
   private blobServiceClient: BlobServiceClient;
   private containerClient: ContainerClient;
+  
+  // Dedicated client for storeObject operations (similar to AWS s3StoreObject)
+  private storeObjectBlobServiceClient: BlobServiceClient;
+  private storeObjectContainerClient: ContainerClient;
 
   constructor() {
     const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
@@ -17,6 +21,17 @@ export class AzureStorageService {
       this.containerClient = this.blobServiceClient.getContainerClient(containerName);
     } else {
       this.logger.warn('AZURE_STORAGE_CONNECTION_STRING not configured');
+    }
+
+    // Initialize storeObject specific client (for shortened URL objects)
+    const storeObjectConnectionString = process.env.AZURE_STOREOBJECT_CONNECTION_STRING;
+    const storeObjectContainerName = process.env.AZURE_STOREOBJECT_CONTAINER_NAME || 'shortening-url';
+
+    if (storeObjectConnectionString) {
+      this.storeObjectBlobServiceClient = BlobServiceClient.fromConnectionString(storeObjectConnectionString);
+      this.storeObjectContainerClient = this.storeObjectBlobServiceClient.getContainerClient(storeObjectContainerName);
+    } else {
+      this.logger.warn('AZURE_STOREOBJECT_CONNECTION_STRING not configured - storeObject will use default storage');
     }
   }
 
@@ -171,21 +186,26 @@ export class AzureStorageService {
 
   /**
    * Store JSON object (compatible with S3 storeObject)
+   * Uses dedicated storeObject container for shortened URL storage
+   * Returns S3-compatible response with Key and Location
    */
-  async storeObject(persistent: boolean, key: string, body: unknown): Promise<{ Location: string }> {
-    if (!this.blobServiceClient) {
-      throw new RpcException('Azure Storage not configured');
+  async storeObject(persistent: boolean, key: string, body: unknown): Promise<{ Key: string; Location: string }> {
+    // Use dedicated storeObject client if configured, otherwise fall back to default
+    const containerClient = this.storeObjectContainerClient || this.containerClient;
+    
+    if (!containerClient) {
+      throw new RpcException('Azure Storage not configured for storeObject. Set AZURE_STOREOBJECT_CONNECTION_STRING or AZURE_STORAGE_CONNECTION_STRING');
     }
 
     const objKey = persistent ? `persist/${key}` : `default/${key}`;
     const buf = Buffer.from(JSON.stringify(body));
 
     try {
-      await this.containerClient.createIfNotExists({
+      await containerClient.createIfNotExists({
         access: 'blob'
       });
 
-      const blockBlobClient = this.containerClient.getBlockBlobClient(objKey);
+      const blockBlobClient = containerClient.getBlockBlobClient(objKey);
 
       await blockBlobClient.uploadData(buf, {
         blobHTTPHeaders: {
@@ -194,7 +214,11 @@ export class AzureStorageService {
         }
       });
 
-      return { Location: blockBlobClient.url };
+      // Return S3-compatible response format
+      return { 
+        Key: objKey,
+        Location: blockBlobClient.url 
+      };
     } catch (error) {
       this.logger.error(`Error storing object: ${JSON.stringify(error)}`);
       throw new RpcException(error.message || 'Store failed');

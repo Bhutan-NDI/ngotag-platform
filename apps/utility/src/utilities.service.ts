@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { UtilitiesRepository } from './utilities.repository';
 import { AwsService } from '@credebl/aws';
+import { AzureStorageService } from '@credebl/azure-storage';
 import { S3 } from 'aws-sdk';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -10,7 +11,8 @@ export class UtilitiesService {
     constructor(
         private readonly logger: Logger,
         private readonly utilitiesRepository: UtilitiesRepository,
-        private readonly awsService: AwsService
+        private readonly awsService: AwsService,
+        private readonly azureStorageService: AzureStorageService
     ) { }
 
     async createAndStoreShorteningUrl(payload): Promise<string> {
@@ -52,12 +54,35 @@ export class UtilitiesService {
     async storeObject(payload: {persistent: boolean, storeObj: unknown}): Promise<string> {
         try {
             const uuid = uuidv4();
-            const uploadResult:S3.ManagedUpload.SendData = await this.awsService.storeObject(payload.persistent, uuid, payload.storeObj);
-            const url: string = `${process.env.SHORTENED_URL_DOMAIN}/${uploadResult.Key}`;
-            return url;
+            const storageProvider = process.env.STORAGE_PROVIDER?.toLowerCase() || 'aws';
+            
+            if ('azure' === storageProvider) {
+                // Use Azure Blob Storage
+                const uploadResult = await this.azureStorageService.storeObject(
+                    payload.persistent, 
+                    uuid, 
+                    payload.storeObj
+                );
+                // Use AZURE_STOREOBJECT_DOMAIN if set, otherwise use the blob URL directly
+                const domain = process.env.AZURE_STOREOBJECT_DOMAIN;
+                const url: string = domain 
+                    ? `${domain}/${uploadResult.Key}` 
+                    : uploadResult.Location;
+                return url;
+            } else {
+                // Use AWS S3 (default)
+                const uploadResult: S3.ManagedUpload.SendData = await this.awsService.storeObject(
+                    payload.persistent, 
+                    uuid, 
+                    payload.storeObj
+                );
+                const url: string = `${process.env.SHORTENED_URL_DOMAIN}/${uploadResult.Key}`;
+                return url;
+            }
         } catch (error) {
             this.logger.error(error);
-            throw new Error('An error occurred while uploading data to S3. Error::::::');
+            const storageProvider = process.env.STORAGE_PROVIDER?.toLowerCase() || 'aws';
+            throw new Error(`An error occurred while uploading data to ${storageProvider.toUpperCase()} storage.`);
         }
     }
 }
