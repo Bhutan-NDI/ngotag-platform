@@ -868,16 +868,12 @@ export class AgentServiceService {
     try {
       const agentDetails = await this.agentServiceRepository.getOrgAgentDetails(orgId);
 
-      // Look up the ledger for the requested network once and reuse it for both the network
-      // validation here and the primary-DID ledger update below (avoids a duplicate DB read and
-      // keeps validation and the update based on the same ledger row).
+      // Look up the ledger for the requested network once and reuse it for the primary-DID
+      // ledger update below (avoids a duplicate DB read).
       let networkLedgerId: string | null = null;
       if (createDidPayload?.network) {
         const getNameSpace = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload?.network);
         networkLedgerId = getNameSpace.id;
-        if (agentDetails.ledgerId !== null && agentDetails.ledgerId !== getNameSpace.id) {
-          throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
-        }
       }
       const getApiKey = await this.getOrgAgentApiKey(orgId);
       const url = this.constructUrl(agentDetails);
