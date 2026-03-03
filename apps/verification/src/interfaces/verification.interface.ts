@@ -102,8 +102,13 @@ interface IRequestedRestriction {
 export interface ISchema {
   uri: string;
 }
+export interface IFilter {
+  type: string;
+  pattern: string;
+}
 export interface IFields {
   path: string[];
+  filter?: IFilter;
 }
 export interface IConstraints {
   fields: IFields[];
@@ -155,8 +160,8 @@ export interface ISendProofRequestPayload {
   label?: string;
   goalCode?: string;
   // TODO: [Credo-ts] Issue with parentThreadId in creating an OOB proof request.
-  // This causes failures in OOB connection establishment.
-  // parentThreadId?: string;
+  // parentThreadId caused failures in OOB connection establishment in latest releases but since it is needed in NGOTAG uncommenting it for testing
+  parentThreadId?: string;
   willConfirm?: boolean;
   imageUrl?: string;
   emailId?: string[];

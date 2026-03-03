@@ -292,11 +292,20 @@ export class VerificationRepository {
   }
 
   // eslint-disable-next-line camelcase
-  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations[]> {
+  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations> {
     try {
-      return this.prisma.agent_invitations.findMany({
+      return this.prisma.agent_invitations.findFirst({
         where: {
-          orgId
+          AND: [
+            {
+              orgId
+            },
+            {
+              invitationDid: {
+                not: null
+              }
+            }
+          ]
         },
         orderBy: {
           createDateTime: 'asc' // or 'desc' for descending order

@@ -155,8 +155,9 @@ export class IssuanceService {
       const { orgId, credentialDefinitionId, comment, credentialData, isValidateSchema } = payload || {};
 
       if (payload.credentialType === IssueCredentialType.INDY) {
-        const schemaResponse: SchemaDetails =
-          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
+        const schemaResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
+          credentialDefinitionId
+        );
         if (schemaResponse?.attributes) {
           const schemaResponseError = [];
           const attributesArray: IAttributes[] = JSON.parse(schemaResponse.attributes);
@@ -347,8 +348,9 @@ export class IssuanceService {
         isValidateSchema
       } = payload;
       if (credentialType === IssueCredentialType.INDY) {
-        const schemadetailsResponse: SchemaDetails =
-          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
+        const schemadetailsResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
+          credentialDefinitionId
+        );
 
         if (schemadetailsResponse?.attributes) {
           const schemadetailsResponseError = [];
@@ -375,11 +377,8 @@ export class IssuanceService {
       const agentDetails = await this.issuanceRepository.getAgentEndPoint(orgId);
       let invitationDid: string | undefined;
       if (true === reuseConnection) {
-        const data: agent_invitations[] = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
-        if (data && 0 < data.length) {
-          const [firstElement] = data;
-          invitationDid = firstElement?.invitationDid ?? undefined;
-        }
+        const invitation: agent_invitations = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
+        invitationDid = invitation?.invitationDid ?? undefined;
       }
       const { agentEndPoint, organisation } = agentDetails;
 
@@ -492,7 +491,9 @@ export class IssuanceService {
       return message.response;
     } catch (error) {
       this.logger.error(
-        `[storeIssuanceObjectReturnUrl] [NATS call]- error in storing object and returning url : ${JSON.stringify(error)}`
+        `[storeIssuanceObjectReturnUrl] [NATS call]- error in storing object and returning url : ${JSON.stringify(
+          error
+        )}`
       );
       throw error;
     }
@@ -796,8 +797,9 @@ export class IssuanceService {
       }
 
       if (IssueCredentialType.INDY === credentialType) {
-        const schemaResponse: SchemaDetails =
-          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
+        const schemaResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
+          credentialDefinitionId
+        );
 
         this.logger.debug(
           'Schema details for indy based credential received:',
@@ -979,11 +981,8 @@ export class IssuanceService {
       let invitationDid: string | undefined;
       if (true === isReuseConnection) {
         this.logger.debug('This is a reuse connection, fetching invitation did');
-        const data: agent_invitations[] = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
-        if (data && 0 < data.length) {
-          const [firstElement] = data;
-          invitationDid = firstElement?.invitationDid ?? undefined;
-        }
+        const invitation: agent_invitations = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
+        invitationDid = invitation?.invitationDid ?? undefined;
       }
 
       let outOfBandIssuancePayload;
