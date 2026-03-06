@@ -116,6 +116,7 @@ export enum CommonConstants {
 
   // CREATE KEYS
   CREATE_POLYGON_SECP256k1_KEY = '/polygon/create-keys',
+  CREATE_ETHEREUM_SECP256k1_KEY = '/ethereum/create-keys',
 
   // Nested attribute separator
   NESTED_ATTRIBUTE_SEPARATOR = '~',
@@ -386,9 +387,8 @@ export enum CommonConstants {
   SEND_QUESTION = 'send-question',
   SEND_BASIC_MESSAGE = 'send-basic-message',
   // Ethereum
-  CREATE_ETHEREUM_W3C_SCHEMA = '/ethereum/create-schema', // TODO: Update this in ngotag-controller also
+  CREATE_ETHEREUM_W3C_SCHEMA = '/ethereum/create-schema' // TODO: Update this in ngotag-controller also
   // SHARED_CREATE_ETHEREUM_W3C_SCHEMA = '/multi-tenancy/ethereum-wc3/schema/', // TODO: we've to change ngotag-controller since now dedicated and multi-tenant both will have same URL
-  CREATE_ETH_KEY = '/ethereum/create-keys'
 }
 export const MICRO_SERVICE_NAME = Symbol('MICRO_SERVICE_NAME');
 export const ATTRIBUTE_NAME_REGEX = /\['(.*?)'\]/;

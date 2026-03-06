@@ -293,8 +293,13 @@ export class AgentServiceController {
   }
 
   @MessagePattern({ cmd: 'polygon-create-keys' })
-  async createSecp256k1KeyPair(payload: { orgId: string }): Promise<object> {
-    return this.agentServiceService.createSecp256k1KeyPair(payload.orgId);
+  async createPolygonSecp256k1KeyPair(payload: { orgId: string }): Promise<object> {
+    return this.agentServiceService.createPolygonSecp256k1KeyPair(payload.orgId);
+  }
+
+  @MessagePattern({ cmd: 'ethereum-create-keys' })
+  async createEthereumSecp256k1KeyPair(payload: { orgId: string }): Promise<object> {
+    return this.agentServiceService.createEthereumSecp256k1KeyPair(payload.orgId);
   }
 
   @MessagePattern({ cmd: 'agent-create-connection-invitation' })

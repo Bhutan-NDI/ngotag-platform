@@ -1050,7 +1050,7 @@ export class AgentServiceService {
   /**
    * @returns Secp256k1 key pair for polygon DID
    */
-  async createSecp256k1KeyPair(orgId: string): Promise<object> {
+  async createPolygonSecp256k1KeyPair(orgId: string): Promise<object> {
     try {
       const platformAdminSpinnedUp = await this.agentServiceRepository.platformAdminAgent(
         CommonConstants.PLATFORM_ADMIN_ORG
@@ -1060,6 +1060,32 @@ export class AgentServiceService {
       const getDcryptedToken = await this.commonService.decryptPassword(platformAdminSpinnedUp?.org_agents[0].apiKey);
 
       const url = `${getPlatformAgentEndPoint}${CommonConstants.CREATE_POLYGON_SECP256k1_KEY}`;
+      this.logger.log(`Creating Secp256k1 key pair at URL: ${url}`);
+      const createKeyPairResponse = await this.commonService.httpPost(
+        url,
+        {},
+        { headers: { authorization: getDcryptedToken } }
+      );
+      return createKeyPairResponse;
+    } catch (error) {
+      this.logger.error(`error in createSecp256k1KeyPair : ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  /**
+   * @returns Secp256k1 key pair for Ethereum DID
+   */
+  async createEthereumSecp256k1KeyPair(orgId: string): Promise<object> {
+    try {
+      const platformAdminSpinnedUp = await this.agentServiceRepository.platformAdminAgent(
+        CommonConstants.PLATFORM_ADMIN_ORG
+      );
+
+      const getPlatformAgentEndPoint = platformAdminSpinnedUp.org_agents[0].agentEndPoint;
+      const getDcryptedToken = await this.commonService.decryptPassword(platformAdminSpinnedUp?.org_agents[0].apiKey);
+
+      const url = `${getPlatformAgentEndPoint}${CommonConstants.CREATE_ETHEREUM_SECP256k1_KEY}`;
       this.logger.log(`Creating Secp256k1 key pair at URL: ${url}`);
       const createKeyPairResponse = await this.commonService.httpPost(
         url,
@@ -1807,9 +1833,8 @@ export class AgentServiceService {
       // Perform the deletion in a transaction
       return await this.prisma.$transaction(async (prisma) => {
         // Delete org agent and related records
-        const { orgDid, agentInvitation, deleteOrgAgent } = await this.agentServiceRepository.deleteOrgAgentByOrg(
-          orgId
-        );
+        const { orgDid, agentInvitation, deleteOrgAgent } =
+          await this.agentServiceRepository.deleteOrgAgentByOrg(orgId);
 
         // Make the HTTP DELETE request
         const deleteWallet = await this.commonService.httpDelete(url, {
