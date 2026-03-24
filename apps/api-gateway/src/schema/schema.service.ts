@@ -6,6 +6,7 @@ import { ISchemaSearchPayload } from '../interfaces/ISchemaSearch.interface';
 import { ISchemaInfo, IUserRequestInterface } from './interfaces';
 import { ICredDefWithPagination, ISchemaData, ISchemasWithPagination } from '@credebl/common/interfaces/schema.interface';
 import { GetCredentialDefinitionBySchemaIdDto } from './dtos/get-all-schema.dto';
+import { MigrateW3CSchemaDto } from '../dtos/migrate-schema.dto';
 
 @Injectable()
 export class SchemaService extends BaseService {
@@ -17,6 +18,11 @@ export class SchemaService extends BaseService {
   createSchema(schemaDetails: GenericSchemaDTO, user: IUserRequestInterface, orgId: string): Promise<ISchemaData> {
     const payload = { schemaDetails, user, orgId };
     return this.sendNatsMessage(this.schemaServiceProxy, 'create-schema', payload);
+  }
+
+  migrateSchema(migrateSchemaDetails: MigrateW3CSchemaDto, user: IUserRequestInterface, orgId: string): Promise<ISchemaData> {
+    const payload = { migrateSchemaDetails, user, orgId };
+    return this.sendNatsMessage(this.schemaServiceProxy, 'migrate-w3c-schema', payload);
   }
 
   

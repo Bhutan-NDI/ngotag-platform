@@ -2,7 +2,7 @@
 import { ConflictException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
 import { ledgers, org_agents, org_agents_type, organisation, schema } from '@prisma/client';
-import { ISchema, ISchemaExist, ISchemaSearchCriteria } from '../interfaces/schema-payload.interface';
+import { ISchema, ISchemaExist, ISchemaSearchCriteria, IUpdateSchema } from '../interfaces/schema-payload.interface';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { AgentDetails, ISchemasWithCount } from '../interfaces/schema.interface';
 import { SchemaType, SortValue } from '@credebl/enum/enum';
@@ -43,6 +43,24 @@ export class SchemaRepository {
       }
     } catch (error) {
       this.logger.error(`Error in saving schema repository: ${error.message} `);
+      throw error;
+    }
+  }
+
+  async updateSchema(updateSchema: IUpdateSchema): Promise<schema> {
+    try {
+      const updateResult = await this.prisma.schema.update({
+        where: {
+          id: updateSchema.id
+        },
+        data: {
+          ledgerId: updateSchema.ledgerId,
+          lastChangedBy: updateSchema.changedBy
+        }
+      });
+      return updateResult;
+    } catch (error) {
+      this.logger.error(`Error in updating schema repository: ${error.message} `);
       throw error;
     }
   }
@@ -333,6 +351,20 @@ export class SchemaRepository {
       });
     } catch (error) {
       this.logger.error(`Error in getting get schema by schema ledger id: ${error}`);
+      throw error;
+    }
+  }
+
+  async getSchemaByOrgSchemaUrl(schemaUrl: string, orgId: string): Promise<schema> {
+    try {
+      return this.prisma.schema.findFirst({
+        where: {
+          orgId,
+          schemaLedgerId: schemaUrl
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error in getting get schema by org id and ledger id: ${error}`);
       throw error;
     }
   }

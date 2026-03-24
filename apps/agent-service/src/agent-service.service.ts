@@ -1894,6 +1894,19 @@ export class AgentServiceService {
     }
   }
 
+  async migrateW3CSchema(url: string, orgId: string, schemaRequestPayload): Promise<object> {
+    try {
+      const getApiKey = await this.getOrgAgentApiKey(orgId);
+      const schemaRequest = await this.commonService
+        .httpPost(url, schemaRequestPayload, { headers: { authorization: getApiKey } })
+        .then(async (response) => response);
+      return schemaRequest;
+    } catch (error) {
+      this.logger.error(`Error in migrateW3CSchema request in agent service : ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
   async createConnectionInvitation(
     url: string,
     orgId: string,

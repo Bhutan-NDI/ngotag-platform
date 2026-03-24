@@ -156,7 +156,8 @@ export const ResponseMessages = {
   schema: {
     success: {
       fetch: 'Schema retrieved successfully.',
-      create: 'Schema created successfully.'
+      create: 'Schema created successfully.',
+      migrate: 'Schema migrated successfully.'
     },
     error: {
       invalidSchemaId: 'Invalid schema Id provided.',
@@ -181,6 +182,7 @@ export const ResponseMessages = {
       schemaUploading: 'Error while uploading schema JSON',
       W3CSchemaNotFOund: 'Error while resolving W3C schema',
       storeW3CSchema: 'Error while storing W3C schema',
+      updateW3CSchema: 'Error while updating W3C schema',
       networkNotFound: 'Error while fetching network',
       orgDidAndSchemaType: 'Organization DID and schema type does not match'
     }
