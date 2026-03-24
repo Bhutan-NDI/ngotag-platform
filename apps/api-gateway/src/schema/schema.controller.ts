@@ -158,7 +158,7 @@ export class SchemaController {
   @Post('/:orgId/migrate-schema')
   @ApiOperation({
     summary: 'Migrate anchor of schemas to another ledger.',
-    description: 'Enables the migration of schemas across different ledgers'
+    description: 'Enables the migration of schemas from current ledger to Ethereum network.'
   }
   )
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN)
