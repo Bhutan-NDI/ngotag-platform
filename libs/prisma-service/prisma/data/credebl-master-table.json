@@ -253,7 +253,7 @@
       "name": "ethereum",
       "details":  {
         "did:ethr": {
-            "mainnet":"did:ethr",
+            "mainnet":"did:ethr:mainnet",
             "testnet":"did:ethr:sepolia"
         }
     }
