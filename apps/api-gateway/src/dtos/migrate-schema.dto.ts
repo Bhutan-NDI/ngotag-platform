@@ -18,7 +18,7 @@ export class MigrateW3CSchemaDto {
 
     @ApiProperty({
       description: 'The target schema type (only Ethereum supported)',
-      enum: JSONSchemaType,
+      enum: [JSONSchemaType.ETHEREUM_W3C],
       example: JSONSchemaType.ETHEREUM_W3C 
     })
     @Equals(JSONSchemaType.ETHEREUM_W3C, {
