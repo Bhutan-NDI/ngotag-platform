@@ -111,7 +111,7 @@ export interface IschemaPayload {
   orgId: string;
 }
 
-export interface IMigrateW3cSchemaPayload {
+export interface IMigrateW3CSchemaPayload {
   migrateSchemaDetails: IMigrateW3CSchema;
   user: IUserRequestInterface;
   orgId: string;
