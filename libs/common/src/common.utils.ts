@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import * as dotenv from 'dotenv';
 import { ResponseMessages } from './response-messages';
+import { CommonConstants } from './common.constant';
 dotenv.config();
 /* eslint-disable camelcase */
 // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types, @typescript-eslint/explicit-function-return-type
@@ -66,6 +67,6 @@ export const networkNamespace = (did: string):string => {
   if (containsTestnet) {
     return `${segments[1]}:${segments[2]}`;
   } else {
-    return segments[1];
+    return `${segments[1]}:${CommonConstants.MAINNET}`;
   }
 };
