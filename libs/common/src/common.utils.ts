@@ -63,9 +63,9 @@ export const networkNamespace = (did: string): string => {
     segments.some((segment) => segment.includes('sepolia'));
   if (containsTestnet) {
     return `${segments[1]}:${segments[2]}`;
+  } else {
+    return `${segments[1]}:${CommonConstants.MAINNET}`;
   }
-
-  return segments[1];
 };
 
 //TODO: Remove this util method because we can have some better way to manage agent URLs
