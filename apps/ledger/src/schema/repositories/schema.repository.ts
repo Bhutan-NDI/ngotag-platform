@@ -55,6 +55,8 @@ export class SchemaRepository {
         },
         data: {
           ledgerId: updateSchema.ledgerId,
+          publisherDid: updateSchema.publisherDid,
+          issuerId: updateSchema.publisherDid,
           lastChangedBy: updateSchema.changedBy
         }
       });

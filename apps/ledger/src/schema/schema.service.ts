@@ -395,11 +395,12 @@ export class SchemaService extends BaseService {
 
       await this._migrateW3CSchema(W3cSchemaPayload);
      
-      const updateSchema = {
+      const updateSchema: IUpdateSchema = {
         id: schema.id,
-        did: agentDetails.orgDid
+        publisherDid: agentDetails.orgDid,
+        changedBy: user.id
       };
-      const updateW3CSchema = await this.updateW3CSchemas(updateSchema, user);
+      const updateW3CSchema = await this.updateW3CSchemas(updateSchema);
 
      if (!updateW3CSchema) {
       throw new BadRequestException(ResponseMessages.schema.error.updateW3CSchema, {
@@ -645,8 +646,8 @@ export class SchemaService extends BaseService {
     return saveResponse;
    }
 
-   private async updateW3CSchemas(updateSchema, user): Promise <schema> {
-      const ledgerNameSpace = await networkNamespace(updateSchema?.did); 
+   private async updateW3CSchemas(updateSchema: IUpdateSchema): Promise <schema> {
+      const ledgerNameSpace = await networkNamespace(updateSchema.publisherDid); 
       const ledgerDetails = await this.schemaRepository.getLedgerByNamespace(ledgerNameSpace);
 
       if (!ledgerDetails) {
@@ -656,8 +657,7 @@ export class SchemaService extends BaseService {
         });
       }
       const updateSchemaDetails: IUpdateSchema = {
-        id: updateSchema.id,
-        changedBy: user.id,
+        ...updateSchema,
         ledgerId: ledgerDetails.id
       };
       const updateResponse = await this.schemaRepository.updateSchema(
