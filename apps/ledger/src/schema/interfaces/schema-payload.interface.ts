@@ -24,6 +24,7 @@ export interface ISchema {
 export interface IUpdateSchema {
     id: string;
     changedBy: string;
+    publisherDid: string;
     ledgerId?: string;
 }
 
