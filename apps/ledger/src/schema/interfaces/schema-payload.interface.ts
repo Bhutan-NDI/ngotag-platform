@@ -20,6 +20,13 @@ export interface ISchema {
     type?: string;
 }
 
+export interface IUpdateSchema {
+    id: string;
+    changedBy: string;
+    publisherDid: string;
+    ledgerId?: string;
+}
+
 export interface IAttributeValue {
     isRequired: boolean;    
     attributeName: string;
@@ -98,6 +105,12 @@ export interface W3CCreateSchema {
     orgId: string,
     schemaRequestPayload: object
 }  
+
+export interface W3CMigrateSchema {
+    url: string,
+    orgId: string,
+    schemaRequestPayload: object
+} 
 
 export interface IdAttribute extends W3CSchemaAttributes {
     format: string;

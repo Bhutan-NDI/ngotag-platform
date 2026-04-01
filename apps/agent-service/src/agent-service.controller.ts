@@ -78,6 +78,11 @@ export class AgentServiceController {
     return this.agentServiceService.createW3CSchema(payload.url, payload.orgId, payload.schemaRequestPayload);
   }
 
+  @MessagePattern({ cmd: 'agent-migrate-w3c-schema' })
+  async migrateW3CSchema(payload: { url, orgId, schemaRequestPayload }): Promise<object> {
+    return this.agentServiceService.migrateW3CSchema(payload.url, payload.orgId, payload.schemaRequestPayload);
+  }
+
   //DONE
   @MessagePattern({ cmd: 'agent-get-schema' })
   async getSchemaById(payload: IGetSchemaAgentRedirection): Promise<object> {

@@ -944,15 +944,6 @@ export class AgentServiceService {
     try {
       const agentDetails = await this.agentServiceRepository.getOrgAgentDetails(orgId);
 
-      if (createDidPayload?.network) {
-        const getNameSpace = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload?.network);
-        if (agentDetails.ledgerId !== null) {
-          if (agentDetails.ledgerId !== getNameSpace.id) {
-            throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
-          }
-        }
-      }
-
       const getApiKey = await this.getOrgAgentApiKey(orgId);
       const getOrgAgentType = await this.agentServiceRepository.getOrgAgentType(agentDetails?.orgAgentTypeId);
 
@@ -1890,6 +1881,19 @@ export class AgentServiceService {
       return schemaRequest;
     } catch (error) {
       this.logger.error(`Error in createW3CSchema request in agent service : ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  async migrateW3CSchema(url: string, orgId: string, schemaRequestPayload): Promise<object> {
+    try {
+      const getApiKey = await this.getOrgAgentApiKey(orgId);
+      const schemaRequest = await this.commonService
+        .httpPost(url, schemaRequestPayload, { headers: { authorization: getApiKey } })
+        .then(async (response) => response);
+      return schemaRequest;
+    } catch (error) {
+      this.logger.error(`Error in migrateW3CSchema request in agent service : ${JSON.stringify(error)}`);
       throw error;
     }
   }
