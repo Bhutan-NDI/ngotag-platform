@@ -234,6 +234,7 @@ export class IssuanceService {
           issueData = {
             protocolVersion: payload.protocolVersion || 'v2',
             connectionId,
+            parentThreadId: payload.parentThreadId ?? undefined,
             credentialFormats: {
               jsonld: {
                 credential,
