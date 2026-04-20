@@ -23,7 +23,7 @@ jobs:
       - name: Check if tag creator is allowed
         id: check-user
         run: |
-          ALLOWED_USERS=("Chimi1999" "devdgna")
+          ALLOWED_USERS=("salim-bt" "devdgna")
           echo "Tag pushed by: ${{ github.actor }}"
           is_allowed="false"
           for user in "${ALLOWED_USERS[@]}"; do
