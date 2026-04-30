@@ -1,7 +1,7 @@
 /* eslint-disable camelcase */
 import { BadRequestException, HttpException, HttpStatus, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
-import { map } from 'rxjs/operators';
+import { map, timeout } from 'rxjs/operators';
 import { IGetAllProofPresentations, IProofRequestSearchCriteria, IGetProofPresentationById, IProofPresentation, IProofRequestPayload, IRequestProof, ISendProofRequestPayload, IVerifyPresentation, IVerifiedProofData, IInvitation } from './interfaces/verification.interface';
 import { VerificationRepository } from './repositories/verification.repository';
 import { ATTRIBUTE_NAME_REGEX, CommonConstants } from '@credebl/common/common.constant';
@@ -26,6 +26,7 @@ import { ISchemaDetail } from '@credebl/common/interfaces/schema.interface';
 export class VerificationService {
 
   private readonly logger = new Logger('VerificationService');
+  private readonly natsRequestTimeoutMs = Number(process.env.NATS_REQUEST_TIMEOUT_MS) || 5000;
 
   constructor(
     @Inject('NATS_CLIENT') private readonly verificationServiceProxy: ClientProxy,
@@ -1005,6 +1006,7 @@ export class VerificationService {
       return this.verificationServiceProxy
         .send<string>(pattern, payload)
         .pipe(
+          timeout(this.natsRequestTimeoutMs),
           map((response) => (
             {
               response
@@ -1013,11 +1015,12 @@ export class VerificationService {
         .toPromise()
         .catch(error => {
             this.logger.error(`catch: ${JSON.stringify(error)}`);
+            const statusCode = error.statusCode || HttpStatus.GATEWAY_TIMEOUT;
             throw new HttpException({         
-                status: error.statusCode, 
-                error: error.error,
+                status: statusCode,
+                error: error.error || 'NATS request timed out',
                 message: error.message
-              }, error.error);
+              }, statusCode);
         });
     }
   
