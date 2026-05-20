@@ -8,7 +8,8 @@ import {
   UnauthorizedException,
   InternalServerErrorException,
   Inject,
-  HttpException
+  HttpException,
+  ForbiddenException
 } from '@nestjs/common';
 
 import { ClientRegistrationService } from '@credebl/client-registration';
@@ -24,7 +25,6 @@ import { URLUserEmailTemplate } from '../templates/user-email-template';
 import { UserOrgRolesService } from '@credebl/user-org-roles';
 import { UserRepository } from '../repositories/user.repository';
 import { VerifyEmailTokenDto } from '../dtos/verify-email.dto';
-import { sendEmail } from '@credebl/common/send-grid-helper-file';
 // eslint-disable-next-line camelcase
 import { client_aliases, RecordType, session, user, user_org_roles } from '@prisma/client';
 import {
@@ -70,6 +70,7 @@ import { toNumber } from '@credebl/common/cast.helper';
 import * as jwt from 'jsonwebtoken';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { getCredentialsByAlias } from 'apps/api-gateway/src/user/utils';
+import { EmailService } from '@credebl/common/email.service';
 
 @Injectable()
 export class UserService {
@@ -86,7 +87,8 @@ export class UserService {
     private readonly userDevicesRepository: UserDevicesRepository,
     private readonly logger: Logger,
     @Inject('NATS_CLIENT') private readonly userServiceProxy: ClientProxy,
-    private readonly natsClient: NATSClient
+    private readonly natsClient: NATSClient,
+    private readonly emailService: EmailService
   ) {}
 
   /**
@@ -138,6 +140,9 @@ export class UserService {
 
       const clientDetails = await getCredentialsByAlias(clientAlias);
 
+      if (process.env.ADMIN_CLIENT_ALIAS === clientAlias) {
+        throw new ForbiddenException(ResponseMessages.user.error.adminAlias);
+      }
       try {
         const token = await this.clientRegistrationService.getManagementToken(
           clientDetails.clientId,
@@ -230,7 +235,7 @@ export class UserService {
         redirectTo,
         clientAlias
       );
-      const isEmailSent = await sendEmail(emailData);
+      const isEmailSent = await this.emailService.sendEmail(emailData);
       if (isEmailSent) {
         return isEmailSent;
       } else {
@@ -451,7 +456,7 @@ export class UserService {
       if (true === isPasskey && false === userData?.isFidoVerified) {
         throw new UnauthorizedException(ResponseMessages.user.error.registerFido);
       }
-      // called seprate method to delete exp session
+
       this.userRepository.deleteInactiveSessions(userData?.id);
       const userSessionDetails = await this.userRepository.fetchUserSessions(userData?.id);
       if (Number(process.env.SESSIONS_LIMIT) <= userSessionDetails?.length) {
@@ -466,8 +471,10 @@ export class UserService {
         const decryptedPassword = await this.commonService.decryptPassword(password);
         tokenDetails = await this.generateToken(email.toLowerCase(), decryptedPassword, userData);
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const decodedToken: any = jwt.decode(tokenDetails?.access_token);
+      const decodedToken = jwt.decode(tokenDetails?.refresh_token);
+      if (!decodedToken || 'object' !== typeof decodedToken || !decodedToken.exp || !decodedToken.sid) {
+        throw new UnauthorizedException(ResponseMessages.user.error.refreshTokenExpired);
+      }
       const expiresAt = new Date(decodedToken.exp * 1000);
 
       const sessionData = {
@@ -537,53 +544,47 @@ export class UserService {
 
   async refreshTokenDetails(refreshToken: string): Promise<ISignInUser> {
     try {
-      try {
-        const data = jwt.decode(refreshToken) as jwt.JwtPayload;
-        const userByKeycloakId = await this.userRepository.getUserByKeycloakId(data?.sub);
-        this.logger.debug(`User details::;${JSON.stringify(userByKeycloakId)}`);
-        const tokenResponse = await this.clientRegistrationService.getAccessToken(
-          refreshToken,
-          userByKeycloakId?.['clientId'],
-          userByKeycloakId?.['clientSecret']
-        );
-        this.logger.debug(`tokenResponse::::${JSON.stringify(tokenResponse)}`);
-        // Fetch the details from account table based on userid and refresh token
-        const userAccountDetails = await this.userRepository.checkAccountDetails(userByKeycloakId?.['id']);
-        // Update the account details with latest access token, refresh token and exp date
-        if (!userAccountDetails) {
-          throw new NotFoundException(ResponseMessages.user.error.userAccountNotFound);
-        }
-        // Fetch session details
-        const sessionDetails = await this.userRepository.fetchSessionByRefreshToken(refreshToken);
-        if (!sessionDetails) {
-          throw new NotFoundException(ResponseMessages.user.error.userSeesionNotFound);
-        }
-        // Delete previous session
-        const deletePreviousSession = await this.userRepository.deleteSession(sessionDetails.id);
-        if (!deletePreviousSession) {
-          throw new InternalServerErrorException(ResponseMessages.user.error.errorInDeleteSession);
-        }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const decodedToken: any = jwt.decode(tokenResponse?.access_token);
-        const expiresAt = new Date(decodedToken.exp * 1000);
-        const sessionData = {
-          sessionToken: tokenResponse.access_token,
-          userId: userByKeycloakId?.['id'],
-          expires: tokenResponse.expires_in,
-          refreshToken: tokenResponse.refresh_token,
-          sessionType: SessionType.USER_SESSION,
-          accountId: userAccountDetails.id,
-          expiresAt
-        };
-        const addSessionDetails = await this.userRepository.createSession(sessionData);
-        if (!addSessionDetails) {
-          throw new InternalServerErrorException(ResponseMessages.user.error.errorInSessionCreation);
-        }
-
-        return tokenResponse;
-      } catch (error) {
-        throw new BadRequestException(ResponseMessages.user.error.invalidRefreshToken);
+      const data = jwt.decode(refreshToken) as jwt.JwtPayload;
+      const refreshTokenExp = new Date(data.exp * 1000);
+      const currentTime = new Date();
+      if (refreshTokenExp < currentTime) {
+        await this.userRepository.deleteSession(data?.sid);
+        throw new UnauthorizedException(ResponseMessages.user.error.refreshTokenExpired);
       }
+      const userByKeycloakId = await this.userRepository.getUserByKeycloakId(data?.sub);
+      const tokenResponse = await this.clientRegistrationService.getAccessToken(
+        refreshToken,
+        userByKeycloakId?.['clientId'],
+        userByKeycloakId?.['clientSecret']
+      );
+      // Fetch the details from account table based on userid and refresh token
+      const userAccountDetails = await this.userRepository.checkAccountDetails(userByKeycloakId?.['id']);
+      // Update the account details with latest access token, refresh token and exp date
+      if (!userAccountDetails) {
+        throw new NotFoundException(ResponseMessages.user.error.userAccountNotFound);
+      }
+      // Fetch session details
+
+      const sessionDetails = await this.userRepository.getSession(data.sid);
+      if (!sessionDetails) {
+        throw new NotFoundException(ResponseMessages.user.error.userSessionNotFound);
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const decodedToken: any = jwt.decode(tokenResponse?.refresh_token);
+      const expiresAt = new Date(decodedToken.exp * 1000);
+      const sessionData = {
+        sessionToken: tokenResponse.access_token,
+        expires: tokenResponse.expires_in,
+        refreshToken: tokenResponse.refresh_token,
+        expiresAt
+      };
+      const addSessionDetails = await this.userRepository.updateSessionToken(tokenResponse.session_state, sessionData);
+      if (!addSessionDetails) {
+        throw new InternalServerErrorException(ResponseMessages.user.error.errorInSessionCreation);
+      }
+
+      return tokenResponse;
     } catch (error) {
       this.logger.error(`In refreshTokenDetails : ${JSON.stringify(error)}`);
       throw new RpcException(error.response ? error.response : error);
@@ -699,7 +700,7 @@ export class UserService {
         verificationCode,
         clientAlias
       );
-      const isEmailSent = await sendEmail(emailData);
+      const isEmailSent = await this.emailService.sendEmail(emailData);
       if (isEmailSent) {
         return isEmailSent;
       } else {
@@ -883,40 +884,11 @@ export class UserService {
   async getProfile(payload: { id }): Promise<IUsersProfile> {
     try {
       const userData = await this.userRepository.getUserById(payload.id);
-
-      if ('true' === process.env.IS_ECOSYSTEM_ENABLE) {
-        const ecosystemSettings = await this._getEcosystemConfig();
-        for (const setting of ecosystemSettings) {
-          userData[setting.key] = 'true' === setting.value;
-        }
-      }
-
       return userData;
     } catch (error) {
       this.logger.error(`get user: ${JSON.stringify(error)}`);
       throw new RpcException(error.response ? error.response : error);
     }
-  }
-
-  async _getEcosystemConfig(): Promise<IEcosystemConfig[]> {
-    const pattern = { cmd: 'get-ecosystem-config-details' };
-    const payload = {};
-
-    const getEcosystemConfigDetails = await this.userServiceProxy
-      .send(pattern, payload)
-      .toPromise()
-      .catch((error) => {
-        this.logger.error(`catch: ${JSON.stringify(error)}`);
-        throw new HttpException(
-          {
-            status: error.status,
-            error: error.message
-          },
-          error.status
-        );
-      });
-
-    return getEcosystemConfigDetails;
   }
 
   async getPublicProfile(payload: { username }): Promise<IUsersProfile> {

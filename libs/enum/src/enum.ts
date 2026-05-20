@@ -70,6 +70,16 @@ export enum Invitation {
   PENDING = 'pending'
 }
 
+export enum InvitationViewRole {
+  ECOSYSTEM_MEMBER = 'Ecosystem Member',
+  ECOSYSTEM_LEAD = 'Ecosystem Lead'
+}
+
+export enum InviteType {
+  ECOSYSTEM = 'ecosystem',
+  MEMBER = 'member'
+}
+
 export enum EndorserTransactionType {
   SCHEMA = 'schema',
   CREDENTIAL_DEFINITION = 'credential-definition'
@@ -87,8 +97,50 @@ export enum OrgAgentType {
 
 export enum AgentSpinUpStatus {
   PENDING = 0,
-  PROCESSED = 1,
-  COMPLETED = 2
+  WALLET_CREATED = 1,
+  DID_CREATED = 2
+}
+
+export enum EcosystemRoles {
+  ECOSYSTEM_LEAD = 'Ecosystem Lead',
+  ECOSYSTEM_MEMBER = 'Ecosystem Member',
+  ECOSYSTEM_OWNER = 'Ecosystem Owner'
+}
+
+export enum EcosystemServiceRole {
+  LEAD = 'lead',
+  MEMBER = 'member'
+}
+
+export enum ProtocolMapperResult {
+  CREATED = 'created',
+  SKIPPED = 'skipped',
+  FAILED = 'failed'
+}
+
+export enum UnmanagedAttributePolicy {
+  ENABLED = 'ENABLED',
+  DISABLED = 'DISABLED',
+  ADMIN_EDIT = 'ADMIN_EDIT',
+  ADMIN_VIEW = 'ADMIN_VIEW'
+}
+
+export enum EcosystemConfigSettings {
+  URL = 'url',
+  ENABLE_ECOSYSTEM = 'enableEcosystem',
+  AUTO_ENDORSEMENT = 'autoEndorsement',
+  PARTICIPATE_IN_ECOSYSTEM = 'participateInEcosystem',
+  MULTI_ECOSYSTEM = 'multiEcosystemSupport'
+}
+
+export enum EcosystemOrgStatus {
+  ACTIVE = 'ACTIVE',
+  INACTIVE = 'INACTIVE'
+}
+
+export enum MemberStatus {
+  ACTIVE = 'active',
+  INACTIVE = 'inactive'
 }
 
 export enum UserCertificateId {
@@ -270,4 +322,98 @@ export enum SessionType {
 export enum ProviderType {
   KEYCLOAK = 'keycloak',
   SUPABASE = 'supabase'
+}
+
+export enum OpenId4VcIssuanceSessionState {
+  OfferCreated = 'OfferCreated',
+  OfferUriRetrieved = 'OfferUriRetrieved',
+  AuthorizationInitiated = 'AuthorizationInitiated',
+  AuthorizationGranted = 'AuthorizationGranted',
+  AccessTokenRequested = 'AccessTokenRequested',
+  AccessTokenCreated = 'AccessTokenCreated',
+  CredentialRequestReceived = 'CredentialRequestReceived',
+  CredentialsPartiallyIssued = 'CredentialsPartiallyIssued',
+  Completed = 'Completed',
+  Error = 'Error'
+}
+
+export enum x5cKeyType {
+  Ed25519 = 'Ed25519',
+  P256 = 'P-256'
+}
+
+export enum x5cRecordStatus {
+  Active = 'Active',
+  PendingActivation = 'Pending activation',
+  InActive = 'In Active'
+}
+
+export enum X509KeyUsage {
+  DigitalSignature = 1,
+  NonRepudiation = 2,
+  KeyEncipherment = 4,
+  DataEncipherment = 8,
+  KeyAgreement = 16,
+  KeyCertSign = 32,
+  CrlSign = 64,
+  EncipherOnly = 128,
+  DecipherOnly = 256
+}
+
+export enum X509ExtendedKeyUsage {
+  ServerAuth = '1.3.6.1.5.5.7.3.1',
+  ClientAuth = '1.3.6.1.5.5.7.3.2',
+  CodeSigning = '1.3.6.1.5.5.7.3.3',
+  EmailProtection = '1.3.6.1.5.5.7.3.4',
+  TimeStamping = '1.3.6.1.5.5.7.3.8',
+  OcspSigning = '1.3.6.1.5.5.7.3.9',
+  MdlDs = '1.0.18013.5.1.2'
+}
+
+export enum CredentialFormat {
+  SdJwtVc = 'dc+sd-jwt',
+  Mdoc = 'mso_mdoc'
+}
+
+export enum AttributeType {
+  STRING = 'string',
+  NUMBER = 'number',
+  BOOLEAN = 'boolean',
+  DATE = 'date',
+  OBJECT = 'object',
+  ARRAY = 'array',
+  IMAGE = 'image'
+}
+
+export enum SignerMethodOption {
+  DID = 'did',
+  X5C = 'x5c'
+}
+
+export declare enum HandshakeProtocol {
+  Connections = 'https://didcomm.org/connections/1.0',
+  DidExchange = 'https://didcomm.org/didexchange/1.0'
+}
+
+export enum ResponseMode {
+  DIRECT_POST = 'direct_post',
+  DIRECT_POST_JWT = 'direct_post.jwt',
+  DC_API = 'dc_api',
+  DC_API_JWT = 'dc_api.jwt'
+}
+
+export enum NotificationStatus {
+  INITIATED = 'initiated',
+  DATA_DELIVERED = 'DataDelivered',
+  DATA_DELIVERED_AND_NOTIFIED_WITH_NATS = 'DataDeliveredAndNotifiedWithNATS',
+  DATA_DELIVERED_AND_NOTIFIED_WITH_FCM = 'DataDeliveredAndNotifiedWithFCM',
+  DATA_PURGED = 'DataPurged',
+  DATA_PURGED_AND_NOTIFIED_WITH_NATS = 'DataPurgedAndNotifiedWithNATS',
+  DATA_PURGED_AND_NOTIFIED_WITH_FCM = 'DataPurgedAndNotifiedWithFCM',
+  NOTIFICATION_CONSUMED = 'NotificationConsumed'
+}
+
+export enum ClientIdPrefix {
+  X509SanDns = 'x509_san_dns',
+  X509Hash = 'x509_hash'
 }

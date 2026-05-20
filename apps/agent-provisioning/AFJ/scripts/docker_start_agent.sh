@@ -126,7 +126,7 @@ cat <<EOF >${CONFIG_FILE}
   "walletPassword": "$WALLET_STORAGE_PASSWORD",
   "walletAdminAccount": "$WALLET_STORAGE_USER",
   "walletAdminPassword": "$WALLET_STORAGE_PASSWORD",
-  "walletScheme": "DatabasePerWallet",
+  "walletScheme": "ProfilePerWallet",
   "indyLedger": $INDY_LEDGER,
   "endpoint": [
     "$AGENT_ENDPOINT"
@@ -225,15 +225,7 @@ if [ $? -eq 0 ]; then
     done
 
     echo "Creating agent config"
-    # Capture the logs from the container
-    container_logs=$(docker logs $(docker ps -q --filter "name=${AGENCY}_${CONTAINER_NAME}"))
-
-    # Extract the token from the logs using sed
-    token=$(echo "$container_logs" | sed -nE 's/.*** API Key: ([^ ]+).*/\1/p')
-
-    # Print the extracted token
-    echo "Token: $token"
-    
+ 
     ENDPOINT="${PWD}/endpoints/${AGENCY}_${CONTAINER_NAME}.json"
 
     # Check if the file exists
@@ -241,17 +233,13 @@ if [ $? -eq 0 ]; then
     # If it exists, remove the file
     rm "$ENDPOINT"
     fi
+    mkdir -p "$PWD/agent-provisioning/AFJ/endpoints"
     cat <<EOF >${ENDPOINT}
     {
         "CONTROLLER_ENDPOINT":"${EXTERNAL_IP}:${ADMIN_PORT}"
     }
 EOF
 
-    cat <<EOF >${PWD}/token/${AGENCY}_${CONTAINER_NAME}.json
-    {
-        "token" : "$token"
-    }
-EOF
     echo "Agent config created"
   else
     echo "==============="

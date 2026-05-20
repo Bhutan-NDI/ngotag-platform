@@ -1,4 +1,3 @@
-/* eslint-disable camelcase */
 import { Injectable, Inject } from '@nestjs/common';
 import { BaseService } from 'libs/service/base.service';
 import { IUserRequest } from '@credebl/user-request/user-request.interface';
@@ -25,9 +24,10 @@ import {
   IIssuedCredential
 } from '@credebl/common/interfaces/issuance.interface';
 import { IssueCredentialDto } from './dtos/multi-connection.dto';
-import { user } from '@prisma/client';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { ClientProxy } from '@nestjs/microservices';
+import { user } from '@prisma/client';
+import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 @Injectable()
 export class IssuanceService extends BaseService {
   constructor(
@@ -230,7 +230,7 @@ export class IssuanceService extends BaseService {
     return this.natsClient.sendNatsMessage(this.issuanceProxy, 'retry-bulk-credentials', payload);
   }
 
-  async _getWebhookUrl(tenantId?: string, orgId?: string): Promise<string> {
+  async _getWebhookUrl(tenantId?: string, orgId?: string): Promise<IWebhookUrlInfo> {
     const pattern = { cmd: 'get-webhookurl' };
     const payload = { tenantId, orgId };
 
@@ -244,9 +244,9 @@ export class IssuanceService extends BaseService {
     }
   }
 
-  async _postWebhookResponse(webhookUrl: string, data: object): Promise<string> {
+  async _postWebhookResponse(webhookUrl: string, data: object, webhookSecret?: string): Promise<string> {
     const pattern = { cmd: 'post-webhook-response-to-webhook-url' };
-    const payload = { webhookUrl, data };
+    const payload = { webhookUrl, data, webhookSecret };
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

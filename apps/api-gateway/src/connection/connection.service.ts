@@ -19,6 +19,7 @@ import { BasicMessageDto, QuestionDto } from './dtos/question-answer.dto';
 import { user } from '@prisma/client';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { firstValueFrom } from 'rxjs';
+import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 @Injectable()
 export class ConnectionService extends BaseService {
   constructor(
@@ -32,7 +33,7 @@ export class ConnectionService extends BaseService {
     try {
       return this.natsClient.sendNatsMessage(this.connectionServiceProxy, 'send-question', questionDto);
     } catch (error) {
-      throw new RpcException(error.response);
+      throw new RpcException(error?.response ?? error);
     }
   }
 
@@ -44,7 +45,7 @@ export class ConnectionService extends BaseService {
         basicMessageDto
       );
     } catch (error) {
-      throw new RpcException(error.response);
+      throw new RpcException(error?.response ?? error);
     }
   }
 
@@ -60,7 +61,7 @@ export class ConnectionService extends BaseService {
       const connectionDetails = { referenceId };
       return this.natsClient.sendNats(this.connectionServiceProxy, 'get-connection-url', connectionDetails);
     } catch (error) {
-      throw new RpcException(error.response);
+      throw new RpcException(error?.response ?? error);
     }
   }
 
@@ -112,14 +113,14 @@ export class ConnectionService extends BaseService {
     return this.natsClient.sendNatsMessage(this.connectionServiceProxy, 'receive-invitation', payload);
   }
 
-  async _getWebhookUrl(tenantId?: string, orgId?: string): Promise<string> {
+  async _getWebhookUrl(tenantId?: string, orgId?: string): Promise<IWebhookUrlInfo> {
     const pattern = { cmd: 'get-webhookurl' };
 
     const payload = { tenantId, orgId };
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const message: string = await firstValueFrom(this.connectionServiceProxy.send(pattern, payload));
+      const message: IWebhookUrlInfo = await firstValueFrom(this.connectionServiceProxy.send(pattern, payload));
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
@@ -127,9 +128,9 @@ export class ConnectionService extends BaseService {
     }
   }
 
-  async _postWebhookResponse(webhookUrl: string, data: object): Promise<string> {
+  async _postWebhookResponse(webhookUrl: string, data: object, webhookSecret?: string): Promise<string> {
     const pattern = { cmd: 'post-webhook-response-to-webhook-url' };
-    const payload = { webhookUrl, data };
+    const payload = { webhookUrl, data, webhookSecret };
 
     try {
       const message: string = await firstValueFrom(this.connectionServiceProxy.send(pattern, payload));

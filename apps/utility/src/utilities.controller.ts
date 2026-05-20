@@ -1,7 +1,9 @@
 import { Controller, Logger } from '@nestjs/common';
+
+import { EmailDto } from '@credebl/common/dtos/email.dto';
+import { IShorteningUrlData } from '../interfaces/shortening-url.interface';
 import { MessagePattern } from '@nestjs/microservices';
 import { UtilitiesService } from './utilities.service';
-import { IShorteningUrlData } from '../interfaces/shortening-url.interface';
 
 @Controller()
 export class UtilitiesController {
@@ -28,6 +30,19 @@ export class UtilitiesController {
     } catch (error) {
       this.logger.error(error);
       throw new Error('Error occured in Utility Microservices Controller');
+    }
+  }
+
+  @MessagePattern({ cmd: 'alert-db-ledgerId-null' })
+  async handleLedgerAlert(payload: { emailDto: EmailDto }): Promise<void> {
+    try {
+      this.logger.debug('Received msg in alert-db-service');
+      const result = await this.utilitiesService.handleLedgerAlert(payload.emailDto);
+      this.logger.debug('Received result in alert-db-service');
+      return result;
+    } catch (error) {
+      this.logger.error(error);
+      throw error;
     }
   }
 }

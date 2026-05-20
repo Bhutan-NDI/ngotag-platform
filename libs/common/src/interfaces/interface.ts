@@ -62,3 +62,24 @@ export interface IW3CAttributeValue {
   dependentRequired?: Record<string, string[]>;
   properties?: Record<string, IW3CAttributeValue>;
 }
+
+export interface IPaginationSortingDto {
+  pageNumber: number;
+  pageSize: number;
+  sortField?: string;
+  sortBy?: string;
+  searchByText?: string;
+  search?: string;
+}
+
+export interface PaginatedResponse<T> {
+  totalPages: number;
+  data: T[];
+}
+
+export interface CommonTableColumns {
+  createDateTime: Date;
+  createdBy: string;
+  lastChangedDateTime: Date;
+  lastChangedBy: string;
+}

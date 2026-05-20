@@ -84,7 +84,6 @@ import {
   validateAndUpdateIssuanceDates,
   validateEmail
 } from '@credebl/common/cast.helper';
-import { sendEmail } from '@credebl/common/send-grid-helper-file';
 import * as pLimit from 'p-limit';
 import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { validateW3CSchemaAttributes } from '../libs/helpers/attributes.validator';
@@ -93,6 +92,7 @@ import ContextStorageService, { ContextStorageServiceKey } from '@credebl/contex
 import { NATSClient } from '@credebl/common/NATSClient';
 import { extractAttributeNames, unflattenCsvRow } from '../libs/helpers/attributes.extractor';
 import { redisStore } from 'cache-manager-ioredis-yet';
+import { EmailService } from '@credebl/common/email.service';
 
 @Injectable()
 export class IssuanceService {
@@ -113,7 +113,8 @@ export class IssuanceService {
     @Inject(CACHE_MANAGER) private readonly cacheService: Cache,
     @Inject(ContextStorageServiceKey)
     private readonly contextStorageService: ContextStorageService,
-    private readonly natsClient: NATSClient
+    private readonly natsClient: NATSClient,
+    private readonly emailService: EmailService
   ) {}
 
   async getIssuanceRecords(orgId: string): Promise<number> {
@@ -189,7 +190,7 @@ export class IssuanceService {
         throw new NotFoundException(ResponseMessages.issuance.error.orgAgentTypeNotFound);
       }
 
-      const url = await getAgentUrl(agentEndPoint, CommonConstants.CREATE_OFFER);
+      const url = getAgentUrl(agentEndPoint, CommonConstants.CREATE_OFFER);
 
       if (payload.credentialType === IssueCredentialType.JSONLD) {
         await validateAndUpdateIssuanceDates(credentialData);
@@ -386,7 +387,7 @@ export class IssuanceService {
         throw new NotFoundException(ResponseMessages.issuance.error.agentEndPointNotFound);
       }
 
-      const url = await getAgentUrl(agentEndPoint, CommonConstants.CREATE_OFFER_OUT_OF_BAND);
+      const url = getAgentUrl(agentEndPoint, CommonConstants.CREATE_OFFER_OUT_OF_BAND);
 
       let issueData;
       if (credentialType === IssueCredentialType.INDY) {
@@ -699,7 +700,7 @@ export class IssuanceService {
         throw new NotFoundException(ResponseMessages.issuance.error.agentEndPointNotFound);
       }
 
-      const url = await getAgentUrl(agentEndPoint, CommonConstants.GET_OFFER_BY_CRED_ID, credentialRecordId);
+      const url = getAgentUrl(agentEndPoint, CommonConstants.GET_OFFER_BY_CRED_ID, credentialRecordId);
 
       const createConnectionInvitation = await this._getIssueCredentialsbyCredentialRecordId(url, orgId);
       return createConnectionInvitation?.response;
@@ -848,7 +849,7 @@ export class IssuanceService {
         throw new NotFoundException(ResponseMessages.issuance.error.agentEndPointNotFound);
       }
 
-      const url = await getAgentUrl(agentDetails.agentEndPoint, CommonConstants.CREATE_OFFER_OUT_OF_BAND);
+      const url = getAgentUrl(agentDetails.agentEndPoint, CommonConstants.CREATE_OFFER_OUT_OF_BAND);
       const organizationDetails = await this.issuanceRepository.getOrganization(orgId);
 
       if (!organizationDetails) {
@@ -1089,7 +1090,7 @@ export class IssuanceService {
       ];
       this.logger.debug('Invitation url and deeplink created successfully. Sending email');
 
-      const isEmailSent = await sendEmail(this.emailData);
+      const isEmailSent = await this.emailService.sendEmail(this.emailData);
 
       this.logger.log(`isEmailSent ::: ${JSON.stringify(isEmailSent)}-${this.counter}`);
       this.counter++;
@@ -1515,7 +1516,7 @@ export class IssuanceService {
     return schemaDetails;
   }
 
-  async delay(ms): Promise<unknown> {
+  async delay(ms: number): Promise<unknown> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 

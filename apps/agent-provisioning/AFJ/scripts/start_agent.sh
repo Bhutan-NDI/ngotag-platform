@@ -2,24 +2,32 @@
 
 START_TIME=$(date +%s)
 
-AGENCY=$1
-EXTERNAL_IP=$2
-WALLET_NAME=$3
-WALLET_PASSWORD=$4
-RANDOM_SEED=$5
-WEBHOOK_HOST=$6
-WALLET_STORAGE_HOST=$7
-WALLET_STORAGE_PORT=$8
-WALLET_STORAGE_USER=$9
-WALLET_STORAGE_PASSWORD=${10}
-CONTAINER_NAME=${11}
-PROTOCOL=${12}
-TENANT=${13}
-AFJ_VERSION=${14}
-INDY_LEDGER=${15}
-INBOUND_ENDPOINT=${16}
-SCHEMA_FILE_SERVER_URL=${17}
-AGENT_API_KEY=${18}
+AGENCY="$1"
+EXTERNAL_IP="$2"
+WALLET_NAME="$3"
+WALLET_PASSWORD="$4"
+RANDOM_SEED="$5"
+WEBHOOK_HOST="$6"
+WALLET_STORAGE_HOST="$7"
+WALLET_STORAGE_PORT="$8"
+WALLET_STORAGE_USER="$9"
+WALLET_STORAGE_PASSWORD="${10}"
+CONTAINER_NAME="${11}"
+PROTOCOL="${12}"
+TENANT="${13}"
+AFJ_VERSION="${14}"
+INDY_LEDGER="${15}"
+INBOUND_ENDPOINT="${16}"
+SCHEMA_FILE_SERVER_URL="${17}"
+AGENT_API_KEY="${18}"
+
+# Validate required parameters
+if [[ -z "$AGENCY" ]] || [[ -z "$EXTERNAL_IP" ]] || [[ -z "$WALLET_NAME" ]]; then
+  echo "ERROR: Missing required parameters"
+  echo "Usage: $0 AGENCY EXTERNAL_IP WALLET_NAME ..."
+  exit 1
+fi
+
 ADMIN_PORT_FILE="$PWD/apps/agent-provisioning/AFJ/port-file/last-admin-port.txt"
 INBOUND_PORT_FILE="$PWD/apps/agent-provisioning/AFJ/port-file/last-inbound-port.txt"
 ADMIN_PORT=8001
@@ -87,13 +95,6 @@ else
   mkdir ${PWD}/apps/agent-provisioning/AFJ/agent-config
 fi
 
-if [ -d "${PWD}/apps/agent-provisioning/AFJ/token" ]; then
-  echo "token directory exists."
-else
-  echo "Error: token directory does not exists."
-  mkdir ${PWD}/apps/agent-provisioning/AFJ/token
-fi
-
 # Define a regular expression pattern for IP address
 IP_REGEX="^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$"
 
@@ -133,7 +134,7 @@ cat <<EOF >"$CONFIG_FILE"
   "walletPassword": "$WALLET_STORAGE_PASSWORD",
   "walletAdminAccount": "$WALLET_STORAGE_USER",
   "walletAdminPassword": "$WALLET_STORAGE_PASSWORD",
-  "walletScheme": "DatabasePerWallet",
+  "walletScheme": "ProfilePerWallet",
   "indyLedger": $INDY_LEDGER,
   "endpoint": [
     "$AGENT_ENDPOINT"
@@ -235,15 +236,7 @@ if [ $? -eq 0 ]; then
     done
 
     echo "Creating agent config"
-    # Capture the logs from the container
-    container_logs=$(docker logs $(docker ps -q --filter "name=${AGENCY}_${CONTAINER_NAME}"))
-
-    # Extract the token from the logs using sed
-    token=$(echo "$container_logs" | sed -nE 's/.*** API Key: ([^ ]+).*/\1/p')
-
-    # Print the extracted token
-    echo "Token: $token"
-
+    # This is not actually being read, maybe we can remove this logic for endpoint file
     ENDPOINT="${PWD}/endpoints/${AGENCY}_${CONTAINER_NAME}.json"
 
     # Check if the file exists
@@ -251,17 +244,13 @@ if [ $? -eq 0 ]; then
       # If it exists, remove the file
       rm "$ENDPOINT"
     fi
+    mkdir -p "$PWD/agent-provisioning/AFJ/endpoints"
     cat <<EOF >${ENDPOINT}
     {
         "CONTROLLER_ENDPOINT":"${EXTERNAL_IP}:${ADMIN_PORT}"
     }
 EOF
 
-    cat <<EOF >${PWD}/token/${AGENCY}_${CONTAINER_NAME}.json
-    {
-        "token" : "$token"
-    }
-EOF
     echo "Agent config created"
   else
     echo "==============="
