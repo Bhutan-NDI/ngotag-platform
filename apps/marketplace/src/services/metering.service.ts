@@ -62,23 +62,27 @@ export class MeteringService {
       return;
     }
 
-    const response = await this.microsoftMarketplaceClient.submitBatchUsageEvents(
-      eligibleEvents.map((event) => ({
-        resourceId: event.subscription.marketplaceSubscriptionId,
-        quantity: event.quantity,
-        dimension: event.dimension,
-        effectiveStartTime: event.usageStartTime.toISOString(),
-        planId: event.subscription.planId
-      }))
-    );
+    // Microsoft accepts at most 25 usage events per batchUsageEvent request.
+    const MAX_BATCH_SIZE = 25;
+    for (let offset = 0; offset < eligibleEvents.length; offset += MAX_BATCH_SIZE) {
+      const batch = eligibleEvents.slice(offset, offset + MAX_BATCH_SIZE);
+      const response = await this.microsoftMarketplaceClient.submitBatchUsageEvents(
+        batch.map((event) => ({
+          resourceId: event.subscription.marketplaceSubscriptionId,
+          quantity: event.quantity,
+          dimension: event.dimension,
+          effectiveStartTime: event.usageStartTime.toISOString()
+        }))
+      );
 
-    for (const event of eligibleEvents) {
-      await this.marketplaceRepository.updateUsageEventStatus(event.id, 'submitted', {
-        status: 'submitted',
-        message: JSON.stringify(response.data),
-        requestId: response.requestId,
-        correlationId: response.correlationId
-      });
+      for (const event of batch) {
+        await this.marketplaceRepository.updateUsageEventStatus(event.id, 'submitted', {
+          status: 'submitted',
+          message: JSON.stringify(response.data),
+          requestId: response.requestId,
+          correlationId: response.correlationId
+        });
+      }
     }
   }
 
