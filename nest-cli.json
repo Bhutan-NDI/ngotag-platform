@@ -198,13 +198,13 @@
       }
     },
     "ecosystem": {
-    "type": "application",
-    "root": "apps/ecosystem",
-    "entryFile": "main",
-    "sourceRoot": "apps/ecosystem/src",
-    "compilerOptions": {
-      "tsConfigPath": "apps/ecosystem/tsconfig.app.json"
-    }
+      "type": "application",
+      "root": "apps/ecosystem",
+      "entryFile": "main",
+      "sourceRoot": "apps/ecosystem/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/ecosystem/tsconfig.app.json"
+      }
     },
     "platform-service": {
       "type": "application",
@@ -321,6 +321,24 @@
       "sourceRoot": "apps/x509/src",
       "compilerOptions": {
         "tsConfigPath": "apps/x509/tsconfig.app.json"
+      }
+    },
+    "azure-storage": {
+      "type": "library",
+      "root": "libs/azure-storage",
+      "entryFile": "index",
+      "sourceRoot": "libs/azure-storage/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/azure-storage/tsconfig.lib.json"
+      }
+    },
+    "marketplace": {
+      "type": "application",
+      "root": "apps/marketplace",
+      "entryFile": "main",
+      "sourceRoot": "apps/marketplace/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/marketplace/tsconfig.app.json"
       }
     }
   }

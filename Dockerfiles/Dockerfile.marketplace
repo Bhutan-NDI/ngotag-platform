@@ -1,0 +1,33 @@
+# Stage 1: Build the application
+FROM node:18-alpine as build
+RUN npm install -g pnpm
+RUN apk add --no-cache openssl
+
+WORKDIR /app
+
+COPY package.json ./
+
+RUN pnpm i
+
+COPY . .
+RUN cd libs/prisma-service && npx prisma generate
+
+# Build the marketplace service
+RUN pnpm run build marketplace
+
+# Stage 2: Create the final image
+FROM node:18-alpine
+RUN npm install -g pnpm
+RUN apk add --no-cache openssl
+
+WORKDIR /app
+COPY package.json ./
+RUN pnpm install --prod --ignore-scripts \
+    && pnpm store prune \
+    && rm -rf /root/.local/share/pnpm/store
+
+COPY --from=build /app/dist/apps/marketplace/ ./dist/apps/marketplace/
+COPY --from=build /app/libs/ ./libs/
+RUN cd libs/prisma-service && npx prisma generate
+
+CMD ["sh", "-c", "cd libs/prisma-service && npx prisma migrate deploy && cd ../.. && node dist/apps/marketplace/main.js"]

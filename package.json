@@ -7,7 +7,7 @@
   "scripts": {
     "prebuild": "rimraf dist",
     "build": "nest build",
-    "build:all": "rimraf dist && nest build api-gateway && nest build platform-service && nest build agent-service && nest build connection",
+    "build:all": "rimraf dist && nest build api-gateway && nest build platform-service && nest build agent-service && nest build connection && nest build marketplace",
     "format": "prettier --write \"apps/**/*.ts\" \"libs/**/*.ts\"",
     "start": "npx prisma migrate deploy --schema=./libs/prisma-service/prisma/schema.prisma & nest start",
     "start:dev": "nest start --watch",
@@ -82,7 +82,7 @@
     "express-useragent": "^1.0.15",
     "firebase-admin": "^13.6.1",
     "fs": "0.0.1-security",
-    "generate-password": "^1.7.1", 
+    "generate-password": "^1.7.1",
     "helmet": "^8.1.0",
     "html-pdf": "^3.0.1",
     "html-to-image": "^1.11.13",
