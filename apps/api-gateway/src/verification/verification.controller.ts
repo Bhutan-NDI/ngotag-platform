@@ -55,12 +55,16 @@ import { Validator } from '@credebl/common/validator';
 import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
+import { MarketplaceService } from '../marketplace/marketplace.service';
 
 @UseFilters(CustomExceptionFilter)
 @Controller()
 @ApiTags('verifications')
 export class VerificationController {
-  constructor(private readonly verificationService: VerificationService) {}
+  constructor(
+    private readonly verificationService: VerificationService,
+    private readonly marketplaceService: MarketplaceService
+  ) {}
 
   private readonly logger = new Logger('VerificationController');
 
@@ -463,6 +467,45 @@ export class VerificationController {
       .catch((error) => {
         this.logger.debug(`error in saving verification webhook ::: ${JSON.stringify(error)}`);
       });
+
+    // Best-effort marketplace usage capture on verification completion. Never blocks the webhook.
+    const proofWh = proofPresentationPayload as unknown as {
+      id?: string;
+      presentationId?: string;
+      threadId?: string;
+      state?: string;
+      orgId?: string;
+      connectionId?: string;
+      createdAt?: string;
+      updatedAt?: string;
+      isVerified?: boolean;
+    };
+    if (
+      proofWh.isVerified ||
+      'verified' === `${proofWh.state}`.toLowerCase() ||
+      'done' === `${proofWh.state}`.toLowerCase()
+    ) {
+      void this.marketplaceService
+        .recordUsageEvent({
+          orgId: proofWh.orgId || orgId,
+          eventType: 'verification_completed',
+          sourceTable: 'presentations',
+          sourceId: proofWh.presentationId || proofWh.id || proofWh.threadId || `${orgId}:${proofWh.createdAt}`,
+          occurredAt: proofWh.updatedAt || proofWh.createdAt,
+          quantity: 1,
+          metadata: {
+            proofId: proofWh.id,
+            threadId: proofWh.threadId,
+            connectionId: proofWh.connectionId,
+            state: proofWh.state,
+            isVerified: proofWh.isVerified
+          }
+        })
+        .catch((error) =>
+          this.logger.debug(`error in recording marketplace verification usage ::: ${JSON.stringify(error)}`)
+        );
+    }
+
     const finalResponse: IResponse = {
       statusCode: HttpStatus.CREATED,
       message: ResponseMessages.verification.success.create,

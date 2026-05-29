@@ -84,6 +84,7 @@ import { NotFoundErrorDto } from '../dtos/not-found-error.dto';
 import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
+import { MarketplaceService } from '../marketplace/marketplace.service';
 @Controller()
 @UseFilters(CustomExceptionFilter)
 @ApiTags('credentials')
@@ -92,9 +93,14 @@ import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-e
 export class IssuanceController {
   constructor(
     private readonly issueCredentialService: IssuanceService,
-    private readonly azureStorageService: AzureStorageService
+    private readonly azureStorageService: AzureStorageService,
+    private readonly marketplaceService: MarketplaceService
   ) {}
   private readonly logger = new Logger('IssuanceController');
+
+  private isIssuedCredentialState(state?: string): boolean {
+    return ['done', 'issued', 'credential_issued'].includes(`${state}`.toLowerCase());
+  }
 
   /**
    * Get all issued credentials for a specific organization
@@ -965,6 +971,40 @@ export class IssuanceController {
       .catch((error) => {
         this.logger.debug(`error in saving issuance webhook ::: ${JSON.stringify(error)}`);
       });
+
+    // Best-effort marketplace usage capture on issuance completion. Never blocks the webhook.
+    const issuanceWh = issueCredentialDto as unknown as {
+      id?: string;
+      threadId?: string;
+      state?: string;
+      orgId?: string;
+      schemaId?: string;
+      credDefId?: string;
+      connectionId?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    };
+    if (this.isIssuedCredentialState(issuanceWh.state)) {
+      void this.marketplaceService
+        .recordUsageEvent({
+          orgId: issuanceWh.orgId || id,
+          eventType: 'issuance_completed',
+          sourceTable: 'credentials',
+          sourceId: issuanceWh.id || issuanceWh.threadId || `${id}:${issuanceWh.createdAt}`,
+          occurredAt: issuanceWh.updatedAt || issuanceWh.createdAt,
+          quantity: 1,
+          metadata: {
+            schemaId: issuanceWh.schemaId,
+            credDefId: issuanceWh.credDefId,
+            connectionId: issuanceWh.connectionId,
+            state: issuanceWh.state
+          }
+        })
+        .catch((error) =>
+          this.logger.debug(`error in recording marketplace issuance usage ::: ${JSON.stringify(error)}`)
+        );
+    }
+
     const finalResponse: IResponseType = {
       statusCode: HttpStatus.CREATED,
       message: ResponseMessages.issuance.success.create,
