@@ -1,0 +1,26 @@
+{
+  "name": "@credebl/azure-storage",
+  "main": "src/index",
+  "types": "src/index",
+  "version": "0.0.1",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "pnpm run clean && pnpm run compile",
+    "clean": "rimraf ../../dist/libs/azure-storage",
+    "compile": "tsc -p tsconfig.build.json",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@nestjs/common": "catalog:",
+    "@nestjs/testing": "catalog:",
+    "@nestjs/microservices": "catalog:",
+    "@azure/storage-blob": "12.26.0"
+  },
+  "devDependencies": {
+    "reflect-metadata": "^0.1.13",
+    "rimraf": "^4.4.0",
+    "typescript": "^5.1.6"
+  }
+}
