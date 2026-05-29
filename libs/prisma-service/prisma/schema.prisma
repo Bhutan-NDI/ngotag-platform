@@ -38,6 +38,7 @@ model user {
   sessions               session[]
   ecosystemInvitations   ecosystem_invitations[]
   ecosystemOrgs          ecosystem_orgs[]
+  marketplaceSubscriptions marketplace_subscription[]
 }
 
 model account {
@@ -163,6 +164,9 @@ model organisation {
   status_list_allocations status_list_allocation[]
   issued_oid4vc_credentials issued_oid4vc_credentials[]
   oidc_issuer oidc_issuer[] 
+  marketplaceSubscriptions  marketplace_subscription[]
+  marketplaceUsageEvents    marketplace_usage_event[]
+  billingUsageEvents        billing_usage_event[]
 }
 
 model org_invitations {
@@ -881,4 +885,223 @@ model holder_notification {
   createDateTime      DateTime  @default(now()) @db.Timestamptz(6)
   lastChangedDateTime DateTime  @default(now()) @db.Timestamptz(6)
   deletedAt           DateTime? @db.Timestamp(6)
+}
+
+enum MarketplaceSubscriptionStatus {
+  PendingFulfillmentStart
+  Subscribed
+  Suspended
+  Unsubscribed
+}
+
+enum MarketplaceActivationStatus {
+  not_started
+  in_progress
+  activated
+  failed
+}
+
+enum MarketplaceOnboardingStatus {
+  resolved
+  account_linked
+  org_linked
+  activation_pending
+  activated
+  expired
+  failed
+}
+
+enum MarketplaceUsageStatus {
+  pending
+  submitted
+  accepted
+  duplicate
+  failed
+  expired
+}
+
+enum MarketplaceWebhookProcessingStatus {
+  received
+  validated
+  processed
+  failed
+}
+
+enum MarketplaceOperationAckStatus {
+  not_required
+  pending
+  success
+  failure
+}
+
+model marketplace_subscription {
+  id                        String                           @id @default(uuid()) @db.Uuid
+  marketplaceSubscriptionId String                           @unique
+  publisherId               String?
+  offerId                   String
+  planId                    String
+  subscriptionName          String?
+  saasSubscriptionStatus    MarketplaceSubscriptionStatus    @default(PendingFulfillmentStart)
+  quantity                  Int?
+  termUnit                  String?
+  termStartDate             DateTime?                        @db.Timestamptz(6)
+  termEndDate               DateTime?                        @db.Timestamptz(6)
+  autoRenew                 Boolean?
+  isFreeTrial               Boolean?
+  isTest                    Boolean?
+  sandboxType               String?
+  allowedCustomerOperations String[]                         @default([])
+  purchaserEmail            String?
+  purchaserTenantId         String?
+  purchaserObjectId         String?
+  purchaserPuid             String?
+  beneficiaryEmail          String?
+  beneficiaryTenantId       String?
+  beneficiaryObjectId       String?
+  beneficiaryPuid           String?
+  localUserId               String?                          @db.Uuid
+  orgId                     String?                          @db.Uuid
+  activationStatus          MarketplaceActivationStatus      @default(not_started)
+  activationError           String?
+  lastResolvedAt            DateTime?                        @db.Timestamptz(6)
+  lastSyncedAt              DateTime?                        @db.Timestamptz(6)
+  metadata                  Json?
+  createDateTime            DateTime                         @default(now()) @db.Timestamptz(6)
+  lastChangedDateTime       DateTime                         @default(now()) @db.Timestamptz(6)
+  deletedAt                 DateTime?                        @db.Timestamp(6)
+  user                      user?                            @relation(fields: [localUserId], references: [id])
+  organisation              organisation?                    @relation(fields: [orgId], references: [id])
+  onboardingSessions        marketplace_onboarding_session[]
+  usageEvents               marketplace_usage_event[]
+  billingUsageEvents        billing_usage_event[]
+  webhookEvents             marketplace_webhook_event[]
+  operations                marketplace_operation[]
+
+  @@index([orgId])
+  @@index([localUserId])
+  @@index([saasSubscriptionStatus])
+}
+
+model marketplace_onboarding_session {
+  id                        String                      @id @default(uuid()) @db.Uuid
+  marketplaceSubscriptionId String                      @db.Uuid
+  marketplaceTokenHash      String
+  buyerTenantId             String?
+  buyerObjectId             String?
+  buyerEmail                String?
+  status                    MarketplaceOnboardingStatus @default(resolved)
+  expiresAt                 DateTime                    @db.Timestamptz(6)
+  metadata                  Json?
+  createDateTime            DateTime                    @default(now()) @db.Timestamptz(6)
+  lastChangedDateTime       DateTime                    @default(now()) @db.Timestamptz(6)
+  subscription              marketplace_subscription    @relation(fields: [marketplaceSubscriptionId], references: [id])
+
+  @@index([expiresAt])
+  @@index([marketplaceSubscriptionId])
+}
+
+model marketplace_plan {
+  id                               String   @id @default(uuid()) @db.Uuid
+  offerId                          String
+  planId                           String
+  displayName                      String
+  isActive                         Boolean  @default(true)
+  baseMonthlyPriceUsd              Int      @default(0)
+  setupFeeUsd                      Int      @default(0)
+  includedIssuanceTransactions     Int      @default(0)
+  includedVerificationTransactions Int      @default(0)
+  includedSchemas                  Int      @default(0)
+  maxOrganizations                 Int?
+  maxUsers                         Int?
+  features                         Json
+  createDateTime                   DateTime @default(now()) @db.Timestamptz(6)
+  lastChangedDateTime              DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([offerId, planId])
+  @@index([isActive])
+}
+
+model marketplace_usage_event {
+  id                        String                   @id @default(uuid()) @db.Uuid
+  marketplaceSubscriptionId String                   @db.Uuid
+  orgId                     String                   @db.Uuid
+  dimension                 String
+  quantity                  Float
+  usageStartTime            DateTime                 @db.Timestamptz(6)
+  status                    MarketplaceUsageStatus   @default(pending)
+  marketplaceResponseStatus String?
+  marketplaceMessage        String?
+  requestId                 String?
+  correlationId             String?
+  submittedAt               DateTime?                @db.Timestamptz(6)
+  sourceEventIds            Json?
+  createDateTime            DateTime                 @default(now()) @db.Timestamptz(6)
+  lastChangedDateTime       DateTime                 @default(now()) @db.Timestamptz(6)
+  subscription              marketplace_subscription @relation(fields: [marketplaceSubscriptionId], references: [id])
+  organisation              organisation             @relation(fields: [orgId], references: [id])
+
+  @@unique([marketplaceSubscriptionId, dimension, usageStartTime])
+  @@index([status, usageStartTime])
+  @@index([orgId])
+}
+
+model billing_usage_event {
+  id                        String                    @id @default(uuid()) @db.Uuid
+  orgId                     String                    @db.Uuid
+  marketplaceSubscriptionId String?                   @db.Uuid
+  eventType                 String
+  sourceTable               String?
+  sourceId                  String
+  occurredAt                DateTime                  @db.Timestamptz(6)
+  billingPeriod             String?
+  quantity                  Float                     @default(1)
+  metadata                  Json?
+  createDateTime            DateTime                  @default(now()) @db.Timestamptz(6)
+  lastChangedDateTime       DateTime                  @default(now()) @db.Timestamptz(6)
+  organisation              organisation              @relation(fields: [orgId], references: [id])
+  subscription              marketplace_subscription? @relation(fields: [marketplaceSubscriptionId], references: [id])
+
+  @@unique([eventType, sourceId])
+  @@index([orgId, occurredAt])
+  @@index([marketplaceSubscriptionId])
+}
+
+model marketplace_webhook_event {
+  id                        String                             @id @default(uuid()) @db.Uuid
+  operationId               String?
+  activityId                String?
+  subscriptionId            String
+  marketplaceSubscriptionId String?                            @db.Uuid
+  action                    String
+  status                    String?
+  payload                   Json
+  headers                   Json?
+  validationStatus          String?
+  processingStatus          MarketplaceWebhookProcessingStatus @default(received)
+  error                     String?
+  createDateTime            DateTime                           @default(now()) @db.Timestamptz(6)
+  lastChangedDateTime       DateTime                           @default(now()) @db.Timestamptz(6)
+  subscription              marketplace_subscription?          @relation(fields: [marketplaceSubscriptionId], references: [id])
+
+  @@index([operationId])
+  @@index([subscriptionId])
+}
+
+model marketplace_operation {
+  id                        String                        @id @default(uuid()) @db.Uuid
+  operationId               String
+  marketplaceSubscriptionId String                        @db.Uuid
+  action                    String
+  status                    String?
+  planId                    String?
+  quantity                  Int?
+  rawPayload                Json?
+  ackStatus                 MarketplaceOperationAckStatus @default(pending)
+  ackError                  String?
+  createDateTime            DateTime                      @default(now()) @db.Timestamptz(6)
+  lastChangedDateTime       DateTime                      @default(now()) @db.Timestamptz(6)
+  subscription              marketplace_subscription      @relation(fields: [marketplaceSubscriptionId], references: [id])
+
+  @@unique([operationId, marketplaceSubscriptionId])
+  @@index([action])
 }
