@@ -118,6 +118,9 @@ export class OrganizationService {
         throw new BadRequestException(ResponseMessages.organisation.error.MaximumOrgsLimit);
       }
 
+      // Enforce the marketplace plan organization limit after the platform-wide MAX_ORG_LIMIT.
+      await this.assertMarketplaceOrganizationLimit(userId, userOrgCount);
+
       const organizationExist = await this.organizationRepository.checkOrganizationNameExist(createOrgDto.name);
 
       if (organizationExist) {
@@ -1227,6 +1230,23 @@ export class OrganizationService {
    * @param payload
    * @returns Updated invitation response
    */
+  private async assertMarketplaceOrganizationLimit(userId: string, currentOrgCount: number): Promise<void> {
+    const maxOrganizations = await this.organizationRepository.getMarketplaceMaxOrganizationsByUser(userId);
+
+    if (!maxOrganizations) {
+      return;
+    }
+
+    if (currentOrgCount >= maxOrganizations) {
+      throw new BadRequestException({
+        code: 'marketplace_org_limit_reached',
+        message: `Marketplace plan allows ${maxOrganizations} organization${
+          1 === maxOrganizations ? '' : 's'
+        } for this subscription`
+      });
+    }
+  }
+
   private async assertMarketplaceUserLimitAllowsInvitations(
     bulkInvitationDto: BulkSendInvitationDto,
     senderEmail: string
@@ -1301,6 +1321,9 @@ export class OrganizationService {
         if (userOrgCount >= toNumber(`${process.env.MAX_ORG_LIMIT}`)) {
           throw new BadRequestException(ResponseMessages.organisation.error.MaximumOrgsLimit);
         }
+
+        // Enforce the marketplace plan organization limit after the platform-wide MAX_ORG_LIMIT.
+        await this.assertMarketplaceOrganizationLimit(userId, userOrgCount);
 
         await this.assertMarketplaceUserLimitAllowsAcceptance(orgId, userId);
       }
