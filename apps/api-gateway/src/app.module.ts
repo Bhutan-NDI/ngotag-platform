@@ -22,6 +22,7 @@ import { GlobalConfigModule } from '@credebl/config/global-config.module';
 import { KeycloakConfigModule } from '@credebl/keycloak-config';
 import { IssuanceModule } from './issuance/issuance.module';
 import { LoggerModule } from '@credebl/logger/logger.module';
+import { MarketplaceModule } from './marketplace/marketplace.module';
 import { NotificationModule } from './notification/notification.module';
 import { Oid4vcIssuanceModule } from './oid4vc-issuance/oid4vc-issuance.module';
 import { Oid4vpModule } from './oid4vc-verification/oid4vc-verification.module';
@@ -63,6 +64,7 @@ import { shouldLoadOidcModules } from '@credebl/common/common.utils';
     SchemaModule,
     RevocationModule,
     VerificationModule,
+    MarketplaceModule,
     FidoModule,
     OrganizationModule,
     UserModule,
@@ -124,7 +126,9 @@ export class AppModule {
         'admin/user-login',
         'registry/organizations',
         'issue-credentials/national-id',
-        'labels/:id'
+        'labels/:id',
+        'marketplace/subscriptions/resolve',
+        'marketplace/webhook'
       )
       .forRoutes(AgentController, RevocationController);
   }

@@ -53,6 +53,8 @@ import { user } from '@prisma/client';
 import { TrimStringParamPipe } from '@credebl/common/cast.helper';
 import { Validator } from '@credebl/common/validator';
 import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
+import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
+import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 
 @UseFilters(CustomExceptionFilter)
 @Controller()
@@ -251,7 +253,8 @@ export class VerificationController {
     enum: ProofRequestType
   })
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('verification')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
   async sendPresentationRequest(
     @Res() res: Response,
@@ -370,7 +373,8 @@ export class VerificationController {
   @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('verification')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   async verifyPresentation(
     @Res() res: Response,
     @User() user: IUserRequest,
@@ -406,7 +410,8 @@ export class VerificationController {
   })
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('verification')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   async sendOutOfBandPresentationRequest(
     @Res() res: Response,
     @User() user: IUserRequest,
