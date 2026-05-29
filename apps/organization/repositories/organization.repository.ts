@@ -188,6 +188,40 @@ export class OrganizationRepository {
     return plan?.maxUsers ?? null;
   }
 
+  async getMarketplaceMaxOrganizationsByUser(userId: string): Promise<number | null> {
+    const subscription = await this.prisma.marketplace_subscription.findFirst({
+      where: {
+        localUserId: userId,
+        deletedAt: null
+      },
+      orderBy: {
+        createDateTime: 'desc'
+      },
+      select: {
+        offerId: true,
+        planId: true
+      }
+    });
+
+    if (!subscription) {
+      return null;
+    }
+
+    const plan = await this.prisma.marketplace_plan.findUnique({
+      where: {
+        offerId_planId: {
+          offerId: subscription.offerId,
+          planId: subscription.planId
+        }
+      },
+      select: {
+        maxOrganizations: true
+      }
+    });
+
+    return plan?.maxOrganizations ?? null;
+  }
+
   async getOrganizationUserCount(orgId: string): Promise<number> {
     const users = await this.prisma.user_org_roles.findMany({
       where: {
