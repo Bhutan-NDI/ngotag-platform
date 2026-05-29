@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { MARKETPLACE_FEATURE_KEY, MarketplaceFeature } from '../decorators/requires-marketplace-feature.decorator';
 import { MarketplaceService } from '../marketplace.service';
@@ -11,6 +11,8 @@ interface EntitlementResponse {
 
 @Injectable()
 export class MarketplaceEntitlementGuard implements CanActivate {
+  private readonly logger = new Logger(MarketplaceEntitlementGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly marketplaceService: MarketplaceService
@@ -26,6 +28,12 @@ export class MarketplaceEntitlementGuard implements CanActivate {
       return true;
     }
 
+    // When marketplace billing is globally disabled, do not enforce entitlements and
+    // do not couple core SSI flows to the availability of the marketplace microservice.
+    if (`${process.env.MARKETPLACE_ENABLED}`.toLowerCase() !== 'true') {
+      return true;
+    }
+
     const request = context.switchToHttp().getRequest();
     const orgId = this.getOrgId(request);
 
@@ -33,10 +41,27 @@ export class MarketplaceEntitlementGuard implements CanActivate {
       return true;
     }
 
-    const entitlements = (await this.marketplaceService.getEntitlements(
-      orgId,
-      request.user?.id
-    )) as EntitlementResponse;
+    const marketplaceRequired = `${process.env.MARKETPLACE_REQUIRED}`.toLowerCase() === 'true';
+
+    let entitlements: EntitlementResponse;
+    try {
+      entitlements = (await this.marketplaceService.getEntitlements(orgId, request.user?.id)) as EntitlementResponse;
+    } catch (error) {
+      this.logger.warn(
+        `Marketplace entitlement check failed for org ${orgId}: ${
+          error instanceof Error ? error.message : JSON.stringify(error)
+        }`
+      );
+      // Fail-open unless marketplace is mandatory, so a marketplace/NATS outage does not block issuance/verification.
+      if (marketplaceRequired) {
+        throw new ForbiddenException({
+          code: 'marketplace_entitlement_unavailable',
+          message: 'Unable to verify Marketplace entitlements'
+        });
+      }
+      return true;
+    }
+
     if (entitlements.features?.[feature]) {
       if (feature === 'schemaCreate' && this.isUsageLimitReached(entitlements, 'schema_create')) {
         throw new ForbiddenException({
