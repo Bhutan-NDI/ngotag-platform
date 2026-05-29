@@ -38,6 +38,8 @@ import { OrgRoles } from 'libs/org-roles/enums';
 import { Roles } from '../authz/decorators/roles.decorator';
 import { CustomExceptionFilter } from 'apps/api-gateway/common/exception-handler';
 import { EmptyStringParamPipe, TrimStringParamPipe } from '@credebl/common/cast.helper';
+import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
+import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 
 @ApiBearerAuth()
 @ApiTags('credential-definitions')
@@ -167,7 +169,8 @@ export class CredentialDefinitionController {
   })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Success', type: ApiResponseDto })
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN)
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('credentialDefinitionCreate')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   async createCredentialDefinition(
     @User() user: IUserRequestInterface,
     @Body() credDef: CreateCredentialDefinitionDto,

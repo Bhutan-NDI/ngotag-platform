@@ -46,6 +46,8 @@ import { CustomExceptionFilter } from 'apps/api-gateway/common/exception-handler
 import { CredDefSortFields, SortFields } from '@credebl/enum/enum';
 import { TrimStringParamPipe } from '@credebl/common/cast.helper';
 import { UpdateSchemaDto } from './dtos/update-schema-dto';
+import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
+import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 
 @UseFilters(CustomExceptionFilter)
 @Controller('orgs')
@@ -213,7 +215,8 @@ export class SchemaController {
       'Create and register a schema for an organization. Supports multiple systems like Indy, Polygon, and W3C standards.'
   })
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN)
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('schemaCreate')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Success', type: ApiResponseDto })
   async createSchema(
     @Res() res: Response,
