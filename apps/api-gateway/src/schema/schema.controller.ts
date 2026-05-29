@@ -48,6 +48,7 @@ import { TrimStringParamPipe } from '@credebl/common/cast.helper';
 import { UpdateSchemaDto } from './dtos/update-schema-dto';
 import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
+import { MarketplaceService } from '../marketplace/marketplace.service';
 
 @UseFilters(CustomExceptionFilter)
 @Controller('orgs')
@@ -56,7 +57,10 @@ import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-e
 @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
 @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
 export class SchemaController {
-  constructor(private readonly appService: SchemaService) {}
+  constructor(
+    private readonly appService: SchemaService,
+    private readonly marketplaceService: MarketplaceService
+  ) {}
   private readonly logger = new Logger('SchemaController');
 
   /**
@@ -233,6 +237,18 @@ export class SchemaController {
     @User() user: IUserRequestInterface
   ): Promise<Response> {
     const schemaResponse = await this.appService.createSchema(schemaDetails, user, orgId);
+    // Best-effort marketplace usage capture (completion-based). Never blocks schema creation.
+    const schemaUsage = schemaResponse as { schemaLedgerId?: string; id?: string; schemaId?: string };
+    void this.marketplaceService
+      .recordUsageEvent({
+        orgId,
+        eventType: 'schema_created',
+        sourceTable: 'schema',
+        sourceId: schemaUsage?.schemaLedgerId || schemaUsage?.id || schemaUsage?.schemaId || `${orgId}:${Date.now()}`,
+        quantity: 1,
+        metadata: { schemaResponse }
+      })
+      .catch((error) => this.logger.warn(`Unable to record Marketplace schema usage: ${JSON.stringify(error)}`));
     const finalResponse: IResponse = {
       statusCode: HttpStatus.CREATED,
       message: ResponseMessages.schema.success.create,
