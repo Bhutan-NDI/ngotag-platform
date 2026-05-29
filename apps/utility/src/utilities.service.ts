@@ -1,12 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
-import { AwsService } from '@credebl/aws';
+import { AzureStorageService } from '@credebl/azure-storage';
 import { BaseService } from 'libs/service/base.service';
 import { EmailDto } from '@credebl/common/dtos/email.dto';
 import { EmailService } from '@credebl/common/email.service';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { RpcException } from '@nestjs/microservices';
-import { S3 } from 'aws-sdk';
 import { UtilitiesRepository } from './utilities.repository';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -17,7 +16,7 @@ export class UtilitiesService extends BaseService {
 
   constructor(
     private readonly utilitiesRepository: UtilitiesRepository,
-    private readonly awsService: AwsService,
+    private readonly azureStorageService: AzureStorageService,
     private readonly emailService: EmailService
   ) {
     super('UtilitiesService');
@@ -66,7 +65,7 @@ export class UtilitiesService extends BaseService {
   async storeObject(payload: { persistent: boolean; storeObj: unknown }): Promise<string> {
     try {
       const uuid = uuidv4();
-      const uploadResult: S3.ManagedUpload.SendData = await this.awsService.storeObject(
+      const uploadResult = await this.azureStorageService.storeObject(
         payload.persistent,
         uuid,
         payload.storeObj
@@ -76,7 +75,7 @@ export class UtilitiesService extends BaseService {
     } catch (error) {
       this.logger.error(error);
       throw new Error(
-        `An error occurred while uploading data to S3: ${error instanceof Error ? error?.message : error}`
+        `An error occurred while uploading data to Azure storage: ${error instanceof Error ? error?.message : error}`
       );
     }
   }

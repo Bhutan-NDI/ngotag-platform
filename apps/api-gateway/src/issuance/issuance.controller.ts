@@ -69,7 +69,7 @@ import {
   IssueCredentialType,
   UploadedFileDetails
 } from './interfaces';
-import { AwsService } from '@credebl/aws';
+import { AzureStorageService } from '@credebl/azure-storage';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { v4 as uuidv4 } from 'uuid';
 import { RpcException } from '@nestjs/microservices';
@@ -90,7 +90,7 @@ import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 export class IssuanceController {
   constructor(
     private readonly issueCredentialService: IssuanceService,
-    private readonly awsService: AwsService
+    private readonly azureStorageService: AzureStorageService
   ) {}
   private readonly logger = new Logger('IssuanceController');
 
@@ -373,7 +373,7 @@ export class IssuanceController {
     if (file) {
       const fileKey: string = uuidv4();
       try {
-        await this.awsService.uploadCsvFile(fileKey, file?.buffer);
+        await this.azureStorageService.uploadCsvFile(fileKey, file?.buffer);
       } catch (error) {
         throw new RpcException(error.response ? error.response : error);
       }
@@ -526,7 +526,7 @@ export class IssuanceController {
     if (file && clientDetails?.isSelectiveIssuance) {
       const fileKey: string = uuidv4();
       try {
-        await this.awsService.uploadCsvFile(fileKey, file.buffer);
+        await this.azureStorageService.uploadCsvFile(fileKey, file.buffer);
       } catch (error) {
         throw new RpcException(error.response ? error.response : error);
       }
