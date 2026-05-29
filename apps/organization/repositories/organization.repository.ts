@@ -154,6 +154,63 @@ export class OrganizationRepository {
     }
   }
 
+  async getMarketplaceMaxUsers(orgId: string): Promise<number | null> {
+    const subscription = await this.prisma.marketplace_subscription.findFirst({
+      where: {
+        orgId,
+        deletedAt: null
+      },
+      orderBy: {
+        createDateTime: 'desc'
+      },
+      select: {
+        offerId: true,
+        planId: true
+      }
+    });
+
+    if (!subscription) {
+      return null;
+    }
+
+    const plan = await this.prisma.marketplace_plan.findUnique({
+      where: {
+        offerId_planId: {
+          offerId: subscription.offerId,
+          planId: subscription.planId
+        }
+      },
+      select: {
+        maxUsers: true
+      }
+    });
+
+    return plan?.maxUsers ?? null;
+  }
+
+  async getOrganizationUserCount(orgId: string): Promise<number> {
+    const users = await this.prisma.user_org_roles.findMany({
+      where: {
+        orgId
+      },
+      distinct: ['userId'],
+      select: {
+        userId: true
+      }
+    });
+
+    return users.length;
+  }
+
+  async getPendingOrganizationInvitationCount(orgId: string): Promise<number> {
+    return this.prisma.org_invitations.count({
+      where: {
+        orgId,
+        status: Invitation.PENDING
+      }
+    });
+  }
+
   async getAgentInvitationDetails(orgId: string): Promise<agent_invitations> {
     try {
       const response = await this.prisma.agent_invitations.findUnique({
