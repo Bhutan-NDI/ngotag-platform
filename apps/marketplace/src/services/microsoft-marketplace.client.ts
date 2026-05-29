@@ -73,9 +73,9 @@ export class MicrosoftMarketplaceClient {
       quantity: number;
       dimension: string;
       effectiveStartTime: string;
-      planId: string;
     }>
   ): Promise<MarketplaceClientResponse<unknown>> {
+    // Microsoft's batchUsageEvent schema does not include planId per line item.
     return this.request('post', '/api/batchUsageEvent', { request: events });
   }
 
