@@ -8,6 +8,12 @@
       "@credebl/aws/*": [
         "libs/aws/src/*"
       ],
+      "@credebl/azure-storage": [
+        "libs/azure-storage/src"
+      ],
+      "@credebl/azure-storage/*": [
+        "libs/azure-storage/src/*"
+      ],
       "@credebl/client-registration": [
         "libs/client-registration/src"
       ],

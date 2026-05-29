@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.997.0",
+    "@azure/storage-blob": "12.26.0",
     "@elastic/ecs-winston-format": "^1.5.3",
     "@nestjs/axios": "catalog:",
     "@nestjs/bull": "catalog:",
@@ -204,10 +205,33 @@
       "^y/user-activity(|/.*)$": "<rootDir>/libs/user-activity/src/$1",
       "^@app/supabase(|/.*)$": "<rootDir>/libs/supabase/src/$1",
       "^@credebl/aws(|/.*)$": "<rootDir>/libs/aws/src/$1",
+      "^@credebl/azure-storage(|/.*)$": "<rootDir>/libs/azure-storage/src/$1",
       "^credebl/utility(|/.*)$": "<rootDir>/libs/utility/src/$1",
       "^@credebl/config(|/.*)$": "<rootDir>/libs/config/src/$1",
       "^@credebl/context(|/.*)$": "<rootDir>/libs/context/src/$1",
       "^@credebl/logger(|/.*)$": "<rootDir>/libs/logger/src/$1"
+    }
+  },
+  "overrides": {
+    "@azure/core-auth": "1.9.0",
+    "@azure/core-client": "1.9.3",
+    "@azure/core-http-compat": "2.3.0",
+    "@azure/core-rest-pipeline": "1.19.1",
+    "@azure/core-tracing": "1.2.0",
+    "@azure/core-util": "1.11.0",
+    "@azure/core-xml": "1.4.5",
+    "@azure/logger": "1.1.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "@azure/core-auth": "1.9.0",
+      "@azure/core-client": "1.9.3",
+      "@azure/core-http-compat": "2.3.0",
+      "@azure/core-rest-pipeline": "1.19.1",
+      "@azure/core-tracing": "1.2.0",
+      "@azure/core-util": "1.11.0",
+      "@azure/core-xml": "1.4.5",
+      "@azure/logger": "1.1.4"
     }
   },
   "packageManager": "pnpm@9.15.3+sha512.1f79bc245a66eb0b07c5d4d83131240774642caaa86ef7d0434ab47c0d16f66b04e21e0c086eb61e62c77efc4d7f7ec071afad3796af64892fae66509173893a",
