@@ -1031,6 +1031,8 @@ export class OrganizationService {
         throw new NotFoundException(ResponseMessages.organisation.error.orgNotFound);
       }
 
+      await this.assertMarketplaceUserLimitAllowsInvitations(bulkInvitationDto, userEmail);
+
       if (!organizationDetails.idpId) {
         await this.createInvitationByOrgRoles(bulkInvitationDto, userEmail, userId, organizationDetails.name);
       } else {
@@ -1225,6 +1227,69 @@ export class OrganizationService {
    * @param payload
    * @returns Updated invitation response
    */
+  private async assertMarketplaceUserLimitAllowsInvitations(
+    bulkInvitationDto: BulkSendInvitationDto,
+    senderEmail: string
+  ): Promise<void> {
+    const { invitations = [], orgId } = bulkInvitationDto;
+    const maxUsers = await this.organizationRepository.getMarketplaceMaxUsers(orgId);
+
+    if (!maxUsers) {
+      return;
+    }
+
+    const newInviteEmails = new Set<string>();
+
+    for (const invitation of invitations) {
+      const email = invitation.email?.trim().toLowerCase();
+      if (!email || email === senderEmail?.trim().toLowerCase()) {
+        continue;
+      }
+
+      const isInvitationExist = await this.checkInvitationExist(invitation.email, orgId);
+      if (!isInvitationExist) {
+        newInviteEmails.add(email);
+      }
+    }
+
+    if (!newInviteEmails.size) {
+      return;
+    }
+
+    const [activeUsers, pendingInvitations] = await Promise.all([
+      this.organizationRepository.getOrganizationUserCount(orgId),
+      this.organizationRepository.getPendingOrganizationInvitationCount(orgId)
+    ]);
+
+    if (activeUsers + pendingInvitations + newInviteEmails.size > maxUsers) {
+      throw new BadRequestException({
+        code: 'marketplace_user_limit_reached',
+        message: `Marketplace plan allows ${maxUsers} Studio user${1 === maxUsers ? '' : 's'} for this organization`
+      });
+    }
+  }
+
+  private async assertMarketplaceUserLimitAllowsAcceptance(orgId: string, userId: string): Promise<void> {
+    const maxUsers = await this.organizationRepository.getMarketplaceMaxUsers(orgId);
+
+    if (!maxUsers) {
+      return;
+    }
+
+    const isExistingOrgUser = await this.userOrgRoleService.checkUserOrgExist(userId, orgId);
+    if (isExistingOrgUser) {
+      return;
+    }
+
+    const activeUsers = await this.organizationRepository.getOrganizationUserCount(orgId);
+    if (activeUsers + 1 > maxUsers) {
+      throw new BadRequestException({
+        code: 'marketplace_user_limit_reached',
+        message: `Marketplace plan allows ${maxUsers} Studio user${1 === maxUsers ? '' : 's'} for this organization`
+      });
+    }
+  }
+
   async updateOrgInvitation(payload: UpdateInvitationDto): Promise<string> {
     try {
       const { orgId, status, invitationId, userId, keycloakUserId, email } = payload;
@@ -1236,6 +1301,8 @@ export class OrganizationService {
         if (userOrgCount >= toNumber(`${process.env.MAX_ORG_LIMIT}`)) {
           throw new BadRequestException(ResponseMessages.organisation.error.MaximumOrgsLimit);
         }
+
+        await this.assertMarketplaceUserLimitAllowsAcceptance(orgId, userId);
       }
       if (!invitation || (invitation && invitation.email !== email)) {
         throw new NotFoundException(ResponseMessages.user.error.invitationNotFound);
