@@ -1,0 +1,401 @@
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { createHash } from 'crypto';
+import { BaseService } from 'libs/service/base.service';
+import {
+  MarketplaceBuyerClaims,
+  MarketplaceNextAction,
+  MarketplaceResolvedSubscription,
+  MarketplaceUsageEventPayload,
+  MarketplaceWebhookPayload,
+  ResolveMarketplacePayload
+} from './interfaces/marketplace.interface';
+import { MarketplaceRepository } from './repositories/marketplace.repository';
+import { EntitlementService } from './services/entitlement.service';
+import { MeteringService } from './services/metering.service';
+import { MicrosoftMarketplaceClient } from './services/microsoft-marketplace.client';
+import { WebhookService } from './services/webhook.service';
+
+const SETUP_FEE_USD = 30000;
+
+interface LinkAccountMessage {
+  sessionId: string;
+  payload: {
+    mode: 'existing_user' | 'create_from_microsoft_sso';
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+    microsoftTenantId?: string;
+    microsoftObjectId?: string;
+  };
+  user: { id: string; email?: string; keycloakUserId?: string };
+}
+
+interface LinkOrganizationMessage {
+  sessionId: string;
+  payload: {
+    mode: 'create' | 'link_existing';
+    orgId?: string;
+    organization?: {
+      name: string;
+      description?: string;
+      website?: string;
+      logo?: string;
+    };
+  };
+  user: { id: string; keycloakUserId?: string };
+}
+
+@Injectable()
+export class MarketplaceService extends BaseService {
+  constructor(
+    @Inject('ORGANIZATION_CLIENT') private readonly organizationClient: ClientProxy,
+    private readonly marketplaceRepository: MarketplaceRepository,
+    private readonly microsoftMarketplaceClient: MicrosoftMarketplaceClient,
+    private readonly entitlementService: EntitlementService,
+    private readonly meteringService: MeteringService,
+    private readonly webhookService: WebhookService
+  ) {
+    super('MarketplaceService');
+  }
+
+  async resolveSubscription(payload: ResolveMarketplacePayload): Promise<object> {
+    const marketplaceToken = this.decodeMarketplaceToken(payload.marketplaceToken);
+    const resolved = await this.resolveWithMicrosoftOrMock(marketplaceToken);
+    const subscription = await this.marketplaceRepository.upsertResolvedSubscription(resolved);
+    const buyer = this.buyerFromClaims(payload.buyerClaims, resolved);
+    const onboardingSession = await this.marketplaceRepository.createOnboardingSession(
+      subscription.id,
+      this.hashToken(marketplaceToken),
+      buyer,
+      { buyerClaims: payload.buyerClaims || null }
+    );
+
+    return {
+      onboardingSessionId: onboardingSession.id,
+      ...this.toSubscriptionSummary(subscription),
+      nextAction: this.nextAction(subscription)
+    };
+  }
+
+  async getOnboardingSession(message: { sessionId: string }): Promise<object> {
+    const session = await this.getValidSession(message.sessionId);
+    return {
+      id: session.id,
+      status: session.status,
+      expiresAt: session.expiresAt,
+      nextAction: this.nextAction(session.subscription),
+      linkedOrgId: session.subscription.orgId,
+      subscription: this.toSubscriptionSummary(session.subscription)
+    };
+  }
+
+  async linkAccount(message: LinkAccountMessage): Promise<object> {
+    const session = await this.getValidSession(message.sessionId);
+    await this.marketplaceRepository.linkUser(session.subscription.id, message.user.id);
+    await this.marketplaceRepository.updateOnboardingSession(session.id, 'account_linked', {
+      mode: message.payload.mode,
+      email: message.payload.email || message.user.email || null,
+      microsoftTenantId: message.payload.microsoftTenantId || null,
+      microsoftObjectId: message.payload.microsoftObjectId || null
+    });
+
+    return { linkedUserId: message.user.id, nextAction: 'create_organization' };
+  }
+
+  async linkOrganization(message: LinkOrganizationMessage): Promise<object> {
+    const session = await this.getValidSession(message.sessionId);
+
+    if (message.payload.mode === 'link_existing') {
+      if (!message.payload.orgId) {
+        throw new BadRequestException('orgId is required when linking an existing organization');
+      }
+
+      const existingSubscription = await this.marketplaceRepository.getSubscriptionByOrgId(message.payload.orgId);
+      if (existingSubscription && existingSubscription.id !== session.subscription.id) {
+        throw new ConflictException('Organization is already linked to another Marketplace subscription');
+      }
+
+      await this.marketplaceRepository.linkOrganization(session.subscription.id, message.payload.orgId);
+      await this.marketplaceRepository.updateOnboardingSession(session.id, 'org_linked');
+      return { orgId: message.payload.orgId, nextAction: 'activate' };
+    }
+
+    if (!message.payload.organization?.name) {
+      throw new BadRequestException('Organization name is required');
+    }
+
+    const organization = await this.sendNatsMessage(this.organizationClient, 'create-organization', {
+      createOrgDto: {
+        name: message.payload.organization.name,
+        description: message.payload.organization.description,
+        website: message.payload.organization.website,
+        logo: message.payload.organization.logo || ''
+      },
+      userId: message.user.id,
+      keycloakUserId: message.user.keycloakUserId
+    });
+
+    await this.marketplaceRepository.linkOrganization(session.subscription.id, organization.id);
+    await this.marketplaceRepository.updateOnboardingSession(session.id, 'org_linked');
+    return { orgId: organization.id, nextAction: 'activate' };
+  }
+
+  async activateSubscription(message: { sessionId: string; orgId: string; userId: string }): Promise<object> {
+    const session = await this.getValidSession(message.sessionId);
+
+    if (session.subscription.orgId !== message.orgId) {
+      throw new BadRequestException('Marketplace subscription is not linked to the requested organization');
+    }
+
+    if (session.subscription.saasSubscriptionStatus === 'Subscribed') {
+      await this.marketplaceRepository.setActivationStatus(session.subscription.id, 'activated');
+      await this.marketplaceRepository.updateOnboardingSession(session.id, 'activated');
+      await this.recordSetupFeeUsage(session.subscription, message.orgId);
+      return {
+        subscriptionId: session.subscription.marketplaceSubscriptionId,
+        orgId: message.orgId,
+        activationStatus: 'activated',
+        saasSubscriptionStatus: 'Subscribed',
+        dashboardUrl: '/organizations/dashboard'
+      };
+    }
+
+    await this.marketplaceRepository.setActivationStatus(session.subscription.id, 'in_progress');
+
+    try {
+      if (this.localMockEnabled()) {
+        await this.marketplaceRepository.setSubscriptionStatus(session.subscription.id, 'Subscribed');
+        await this.marketplaceRepository.setActivationStatus(session.subscription.id, 'activated');
+        await this.marketplaceRepository.updateOnboardingSession(session.id, 'activated');
+        await this.recordSetupFeeUsage(session.subscription, message.orgId);
+        return {
+          subscriptionId: session.subscription.marketplaceSubscriptionId,
+          orgId: message.orgId,
+          activationStatus: 'activated',
+          saasSubscriptionStatus: 'Subscribed',
+          dashboardUrl: '/organizations/dashboard'
+        };
+      }
+
+      await this.microsoftMarketplaceClient.activateSubscription(
+        session.subscription.marketplaceSubscriptionId,
+        session.subscription.planId
+      );
+      const latest = await this.microsoftMarketplaceClient.getSubscription(
+        session.subscription.marketplaceSubscriptionId
+      );
+      const updated = await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
+      const activated = updated.saasSubscriptionStatus === 'Subscribed';
+      await this.marketplaceRepository.setActivationStatus(
+        session.subscription.id,
+        activated ? 'activated' : 'in_progress'
+      );
+      await this.marketplaceRepository.updateOnboardingSession(
+        session.id,
+        activated ? 'activated' : 'activation_pending'
+      );
+      if (activated) {
+        await this.recordSetupFeeUsage(updated, message.orgId);
+      }
+
+      return {
+        subscriptionId: updated.marketplaceSubscriptionId,
+        orgId: message.orgId,
+        activationStatus: activated ? 'activated' : 'in_progress',
+        saasSubscriptionStatus: updated.saasSubscriptionStatus,
+        dashboardUrl: '/organizations/dashboard'
+      };
+    } catch (error) {
+      await this.marketplaceRepository.setActivationStatus(
+        session.subscription.id,
+        'failed',
+        error instanceof Error ? error.message : 'Activation failed'
+      );
+      await this.marketplaceRepository.updateOnboardingSession(session.id, 'failed');
+      throw error;
+    }
+  }
+
+  async getSubscription(message: { subscriptionId: string }): Promise<object> {
+    const subscription = await this.marketplaceRepository.getSubscriptionByMarketplaceId(message.subscriptionId);
+    if (!subscription) {
+      throw new NotFoundException('Marketplace subscription not found');
+    }
+    return this.toSubscriptionSummary(subscription);
+  }
+
+  async refreshSubscription(message: { subscriptionId: string }): Promise<object> {
+    const latest = await this.microsoftMarketplaceClient.getSubscription(message.subscriptionId);
+    const updated = await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
+    return this.toSubscriptionSummary(updated);
+  }
+
+  async processWebhook(message: { payload: MarketplaceWebhookPayload; authorization?: string }): Promise<object> {
+    return this.webhookService.processWebhook(message.payload, message.authorization);
+  }
+
+  async getEntitlements(message: { orgId: string }): Promise<object> {
+    return this.entitlementService.getEntitlements(message.orgId);
+  }
+
+  async getUsageSummary(message: { orgId: string; period?: string }): Promise<object> {
+    const entitlements = await this.entitlementService.getEntitlements(message.orgId);
+    const dimensions = Object.entries(entitlements.usage).map(([dimension, usage]) => ({
+      dimension,
+      displayName: this.displayNameForDimension(dimension),
+      included: usage.included,
+      used: usage.used,
+      overage: usage.overage,
+      pendingSubmission: 0,
+      acceptedByMicrosoft: 0
+    }));
+
+    return {
+      billingPeriod: {
+        start: new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString(),
+        end: new Date().toISOString(),
+        termUnit: 'P1M'
+      },
+      dimensions
+    };
+  }
+
+  async getMeteringEvents(message: { orgId: string }): Promise<object> {
+    return this.marketplaceRepository.listMeteringEvents(message.orgId);
+  }
+
+  async recordUsageEvent(payload: MarketplaceUsageEventPayload): Promise<object> {
+    const subscription = await this.marketplaceRepository.getSubscriptionByOrgId(payload.orgId);
+    await this.marketplaceRepository.recordBillingUsageEvent(payload, subscription?.id);
+    return { recorded: true };
+  }
+
+  async submitMetering(): Promise<object> {
+    await this.meteringService.aggregateAndSubmitUsage();
+    return { submitted: true };
+  }
+
+  private async getValidSession(sessionId: string) {
+    const session = await this.marketplaceRepository.getOnboardingSession(sessionId);
+    if (!session || session.expiresAt < new Date()) {
+      throw new NotFoundException('Marketplace onboarding session is missing or expired');
+    }
+    return session;
+  }
+
+  private async resolveWithMicrosoftOrMock(marketplaceToken: string): Promise<MarketplaceResolvedSubscription> {
+    if (this.localMockEnabled()) {
+      return {
+        id: `mock-${this.hashToken(marketplaceToken).slice(0, 24)}`,
+        name: 'Phenix ID Platform',
+        offerId: process.env.MARKETPLACE_OFFER_ID || 'phenix-id-platform',
+        planId: process.env.MARKETPLACE_DEFAULT_PLAN_ID || 'business',
+        saasSubscriptionStatus: 'PendingFulfillmentStart',
+        purchaser: { emailId: 'buyer@example.com' },
+        beneficiary: { emailId: 'buyer@example.com' },
+        term: {
+          termUnit: 'P1M',
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+        },
+        autoRenew: true,
+        isTest: true
+      };
+    }
+
+    return this.microsoftMarketplaceClient.resolveSubscription(marketplaceToken);
+  }
+
+  private localMockEnabled(): boolean {
+    return `${process.env.MARKETPLACE_ALLOW_LOCAL_MOCK}`.toLowerCase() === 'true';
+  }
+
+  private buyerFromClaims(
+    claims: MarketplaceBuyerClaims | undefined,
+    resolved: MarketplaceResolvedSubscription
+  ): { tenantId?: string; objectId?: string; email?: string } {
+    return {
+      tenantId: claims?.tid || resolved.purchaser?.tenantId || resolved.beneficiary?.tenantId,
+      objectId: claims?.oid || resolved.purchaser?.objectId || resolved.beneficiary?.objectId,
+      email: claims?.email || claims?.preferred_username || resolved.purchaser?.emailId || resolved.beneficiary?.emailId
+    };
+  }
+
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private decodeMarketplaceToken(token: string): string {
+    try {
+      return decodeURIComponent(token);
+    } catch {
+      throw new BadRequestException('Marketplace token is malformed');
+    }
+  }
+
+  private toSubscriptionSummary(subscription): object {
+    return {
+      subscriptionId: subscription.marketplaceSubscriptionId,
+      offerId: subscription.offerId,
+      planId: subscription.planId,
+      subscriptionName: subscription.subscriptionName || 'Phenix ID Platform',
+      saasSubscriptionStatus: subscription.saasSubscriptionStatus,
+      localActivationStatus: subscription.activationStatus,
+      linkedOrgId: subscription.orgId,
+      purchaserEmail: subscription.purchaserEmail,
+      beneficiaryEmail: subscription.beneficiaryEmail,
+      quantity: subscription.quantity,
+      termStartDate: subscription.termStartDate,
+      termEndDate: subscription.termEndDate,
+      autoRenew: subscription.autoRenew
+    };
+  }
+
+  private nextAction(subscription): MarketplaceNextAction {
+    if (
+      subscription.saasSubscriptionStatus === 'Subscribed' &&
+      subscription.orgId &&
+      subscription.activationStatus === 'activated'
+    ) {
+      return 'open_dashboard';
+    }
+    if (!subscription.localUserId) {
+      return 'link_account';
+    }
+    if (!subscription.orgId) {
+      return 'create_organization';
+    }
+    if (subscription.activationStatus !== 'activated') {
+      return 'activate';
+    }
+    return 'manage_billing';
+  }
+
+  private displayNameForDimension(dimension: string): string {
+    const displayNames = {
+      setup_fee: 'One-time setup fee',
+      issuance_txn: 'Credential issuance',
+      verification_txn: 'Credential verification',
+      schema_create: 'Schema creation'
+    };
+    return displayNames[dimension] || dimension;
+  }
+
+  private async recordSetupFeeUsage(subscription, orgId: string): Promise<void> {
+    await this.marketplaceRepository.recordBillingUsageEvent(
+      {
+        orgId,
+        eventType: 'organization_setup_completed',
+        sourceTable: 'marketplace_subscription',
+        sourceId: subscription.id,
+        quantity: 1,
+        metadata: {
+          dimension: 'setup_fee',
+          unitPriceUsd: SETUP_FEE_USD
+        }
+      },
+      subscription.id
+    );
+  }
+}
