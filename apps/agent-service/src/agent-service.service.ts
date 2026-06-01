@@ -755,32 +755,7 @@ export class AgentServiceService {
    */
   async _createTenant(payload: ITenantDto, user: IUserRequestInterface): Promise<IStoreOrgAgentDetails> {
     let agentProcess;
-    let ledgerIdData = [];
     try {
-      let ledger;
-      const { network } = payload;
-      if (network) {
-        ledger = await ledgerName(network);
-      } else {
-        ledger = Ledgers.Not_Applicable;
-      }
-
-      const ledgerList = await this._getALlLedgerDetails();
-      if (!ledgerList) {
-        throw new BadRequestException(ResponseMessages.agent.error.invalidLedger, {
-          cause: new Error(),
-          description: ResponseMessages.errorMessages.notFound
-        });
-      }
-      const isLedgerExist = ledgerList.find((existingLedgers) => existingLedgers.name === ledger);
-      if (!isLedgerExist) {
-        throw new BadRequestException(ResponseMessages.agent.error.invalidLedger, {
-          cause: new Error(),
-          description: ResponseMessages.errorMessages.notFound
-        });
-      }
-      ledgerIdData = await this.agentServiceRepository.getLedgerDetails(ledger);
-
       const agentSpinUpStatus = AgentSpinUpStatus.WALLET_CREATED;
 
       // Create and stored agent details
@@ -789,7 +764,6 @@ export class AgentServiceService {
       // Get platform admin details
       const platformAdminSpinnedUp = await this.getPlatformAdminAndNotify(payload.clientSocketId);
 
-      payload.endpoint = platformAdminSpinnedUp.org_agents[0].agentEndPoint;
       // Create tenant wallet
       const tenantDetails = await this.createTenantAndNotify(payload, platformAdminSpinnedUp);
 

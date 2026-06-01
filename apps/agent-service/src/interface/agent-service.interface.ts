@@ -55,20 +55,9 @@ export interface IOutOfBandCredentialOffer {
 
 export interface ITenantDto {
   label: string;
-  seed?: string;
-  keyType: string;
-  ledgerId: string[];
-  domain?: string;
-  privatekey?: string;
-  endpoint?: string;
-  role?: string;
-  network?: string;
-  endorserDid?: string;
-  method: string;
   orgId: string;
   did?: string;
   tenantId?: string;
-  didDocument?: string;
   clientSocketId?: string;
 }
 

@@ -9,3 +9,6 @@ uploadedFles/exports
 uploadedFles/import
 uploadedFles/export
 nats-server.conf
+CLAUDE.md
+AGENTS.md
+.claude/
