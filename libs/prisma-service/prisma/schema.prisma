@@ -504,6 +504,8 @@ enum RecordType {
 model countries {
   id           Int            @id @default(autoincrement()) @map("id")
   name         String         @map("name")
+  isoCode      String         @default("") @map("iso_code")
+  phonecode    String?        @map("phone_code")
   states       states[]
   cities       cities[]
   organisation organisation[]
@@ -516,6 +518,7 @@ model states {
   name         String         @map("name")
   countryId    Int            @map("country_id")
   countryCode  String         @map("country_code")
+  isoCode      String         @default("") @map("iso_code")
   countries    countries      @relation(fields: [countryId], references: [id], onDelete: Cascade)
   cities       cities[]
   organisation organisation[]

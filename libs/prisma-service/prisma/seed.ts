@@ -9,6 +9,7 @@ import { CommonConstants } from '../../common/src/common.constant';
 import { PrismaClient } from '@prisma/client';
 import { exec } from 'child_process';
 
+import { Country, State, City } from 'country-state-city';
 const execPromise = util.promisify(exec);
 
 const prisma = new PrismaClient({
@@ -443,27 +444,138 @@ const addSchemaType = async (): Promise<void> => {
   }
 };
 
-const importGeoLocationMasterData = async (): Promise<void> => {
+// ---------------------------------------------------------------------------
+// Geo-location data patches — entries missing from country-state-city package
+// ---------------------------------------------------------------------------
+const GEO_STATE_PATCHES: Record<string, Array<{ name: string; isoCode: string; countryCode: string }>> = {
+  BT: [
+    { name: 'Trashiyangtse District', isoCode: 'TY', countryCode: 'BT' }
+  ]
+};
+
+const SEED_BATCH_SIZE = 2000;
+
+const seedGeoLocationData = async (): Promise<void> => {
   try {
-    const scriptPath = process.env.GEO_LOCATION_MASTER_DATA_IMPORT_SCRIPT;
-    const dbUrl = process.env.DATABASE_URL;
-
-    if (!scriptPath || !dbUrl) {
-      throw new Error('Environment variables GEO_LOCATION_MASTER_DATA_IMPORT_SCRIPT or DATABASE_URL are not set.');
+    const existingCount = await prisma.countries.count();
+    if (existingCount > 0) {
+      logger.log(`Geo-location data already seeded (${existingCount} countries found). Skipping.`);
+      return;
     }
 
-    const command = `${process.cwd()}/${scriptPath} ${dbUrl}`;
+    // -----------------------------------------------------------------------
+    // 1. Countries
+    // -----------------------------------------------------------------------
+    const allCountries = Country.getAllCountries().sort((a, b) => a.name.localeCompare(b.name));
+    logger.log(`Seeding ${allCountries.length} countries...`);
 
-    const { stdout, stderr } = await execPromise(command);
+    await prisma.countries.createMany({
+      data: allCountries.map((c) => ({
+        name: c.name,
+        isoCode: c.isoCode,
+        phonecode: c.phonecode || null
+      }))
+    });
 
-    if (stdout) {
-      logger.log(`Shell script output: ${stdout}`);
+    // Fetch back with assigned DB IDs (seeded in alphabetical order)
+    const insertedCountries = await prisma.countries.findMany({ orderBy: { name: 'asc' } });
+    logger.log(`Countries seeded: ${insertedCountries.length}`);
+
+    // -----------------------------------------------------------------------
+    // 2. States — collected across all countries, inserted in batches
+    // -----------------------------------------------------------------------
+    logger.log('Seeding states...');
+    const statesBuffer: Array<{ name: string; countryId: number; countryCode: string; isoCode: string }> = [];
+
+    for (const country of insertedCountries) {
+      const pkgStates = State.getStatesOfCountry(country.isoCode);
+      const patches = GEO_STATE_PATCHES[country.isoCode] || [];
+      const patchIsoCodes = new Set(patches.map((p) => p.isoCode));
+      const merged = [
+        ...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)),
+        ...patches
+      ].sort((a, b) => a.name.localeCompare(b.name));
+
+      for (const state of merged) {
+        statesBuffer.push({
+          name: state.name,
+          countryId: country.id,
+          countryCode: state.countryCode,
+          isoCode: state.isoCode || ''
+        });
+      }
     }
-    if (stderr) {
-      logger.error(`Shell script error: ${stderr}`);
+
+    for (let i = 0; i < statesBuffer.length; i += SEED_BATCH_SIZE) {
+      await prisma.states.createMany({ data: statesBuffer.slice(i, i + SEED_BATCH_SIZE) });
     }
+    logger.log(`States seeded: ${statesBuffer.length}`);
+
+    // -----------------------------------------------------------------------
+    // 3. Cities — look up inserted state IDs by (countryId + isoCode) key
+    // -----------------------------------------------------------------------
+    logger.log('Seeding cities (this may take a moment)...');
+
+    const insertedStates = await prisma.states.findMany({
+      select: { id: true, countryId: true, isoCode: true }
+    });
+    // Map "countryId|stateIsoCode" → DB state id
+    const stateKeyToId = new Map(
+      insertedStates.map((s) => [`${s.countryId}|${s.isoCode}`, s.id])
+    );
+
+    let citiesBuffer: Array<{
+      name: string;
+      stateId: number;
+      stateCode: string;
+      countryId: number;
+      countryCode: string;
+    }> = [];
+    let totalCities = 0;
+
+    for (const country of insertedCountries) {
+      const pkgStates = State.getStatesOfCountry(country.isoCode);
+      const patches = GEO_STATE_PATCHES[country.isoCode] || [];
+      const patchIsoCodes = new Set(patches.map((p) => p.isoCode));
+      const allStates = [
+        ...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)),
+        ...patches
+      ];
+
+      for (const state of allStates) {
+        const stateId = stateKeyToId.get(`${country.id}|${state.isoCode}`);
+        if (!stateId) continue;
+
+        const cities = City.getCitiesOfState(country.isoCode, state.isoCode);
+        for (const city of cities) {
+          citiesBuffer.push({
+            name: city.name,
+            stateId,
+            stateCode: city.stateCode,
+            countryId: country.id,
+            countryCode: city.countryCode
+          });
+        }
+
+        // Flush batch when large enough to keep memory usage low
+        if (citiesBuffer.length >= SEED_BATCH_SIZE * 5) {
+          await prisma.cities.createMany({ data: citiesBuffer });
+          totalCities += citiesBuffer.length;
+          citiesBuffer = [];
+        }
+      }
+    }
+
+    // Flush remaining cities
+    if (citiesBuffer.length > 0) {
+      await prisma.cities.createMany({ data: citiesBuffer });
+      totalCities += citiesBuffer.length;
+    }
+
+    logger.log(`Cities seeded: ${totalCities}`);
+    logger.log('Geo-location data seeding complete.');
   } catch (error) {
-    logger.error('An error occurred during importGeoLocationMasterData:', error);
+    logger.error('An error occurred during seedGeoLocationData:', error);
     throw error;
   }
 };
@@ -818,7 +930,7 @@ async function main(): Promise<void> {
   await createUserRole();
   await migrateOrgAgentDids();
   await addSchemaType();
-  await importGeoLocationMasterData();
+  await seedGeoLocationData();
   await updateClientCredential();
   await createPlatformConfig();
 
