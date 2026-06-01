@@ -1,33 +1,27 @@
 # Stage 1: Build the application
-FROM node:18-alpine as build
-RUN npm install -g pnpm
-RUN apk add --no-cache openssl
-
+FROM node:24-alpine3.23 AS build
+RUN apk update && apk upgrade && apk add --no-cache openssl \
+    && rm -rf /var/cache/apk/*
+RUN npm install -g pnpm@9.15.3 --ignore-scripts
 WORKDIR /app
-
-COPY package.json ./
-
-RUN pnpm i
-
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+RUN pnpm i --frozen-lockfile --ignore-scripts
 COPY . .
 RUN cd libs/prisma-service && npx prisma generate
-
-# Build the marketplace service
 RUN pnpm run build marketplace
+RUN pnpm prune --prod
 
 # Stage 2: Create the final image
-FROM node:18-alpine
-RUN npm install -g pnpm
-RUN apk add --no-cache openssl
-
+FROM node:24-alpine3.23
+RUN apk update && apk upgrade && apk add --no-cache openssl \
+    && rm -rf /var/cache/apk/* \
+    && addgroup -g 1001 -S nodejs \
+    && adduser -S nextjs -u 1001
 WORKDIR /app
-COPY package.json ./
-RUN pnpm install --prod --ignore-scripts \
-    && pnpm store prune \
-    && rm -rf /root/.local/share/pnpm/store
-
 COPY --from=build /app/dist/apps/marketplace/ ./dist/apps/marketplace/
 COPY --from=build /app/libs/ ./libs/
-RUN cd libs/prisma-service && npx prisma generate
+COPY --from=build /app/node_modules ./node_modules
+USER nextjs
 
 CMD ["sh", "-c", "cd libs/prisma-service && npx prisma migrate deploy && cd ../.. && node dist/apps/marketplace/main.js"]

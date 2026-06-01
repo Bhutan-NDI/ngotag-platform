@@ -1,7 +1,10 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { ClientProxy } from '@nestjs/microservices';
+import { ClientProxy, NatsRecordBuilder } from '@nestjs/microservices';
 import { createHash } from 'crypto';
 import { BaseService } from 'libs/service/base.service';
+import * as nats from 'nats';
+import { firstValueFrom } from 'rxjs';
+import { v4 } from 'uuid';
 import {
   MarketplaceBuyerClaims,
   MarketplaceNextAction,
@@ -57,6 +60,18 @@ export class MarketplaceService extends BaseService {
     private readonly webhookService: WebhookService
   ) {
     super('MarketplaceService');
+  }
+
+  private sendNatsMessage<T = any>(
+    serviceProxy: Pick<ClientProxy, 'send'>,
+    cmd: string,
+    payload: unknown
+  ): Promise<T> {
+    const headers = nats.headers();
+    headers.set('contextId', v4());
+    const record = new NatsRecordBuilder(payload).setHeaders(headers).build();
+
+    return firstValueFrom(serviceProxy.send<T>({ cmd }, record));
   }
 
   async resolveSubscription(payload: ResolveMarketplacePayload): Promise<object> {
