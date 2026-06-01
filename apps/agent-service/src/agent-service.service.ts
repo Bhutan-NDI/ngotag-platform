@@ -1051,7 +1051,6 @@ export class AgentServiceService {
     delete WalletSetupPayload.label;
     delete WalletSetupPayload.clientSocketId;
     delete WalletSetupPayload.orgId;
-    delete WalletSetupPayload.ledgerId;
 
     const getDcryptedToken = await this.commonService.decryptPassword(platformAdminSpinnedUp?.org_agents[0].apiKey);
     const walletResponseDetails = await this._createTenantWallet(
