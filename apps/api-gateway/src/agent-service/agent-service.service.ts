@@ -2,7 +2,6 @@ import { Injectable, Inject } from '@nestjs/common';
 import { user } from '@prisma/client';
 import { BaseService } from 'libs/service/base.service';
 import { AgentSpinupDto } from './dto/agent-service.dto';
-import { CreateTenantDto } from './dto/create-tenant.dto';
 import { AgentSpinUpSatus, IWalletRecord } from './interface/agent-service.interface';
 import { AgentStatus } from './interface/agent-service.interface';
 import { CreateDidDto } from './dto/create-did.dto';
@@ -33,8 +32,8 @@ export class AgentService extends BaseService {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'agent-spinup', payload);
   }
 
-  async createTenant(createTenantDto: CreateTenantDto, user: user): Promise<AgentSpinUpSatus> {
-    const payload = { createTenantDto, user };
+  async createTenant(createWalletDto: CreateWalletDto, user: user): Promise<AgentSpinUpSatus> {
+    const payload = { createTenantDto: createWalletDto, user };
 
     // NATS call
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'create-tenant', payload);
