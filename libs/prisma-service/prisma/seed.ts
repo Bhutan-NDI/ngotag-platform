@@ -33,10 +33,7 @@ const logger = new Logger('Init seed DB');
 let platformUserId = '';
 let cachedConfig: PlatformConfig;
 
-const configData = fs.readFileSync(
-  `${process.cwd()}/prisma/data/credebl-master-table/credebl-master-table.json`,
-  'utf8'
-);
+const configData = fs.readFileSync(`${__dirname}/data/credebl-master-table/credebl-master-table.json`, 'utf8');
 const createPlatformConfig = async (): Promise<void> => {
   try {
     const existPlatformAdmin = await prisma.platform_config.findMany();
@@ -447,10 +444,8 @@ const addSchemaType = async (): Promise<void> => {
 // ---------------------------------------------------------------------------
 // Geo-location data patches — entries missing from country-state-city package
 // ---------------------------------------------------------------------------
-const GEO_STATE_PATCHES: Record<string, Array<{ name: string; isoCode: string; countryCode: string }>> = {
-  BT: [
-    { name: 'Trashiyangtse District', isoCode: 'TY', countryCode: 'BT' }
-  ]
+const GEO_STATE_PATCHES: Record<string, { name: string; isoCode: string; countryCode: string }[]> = {
+  BT: [{ name: 'Trashiyangtse District', isoCode: 'TY', countryCode: 'BT' }]
 };
 
 const SEED_BATCH_SIZE = 2000;
@@ -458,7 +453,7 @@ const SEED_BATCH_SIZE = 2000;
 const seedGeoLocationData = async (): Promise<void> => {
   try {
     const existingCount = await prisma.countries.count();
-    if (existingCount > 0) {
+    if (0 < existingCount) {
       logger.log(`Geo-location data already seeded (${existingCount} countries found). Skipping.`);
       return;
     }
@@ -485,16 +480,15 @@ const seedGeoLocationData = async (): Promise<void> => {
     // 2. States — collected across all countries, inserted in batches
     // -----------------------------------------------------------------------
     logger.log('Seeding states...');
-    const statesBuffer: Array<{ name: string; countryId: number; countryCode: string; isoCode: string }> = [];
+    const statesBuffer: { name: string; countryId: number; countryCode: string; isoCode: string }[] = [];
 
     for (const country of insertedCountries) {
       const pkgStates = State.getStatesOfCountry(country.isoCode);
       const patches = GEO_STATE_PATCHES[country.isoCode] || [];
       const patchIsoCodes = new Set(patches.map((p) => p.isoCode));
-      const merged = [
-        ...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)),
-        ...patches
-      ].sort((a, b) => a.name.localeCompare(b.name));
+      const merged = [...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)), ...patches].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
 
       for (const state of merged) {
         statesBuffer.push({
@@ -520,31 +514,28 @@ const seedGeoLocationData = async (): Promise<void> => {
       select: { id: true, countryId: true, isoCode: true }
     });
     // Map "countryId|stateIsoCode" → DB state id
-    const stateKeyToId = new Map(
-      insertedStates.map((s) => [`${s.countryId}|${s.isoCode}`, s.id])
-    );
+    const stateKeyToId = new Map(insertedStates.map((s) => [`${s.countryId}|${s.isoCode}`, s.id]));
 
-    let citiesBuffer: Array<{
+    let citiesBuffer: {
       name: string;
       stateId: number;
       stateCode: string;
       countryId: number;
       countryCode: string;
-    }> = [];
+    }[] = [];
     let totalCities = 0;
 
     for (const country of insertedCountries) {
       const pkgStates = State.getStatesOfCountry(country.isoCode);
       const patches = GEO_STATE_PATCHES[country.isoCode] || [];
       const patchIsoCodes = new Set(patches.map((p) => p.isoCode));
-      const allStates = [
-        ...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)),
-        ...patches
-      ];
+      const allStates = [...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)), ...patches];
 
       for (const state of allStates) {
         const stateId = stateKeyToId.get(`${country.id}|${state.isoCode}`);
-        if (!stateId) continue;
+        if (!stateId) {
+          continue;
+        }
 
         const cities = City.getCitiesOfState(country.isoCode, state.isoCode);
         for (const city of cities) {
@@ -567,7 +558,7 @@ const seedGeoLocationData = async (): Promise<void> => {
     }
 
     // Flush remaining cities
-    if (citiesBuffer.length > 0) {
+    if (0 < citiesBuffer.length) {
       await prisma.cities.createMany({ data: citiesBuffer });
       totalCities += citiesBuffer.length;
     }
