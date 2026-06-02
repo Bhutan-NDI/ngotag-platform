@@ -51,6 +51,7 @@ import { ClientCredentialsDto } from './dtos/client-credentials.dto';
 import { PaginationDto } from '@credebl/common/dtos/pagination.dto';
 import { validate as isValidUUID } from 'uuid';
 import { UserAccessGuard } from '../authz/guards/user-access-guard';
+import { MarketplaceSubscriptionRequiredGuard } from '../marketplace/guards/marketplace-subscription-required.guard';
 import { GetAllOrganizationsDto } from './dtos/get-organizations.dto';
 import { PrimaryDid } from './dtos/set-primary-did.dto';
 import { TrimStringParamPipe } from '@credebl/common/cast.helper';
@@ -478,7 +479,7 @@ export class OrganizationController {
     description: 'Create a new organization with the provided details.'
   })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Success', type: ApiResponseDto })
-  @UseGuards(AuthGuard('jwt'), UserAccessGuard)
+  @UseGuards(AuthGuard('jwt'), UserAccessGuard, MarketplaceSubscriptionRequiredGuard)
   @ApiBearerAuth()
   async createOrganization(
     @Body() createOrgDto: CreateOrganizationDto,
