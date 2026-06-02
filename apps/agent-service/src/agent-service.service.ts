@@ -814,6 +814,15 @@ export class AgentServiceService {
 
       return orgAgentDetails;
     } catch (error) {
+      // Clean up the org_agents record created at the start of this flow
+      // so a failed wallet creation does not leave an orphan that blocks org deletion
+      if (agentProcess?.id) {
+        try {
+          await this.agentServiceRepository.deleteOrgAgentById(agentProcess.id);
+        } catch (cleanupError) {
+          this.logger.error(`Failed to clean up org_agents record ${agentProcess.id}: ${cleanupError.message}`);
+        }
+      }
       this.handleError(error, payload.clientSocketId);
       throw error;
     }
@@ -1855,6 +1864,13 @@ export class AgentServiceService {
 
       const orgAgent = orgAgentResult?.value;
 
+      // Handle orphaned partial record — wallet creation failed before Credo was called,
+      // so there is nothing in Credo to delete. Just clean up the DB record.
+      if (!orgAgent.tenantId || !orgAgent.orgAgentTypeId) {
+        await this.agentServiceRepository.deleteOrgAgentByOrg(orgAgent.orgId);
+        return;
+      }
+
       const orgAgentTypeResult = await this.agentServiceRepository.getOrgAgentType(orgAgent.orgAgentTypeId);
 
       if (!orgAgentTypeResult) {
@@ -1878,6 +1894,12 @@ export class AgentServiceService {
           ? `${orgAgent.agentEndPoint}${CommonConstants.URL_SHAGENT_DELETE_SUB_WALLET}`.replace('#', orgAgent?.tenantId)
           : `${orgAgent.agentEndPoint}${CommonConstants.URL_DELETE_WALLET}`;
 
+      // Archive schemas before deletion so that failure leaves the org intact
+      const did = orgAgent?.orgDid;
+      if (did) {
+        await this._updateIsSchemaArchivedFlag(did);
+      }
+
       // Perform the deletion in a transaction
       return await this.prisma.$transaction(async (prisma) => {
         // Delete org agent and related records
@@ -1889,7 +1911,8 @@ export class AgentServiceService {
           headers: { authorization: getApiKey }
         });
 
-        if (deleteWallet.status !== HttpStatus.NO_CONTENT) {
+        // 204 = deleted, 404 = already gone — both are acceptable (idempotent delete)
+        if (deleteWallet.status !== HttpStatus.NO_CONTENT && deleteWallet.status !== HttpStatus.NOT_FOUND) {
           throw new InternalServerErrorException(ResponseMessages.agent.error.walletNotDeleted);
         }
 
@@ -1898,11 +1921,6 @@ export class AgentServiceService {
           { records: agentInvitation.count, tableName: 'agent_invitations' },
           { records: deleteOrgAgent ? 1 : 0, tableName: 'org_agents' }
         ];
-
-        const did = orgAgent?.orgDid;
-
-        //archive schemas
-        await this._updateIsSchemaArchivedFlag(did);
 
         const logDeletionActivity = async (records, tableName): Promise<void> => {
           if (records) {

@@ -603,6 +603,15 @@ export class AgentServiceRepository {
     }
   }
 
+  async deleteOrgAgentById(id: string): Promise<void> {
+    try {
+      await this.prisma.org_agents.delete({ where: { id } });
+    } catch (error) {
+      this.logger.error(`[deleteOrgAgentById] - Error deleting org agent record by id: ${error.message}`);
+      throw error;
+    }
+  }
+
   async getLedger(name: string): Promise<ILedgers> {
     try {
       const ledgerData = await this.prisma.ledgers.findFirstOrThrow({
