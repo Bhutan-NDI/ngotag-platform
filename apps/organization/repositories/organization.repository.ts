@@ -956,7 +956,6 @@ export class OrganizationRepository {
     deleteOrg: IDeleteOrganization;
   }> {
     const tablesToCheck = [
-      `${PrismaTables.ORG_AGENTS}`,
       `${PrismaTables.ORG_DIDS}`,
       `${PrismaTables.AGENT_INVITATIONS}`,
       `${PrismaTables.CONNECTIONS}`,
@@ -967,7 +966,19 @@ export class OrganizationRepository {
 
     try {
       return await this.prisma.$transaction(async (prisma) => {
-        // Check for references in all tables in parallel
+        // If an org_agents record exists, allow deletion only if it is an incomplete
+        // orphan (no tenantId — wallet creation failed before Credo was called).
+        // A fully provisioned wallet must be deleted via DELETE /orgs/:orgId/agents/wallet first.
+        const orgAgent = await prisma.org_agents.findUnique({ where: { orgId: id } });
+        if (orgAgent) {
+          if (orgAgent.tenantId) {
+            throw new ConflictException(`Organization ID ${id} is referenced in the table ${PrismaTables.ORG_AGENTS}`);
+          }
+          // Orphaned incomplete record — clean it up automatically
+          await prisma.org_agents.delete({ where: { orgId: id } });
+        }
+
+        // Check for references in all other tables in parallel
         const referenceCounts = await Promise.all(
           tablesToCheck.map((table) => prisma[table].count({ where: { orgId: id } }))
         );
