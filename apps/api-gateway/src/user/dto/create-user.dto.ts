@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, IsUrl, Matches, MaxLength } from 'class-validator';
 import { toLowerCase, trim } from '@credebl/common/cast.helper';
 
 import { Transform } from 'class-transformer';
@@ -38,4 +38,15 @@ export class UserEmailVerificationDto {
   @IsString({ message: 'clientAlias should be string' })
   @Transform(({ value }) => trim(value))
   clientAlias?: string;
+
+  // Caller-supplied path to return the user to after they verify their email (e.g. the
+  // Microsoft Marketplace landing carrying its ?token=). Restricted to a relative,
+  // same-origin path (must start with a single '/') to prevent open-redirects; when
+  // omitted the service falls back to the client's configured domain.
+  @ApiPropertyOptional({ example: '/marketplace/landing?token=abc123' })
+  @Transform(({ value }) => trim(value))
+  @IsOptional()
+  @IsString({ message: 'redirectTo should be string' })
+  @Matches(/^\/(?!\/)/, { message: 'redirectTo must be a relative path beginning with /' })
+  redirectTo?: string;
 }

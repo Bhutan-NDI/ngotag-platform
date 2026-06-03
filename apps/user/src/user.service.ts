@@ -115,7 +115,7 @@ export class UserService {
 
   async sendVerificationMail(userEmailVerification: ISendVerificationEmail): Promise<user> {
     try {
-      const { email, brandLogoUrl, platformName, clientAlias } = userEmailVerification;
+      const { email, brandLogoUrl, platformName, clientAlias, redirectTo } = userEmailVerification;
 
       if ('PROD' === process.env.PLATFORM_PROFILE_MODE) {
         // eslint-disable-next-line prefer-destructuring
@@ -163,7 +163,10 @@ export class UserService {
           clientId: clientDetails.clientId,
           brandLogoUrl,
           platformName,
-          redirectTo: clientDetails.domain,
+          // Honor a caller-supplied return path (e.g. the marketplace landing with its
+          // ?token=) so it survives the email round-trip; otherwise fall back to the
+          // client's configured domain (the previous, default behavior).
+          redirectTo: redirectTo ?? clientDetails.domain,
           clientAlias
         });
       } catch (error) {
