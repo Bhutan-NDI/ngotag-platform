@@ -11,6 +11,16 @@ interface MarketplaceClientResponse<T> {
   correlationId: string;
 }
 
+interface MarketplaceResolveResponse {
+  id?: string;
+  subscriptionName?: string;
+  offerId?: string;
+  planId?: string;
+  quantity?: number;
+  subscription?: MarketplaceResolvedSubscription;
+  [key: string]: unknown;
+}
+
 @Injectable()
 export class MicrosoftMarketplaceClient {
   private readonly apiBaseUrl = process.env.MARKETPLACE_API_BASE_URL || 'https://marketplaceapi.microsoft.com';
@@ -22,7 +32,7 @@ export class MicrosoftMarketplaceClient {
   ) {}
 
   async resolveSubscription(marketplaceToken: string): Promise<MarketplaceResolvedSubscription> {
-    const response = await this.request<MarketplaceResolvedSubscription>(
+    const response = await this.request<MarketplaceResolveResponse>(
       'post',
       '/api/saas/subscriptions/resolve',
       undefined,
@@ -30,7 +40,20 @@ export class MicrosoftMarketplaceClient {
         'x-ms-marketplace-token': marketplaceToken
       }
     );
-    return response.data;
+    // SaaS Fulfillment API v2 wraps the subscription (with purchaser/beneficiary/term/
+    // saasSubscriptionStatus) under a `subscription` property; only id/subscriptionName/
+    // offerId/planId/quantity live at the top level. getSubscription returns it flat.
+    // Normalize to the flat shape used by the rest of the service.
+    const body = response.data;
+    const nested = body.subscription;
+    if (!nested) {
+      return body as MarketplaceResolvedSubscription;
+    }
+    return {
+      ...nested,
+      id: nested.id ?? body.id,
+      name: nested.name ?? body.subscriptionName
+    } as MarketplaceResolvedSubscription;
   }
 
   async activateSubscription(subscriptionId: string, planId: string): Promise<unknown> {
@@ -68,12 +91,12 @@ export class MicrosoftMarketplaceClient {
   }
 
   async submitBatchUsageEvents(
-    events: Array<{
+    events: {
       resourceId: string;
       quantity: number;
       dimension: string;
       effectiveStartTime: string;
-    }>
+    }[]
   ): Promise<MarketplaceClientResponse<unknown>> {
     // Microsoft's batchUsageEvent schema does not include planId per line item.
     return this.request('post', '/api/batchUsageEvent', { request: events });
@@ -101,7 +124,7 @@ export class MicrosoftMarketplaceClient {
     };
 
     const response = await firstValueFrom(
-      method === 'get' || method === 'delete'
+      'get' === method || 'delete' === method
         ? this.httpService[method]<T>(url, config)
         : this.httpService[method]<T>(url, body, config)
     );
