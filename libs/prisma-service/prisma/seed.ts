@@ -908,6 +908,78 @@ export async function getPlatformConfig(): Promise<PlatformConfig> {
   return cachedConfig;
 }
 
+const seedMarketplacePlans = async (): Promise<void> => {
+  const offerId = process.env.MARKETPLACE_OFFER_ID;
+  if (!offerId) {
+    logger.log('MARKETPLACE_OFFER_ID not set — skipping marketplace plan seeding');
+    return;
+  }
+
+  const plans = [
+    {
+      offerId,
+      planId: 'starter',
+      displayName: 'Starter',
+      baseMonthlyPriceUsd: 550,
+      setupFeeUsd: 30000,
+      includedIssuanceTransactions: 1000,
+      includedVerificationTransactions: 1000,
+      includedSchemas: 1,
+      maxOrganizations: 1,
+      maxUsers: 1,
+      features: { schemaCreate: true, credentialDefinitionCreate: true, issuance: true, bulkIssuance: true, verification: true, apiAccess: true }
+    },
+    {
+      offerId,
+      planId: 'business',
+      displayName: 'Business',
+      baseMonthlyPriceUsd: 2750,
+      setupFeeUsd: 30000,
+      includedIssuanceTransactions: 5000,
+      includedVerificationTransactions: 5000,
+      includedSchemas: 5,
+      maxOrganizations: 1,
+      maxUsers: 2,
+      features: { schemaCreate: true, credentialDefinitionCreate: true, issuance: true, bulkIssuance: true, verification: true, apiAccess: true }
+    },
+    {
+      offerId,
+      planId: 'enterprise',
+      displayName: 'Enterprise',
+      baseMonthlyPriceUsd: 5500,
+      setupFeeUsd: 30000,
+      includedIssuanceTransactions: 10000,
+      includedVerificationTransactions: 10000,
+      includedSchemas: 10,
+      maxOrganizations: 5,
+      maxUsers: 5,
+      features: { schemaCreate: true, credentialDefinitionCreate: true, issuance: true, bulkIssuance: true, verification: true, apiAccess: true }
+    }
+  ];
+
+  try {
+    let seeded = 0;
+    for (const plan of plans) {
+      const existing = await prisma.marketplace_plan.findUnique({
+        where: { offerId_planId: { offerId: plan.offerId, planId: plan.planId } }
+      });
+      if (!existing) {
+        await prisma.marketplace_plan.create({ data: { ...plan, features: plan.features as any } });
+        seeded++;
+        logger.log(`Seeded marketplace plan: ${plan.planId} for offer ${offerId}`);
+      }
+    }
+    if (seeded === 0) {
+      logger.log(`Marketplace plans already exist for offer ${offerId} — skipping`);
+    } else {
+      logger.log(`Seeded ${seeded} marketplace plan(s) for offer ${offerId}`);
+    }
+  } catch (error) {
+    logger.error('An error occurred seeding marketplace plans:', error);
+    throw error;
+  }
+};
+
 async function main(): Promise<void> {
   await createOrgRoles();
   await createAgentTypes();
@@ -929,6 +1001,7 @@ async function main(): Promise<void> {
   await updateClientId();
   await updatePlatformUserRole();
   await createKeycloakUser();
+  await seedMarketplacePlans();
 }
 
 main()
