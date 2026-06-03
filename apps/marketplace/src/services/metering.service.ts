@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { marketplace_plan, marketplace_subscription } from '@prisma/client';
+import { MarketplaceUsageStatus, marketplace_plan, marketplace_subscription } from '@prisma/client';
 import { MarketplaceRepository } from '../repositories/marketplace.repository';
 import { MicrosoftMarketplaceClient } from './microsoft-marketplace.client';
 
@@ -75,10 +75,30 @@ export class MeteringService {
         }))
       );
 
-      for (const event of batch) {
-        await this.marketplaceRepository.updateUsageEventStatus(event.id, 'submitted', {
-          status: 'submitted',
-          message: JSON.stringify(response.data),
+      // Parse per-event MS response. result[i] corresponds to batch[i] (same order).
+      const result: Array<{ status?: string } | null> = Array.isArray((response.data as any)?.result)
+        ? (response.data as any).result
+        : [];
+
+      for (let i = 0; i < batch.length; i++) {
+        const event = batch[i];
+        const eventResult = result[i] ?? null;
+        const msStatus = eventResult?.status;
+
+        let localStatus: MarketplaceUsageStatus;
+        if (msStatus === 'Accepted') {
+          localStatus = 'accepted';
+        } else if (msStatus === 'Duplicate') {
+          localStatus = 'duplicate';
+        } else {
+          // ResourceNotFound, Error, or missing result — mark failed so it is
+          // retried on the next cron tick (listPendingUsageEvents queries pending + failed).
+          localStatus = 'failed';
+        }
+
+        await this.marketplaceRepository.updateUsageEventStatus(event.id, localStatus, {
+          status: msStatus || 'error',
+          message: JSON.stringify(eventResult ?? response.data),
           requestId: response.requestId,
           correlationId: response.correlationId
         });

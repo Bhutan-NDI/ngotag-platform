@@ -243,28 +243,36 @@ export class MarketplaceService extends BaseService {
         session.subscription.marketplaceSubscriptionId,
         session.subscription.planId
       );
-      const latest = await this.microsoftMarketplaceClient.getSubscription(
-        session.subscription.marketplaceSubscriptionId
-      );
-      const updated = await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
-      const activated = updated.saasSubscriptionStatus === 'Subscribed';
-      await this.marketplaceRepository.setActivationStatus(
-        session.subscription.id,
-        activated ? 'activated' : 'in_progress'
-      );
-      await this.marketplaceRepository.updateOnboardingSession(
-        session.id,
-        activated ? 'activated' : 'activation_pending'
-      );
-      if (activated) {
-        await this.recordSetupFeeUsage(updated, message.orgId);
+
+      // MS returned 200 — activation was accepted. Set activated immediately without
+      // waiting for getSubscription to confirm; MS may take a moment to flip
+      // saasSubscriptionStatus to "Subscribed" and an immediate round-trip would leave
+      // the subscription stuck at in_progress. Reconciliation will sync the final MS
+      // status on the next hourly run.
+      await this.marketplaceRepository.setActivationStatus(session.subscription.id, 'activated');
+      await this.marketplaceRepository.updateOnboardingSession(session.id, 'activated');
+      await this.recordSetupFeeUsage(session.subscription, message.orgId);
+
+      // Best-effort refresh of term dates — do not let a getSubscription failure
+      // roll back the activation that MS already confirmed.
+      let latestSaasStatus = session.subscription.saasSubscriptionStatus;
+      try {
+        const latest = await this.microsoftMarketplaceClient.getSubscription(
+          session.subscription.marketplaceSubscriptionId
+        );
+        const updated = await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
+        latestSaasStatus = updated.saasSubscriptionStatus;
+      } catch (refreshError) {
+        this.logger.warn(
+          `Could not refresh subscription status after activation: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`
+        );
       }
 
       return {
-        subscriptionId: updated.marketplaceSubscriptionId,
+        subscriptionId: session.subscription.marketplaceSubscriptionId,
         orgId: message.orgId,
-        activationStatus: activated ? 'activated' : 'in_progress',
-        saasSubscriptionStatus: updated.saasSubscriptionStatus,
+        activationStatus: 'activated',
+        saasSubscriptionStatus: latestSaasStatus,
         dashboardUrl: '/organizations/dashboard'
       };
     } catch (error) {
