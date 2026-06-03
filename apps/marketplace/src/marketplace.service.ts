@@ -16,6 +16,7 @@ import {
   MarketplaceBuyerClaims,
   MarketplaceNextAction,
   MarketplaceResolvedSubscription,
+  MarketplaceSubscriptionStatus,
   MarketplaceUsageEventPayload,
   MarketplaceWebhookPayload,
   ResolveMarketplacePayload
@@ -255,7 +256,7 @@ export class MarketplaceService extends BaseService {
 
       // Best-effort refresh of term dates — do not let a getSubscription failure
       // roll back the activation that MS already confirmed.
-      let latestSaasStatus = session.subscription.saasSubscriptionStatus;
+      let latestSaasStatus: MarketplaceSubscriptionStatus = session.subscription.saasSubscriptionStatus;
       try {
         const latest = await this.microsoftMarketplaceClient.getSubscription(
           session.subscription.marketplaceSubscriptionId
