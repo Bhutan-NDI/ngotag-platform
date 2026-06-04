@@ -89,8 +89,12 @@ export class MicrosoftMarketplaceClient {
     quantity?: number
   ): Promise<unknown> {
     const body: Record<string, unknown> = { status };
-    if (planId !== undefined) body['planId'] = planId;
-    if (quantity !== undefined) body['quantity'] = quantity;
+    if (planId !== undefined) {
+      body['planId'] = planId;
+    }
+    if (quantity !== undefined) {
+      body['quantity'] = quantity;
+    }
     const response = await this.request(
       'patch',
       `/api/saas/subscriptions/${subscriptionId}/operations/${operationId}`,
@@ -132,16 +136,34 @@ export class MicrosoftMarketplaceClient {
       }
     };
 
-    const response = await firstValueFrom(
-      'get' === method || 'delete' === method
-        ? this.httpService[method]<T>(url, config)
-        : this.httpService[method]<T>(url, body, config)
-    );
+    try {
+      const response = await firstValueFrom(
+        'get' === method || 'delete' === method
+          ? this.httpService[method]<T>(url, config)
+          : this.httpService[method]<T>(url, body, config)
+      );
 
-    return {
-      data: response.data,
-      requestId,
-      correlationId
-    };
+      return {
+        data: response.data,
+        requestId,
+        correlationId
+      };
+    } catch (error: unknown) {
+      // Surface Microsoft's response body so callers/logs can see the actual rejection
+      // reason (e.g. "operation not in progress", validation errors) instead of a bare
+      // "Request failed with status code 400".
+      const axiosError = error as { response?: { status?: number; data?: unknown }; message?: string };
+      if (axiosError?.response) {
+        const enriched = new Error(
+          `${axiosError.message} — ${method.toUpperCase()} ${path} — MS response: ${JSON.stringify(
+            axiosError.response.data
+          )}`
+        );
+        (enriched as { status?: number }).status = axiosError.response.status;
+        (enriched as { msResponseData?: unknown }).msResponseData = axiosError.response.data;
+        throw enriched;
+      }
+      throw error;
+    }
   }
 }

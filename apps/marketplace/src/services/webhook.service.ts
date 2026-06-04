@@ -71,44 +71,50 @@ export class WebhookService {
       await this.microsoftMarketplaceClient.getOperation(payload.subscriptionId, payload.id);
     }
 
-    if (payload.action === 'ChangePlan' && payload.planId) {
+    if ('ChangePlan' === payload.action && payload.planId) {
       const latest = await this.microsoftMarketplaceClient.getSubscription(payload.subscriptionId);
       await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
       await this.patchOperationIfNeeded(payload, true);
-      if (payload.id) await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
+      if (payload.id) {
+        await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
+      }
       return;
     }
 
-    if (payload.action === 'ChangeQuantity') {
+    if ('ChangeQuantity' === payload.action) {
       const latest = await this.microsoftMarketplaceClient.getSubscription(payload.subscriptionId);
       await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
       await this.patchOperationIfNeeded(payload, true);
-      if (payload.id) await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
+      if (payload.id) {
+        await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
+      }
       return;
     }
 
-    if (payload.action === 'Renew') {
+    if ('Renew' === payload.action) {
       const latest = await this.microsoftMarketplaceClient.getSubscription(payload.subscriptionId);
       await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
       return;
     }
 
-    if (payload.action === 'Reinstate') {
+    if ('Reinstate' === payload.action) {
       const latest = await this.microsoftMarketplaceClient.getSubscription(payload.subscriptionId);
       await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
       // Reinstate requires a Success acknowledgement back to MS, otherwise MS will
       // keep retrying the webhook. This was previously missing (P1 bug).
       await this.patchOperationIfNeeded(payload, true);
-      if (payload.id) await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
+      if (payload.id) {
+        await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
+      }
       return;
     }
 
-    if (payload.action === 'Suspend') {
+    if ('Suspend' === payload.action) {
       await this.marketplaceRepository.setSubscriptionStatus(subscriptionId, 'Suspended');
       return;
     }
 
-    if (payload.action === 'Unsubscribe') {
+    if ('Unsubscribe' === payload.action) {
       await this.marketplaceRepository.setSubscriptionStatus(subscriptionId, 'Unsubscribed');
     }
   }
@@ -117,19 +123,39 @@ export class WebhookService {
     if (!payload.id) {
       return;
     }
-    const planId = payload.action === 'ChangePlan' ? payload.planId : undefined;
-    const quantity = payload.action === 'ChangeQuantity' ? payload.quantity : undefined;
-    await this.microsoftMarketplaceClient.patchOperation(
-      payload.subscriptionId,
-      payload.id,
-      success ? 'Success' : 'Failure',
-      planId,
-      quantity
-    );
+    const planId = 'ChangePlan' === payload.action ? payload.planId : undefined;
+    const quantity = 'ChangeQuantity' === payload.action ? payload.quantity : undefined;
+    try {
+      await this.microsoftMarketplaceClient.patchOperation(
+        payload.subscriptionId,
+        payload.id,
+        success ? 'Success' : 'Failure',
+        planId,
+        quantity
+      );
+    } catch (error: unknown) {
+      // A 400 from MS on the operation PATCH usually means the operation is no longer in
+      // progress (already completed/expired on the MS side). Re-throwing would mark the
+      // webhook failed and MS would keep retrying the same dead operation forever. Log the
+      // detailed reason (now includes the MS response body) and swallow the 400 so the
+      // webhook returns success and MS stops retrying. Any other error still propagates.
+      const status =
+        (error as { status?: number; response?: { status?: number } })?.status ??
+        (error as { response?: { status?: number } })?.response?.status;
+      if (400 === status) {
+        this.logger.warn(
+          `patchOperation 400 for operationId=${payload.id} action=${payload.action}: ${
+            error instanceof Error ? error.message : JSON.stringify(error)
+          }`
+        );
+        return;
+      }
+      throw error;
+    }
   }
 
   private async validateAuthorization(authorization?: string): Promise<void> {
-    if (`${process.env.MARKETPLACE_WEBHOOK_VALIDATE_JWT}`.toLowerCase() !== 'true') {
+    if ('true' !== `${process.env.MARKETPLACE_WEBHOOK_VALIDATE_JWT}`.toLowerCase()) {
       return;
     }
 
@@ -140,7 +166,7 @@ export class WebhookService {
     const token = authorization.replace('Bearer ', '');
     const decoded = jwt.decode(token, { complete: true });
 
-    if (!decoded || typeof decoded === 'string' || !decoded.header.kid) {
+    if (!decoded || 'string' === typeof decoded || !decoded.header.kid) {
       throw new UnauthorizedException('Marketplace webhook token is invalid');
     }
 
