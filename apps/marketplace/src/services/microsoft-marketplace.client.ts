@@ -81,11 +81,20 @@ export class MicrosoftMarketplaceClient {
     return response.data;
   }
 
-  async patchOperation(subscriptionId: string, operationId: string, status: 'Success' | 'Failure'): Promise<unknown> {
+  async patchOperation(
+    subscriptionId: string,
+    operationId: string,
+    status: 'Success' | 'Failure',
+    planId?: string,
+    quantity?: number
+  ): Promise<unknown> {
+    const body: Record<string, unknown> = { status };
+    if (planId !== undefined) body['planId'] = planId;
+    if (quantity !== undefined) body['quantity'] = quantity;
     const response = await this.request(
       'patch',
       `/api/saas/subscriptions/${subscriptionId}/operations/${operationId}`,
-      { status }
+      body
     );
     return response.data;
   }
