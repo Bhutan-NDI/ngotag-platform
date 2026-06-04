@@ -155,8 +155,9 @@ export class IssuanceService {
       const { orgId, credentialDefinitionId, comment, credentialData, isValidateSchema } = payload || {};
 
       if (payload.credentialType === IssueCredentialType.INDY) {
-        const schemaResponse: SchemaDetails =
-          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
+        const schemaResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
+          credentialDefinitionId
+        );
         if (schemaResponse?.attributes) {
           const schemaResponseError = [];
           const attributesArray: IAttributes[] = JSON.parse(schemaResponse.attributes);
@@ -292,11 +293,11 @@ export class IssuanceService {
         if (Array.isArray(context) && context.includes(CommonConstants.W3C_SCHEMA_URL)) {
           const filterData = context.filter((item) => CommonConstants.W3C_SCHEMA_URL !== item);
           const [schemaId] = filterData;
-          results.forEach((record) => {
+          for (const record of results) {
             if (PromiseResult.FULFILLED === record.status && record?.value?.threadId) {
-              this.issuanceRepository.updateSchemaIdByThreadId(record?.value?.threadId, schemaId);
+              await this.issuanceRepository.updateSchemaIdByThreadId(record?.value?.threadId, schemaId);
             }
-          });
+          }
         }
 
         finalMessage = ResponseMessages.issuance.success.create;
@@ -347,8 +348,9 @@ export class IssuanceService {
         isValidateSchema
       } = payload;
       if (credentialType === IssueCredentialType.INDY) {
-        const schemadetailsResponse: SchemaDetails =
-          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
+        const schemadetailsResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
+          credentialDefinitionId
+        );
 
         if (schemadetailsResponse?.attributes) {
           const schemadetailsResponseError = [];
@@ -492,7 +494,9 @@ export class IssuanceService {
       return message.response;
     } catch (error) {
       this.logger.error(
-        `[storeIssuanceObjectReturnUrl] [NATS call]- error in storing object and returning url : ${JSON.stringify(error)}`
+        `[storeIssuanceObjectReturnUrl] [NATS call]- error in storing object and returning url : ${JSON.stringify(
+          error
+        )}`
       );
       throw error;
     }
@@ -796,8 +800,9 @@ export class IssuanceService {
       }
 
       if (IssueCredentialType.INDY === credentialType) {
-        const schemaResponse: SchemaDetails =
-          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
+        const schemaResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
+          credentialDefinitionId
+        );
 
         this.logger.debug(
           'Schema details for indy based credential received:',
@@ -1105,7 +1110,7 @@ export class IssuanceService {
           const filterData = w3cSchemaId.filter((item) => CommonConstants.W3C_SCHEMA_URL !== item);
           const [schemaId] = filterData;
           if (credentialCreateOfferDetails.response.credentialRequestThId) {
-            this.issuanceRepository.updateSchemaIdByThreadId(
+            await this.issuanceRepository.updateSchemaIdByThreadId(
               credentialCreateOfferDetails.response.credentialRequestThId,
               schemaId
             );
