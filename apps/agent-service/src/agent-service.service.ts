@@ -50,7 +50,6 @@ import {
   AgentHealthData,
   IAgentStore,
   IAgentConfigure,
-  OrgDid,
   IBasicMessage,
   WalletDetails,
   ILedger,
@@ -890,10 +889,6 @@ export class AgentServiceService {
 
       await this.checkDidExistence(getDidByOrg, didDetails);
 
-      if (isPrimaryDid) {
-        await this.updateAllDidsToNonPrimary(orgId, getDidByOrg);
-      }
-
       const createdDidDetails = {
         orgId,
         did: didDetails?.['did'] ?? didDetails?.['didState']?.['did'],
@@ -902,13 +897,37 @@ export class AgentServiceService {
         orgAgentId: agentDetails.id,
         userId: user.id
       };
-      const storeDidDetails = await this.storeDid(createdDidDetails);
 
+      // Resolve the ledger id (read-only lookup + validation) BEFORE the transaction, so the
+      // transaction body performs only writes and is never held open across reads/HTTP calls.
+      let ledgerId: string | null = null;
       if (isPrimaryDid) {
-        await this.setPrimaryDidAndLedger(orgId, storeDidDetails, createDidPayload.network, createDidPayload.method);
+        if (createDidPayload.network) {
+          const getLedgerDetails = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload.network);
+          ledgerId = getLedgerDetails.id;
+        } else {
+          const noLedgerData = await this.agentServiceRepository.getLedger(Ledgers.Not_Applicable);
+          if (!noLedgerData) {
+            throw new NotFoundException(ResponseMessages.agent.error.noLedgerFound);
+          }
+          ledgerId = noLedgerData.id;
+        }
       }
-      if (agentDetails.agentSpinUpStatus === AgentSpinUpStatus.WALLET_CREATED) {
-        await this.agentServiceRepository.updateAgentSpinupStatus(orgId);
+
+      // Persist the new DID and all related org_agents updates atomically. Previously these ran as
+      // separate, non-transactional writes, so a failure after the blockchain write could leave a
+      // half-written DB state that a retry could never reconcile.
+      const storeDidDetails = await this.agentServiceRepository.persistDidWithUpdates({
+        createdDidDetails,
+        ledgerId,
+        updateSpinupStatus: agentDetails.agentSpinUpStatus === AgentSpinUpStatus.WALLET_CREATED
+      });
+
+      if (!storeDidDetails) {
+        throw new InternalServerErrorException(ResponseMessages.agent.error.storeDid, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
       }
 
       return storeDidDetails;
@@ -952,44 +971,6 @@ export class AgentServiceService {
         cause: new Error(),
         description: ResponseMessages.errorMessages.serverError
       });
-    }
-  }
-
-  private async updateAllDidsToNonPrimary(orgId, getDidByOrg): Promise<void> {
-    await Promise.all(
-      getDidByOrg.map(async () => {
-        await this.agentServiceRepository.updateIsPrimaryDid(orgId, false);
-      })
-    );
-  }
-
-  private async storeDid(createdDidDetails): Promise<OrgDid> {
-    const storeDidDetails = await this.agentServiceRepository.storeDidDetails(createdDidDetails);
-
-    if (!storeDidDetails) {
-      throw new InternalServerErrorException(ResponseMessages.agent.error.storeDid, {
-        cause: new Error(),
-        description: ResponseMessages.errorMessages.serverError
-      });
-    }
-
-    return storeDidDetails;
-  }
-
-  private async setPrimaryDidAndLedger(orgId, storeDidDetails, network, method): Promise<void> {
-    if (storeDidDetails.did && storeDidDetails.didDocument) {
-      await this.agentServiceRepository.setPrimaryDid(storeDidDetails.did, orgId, storeDidDetails.didDocument);
-    }
-
-    if (network) {
-      const getLedgerDetails = await this.agentServiceRepository.getLedgerByNameSpace(network);
-      await this.agentServiceRepository.updateLedgerId(orgId, getLedgerDetails.id);
-    } else {
-      const noLedgerData = await this.agentServiceRepository.getLedger(Ledgers.Not_Applicable);
-      if (!noLedgerData) {
-        throw new NotFoundException(ResponseMessages.agent.error.noLedgerFound);
-      }
-      await this.agentServiceRepository.updateLedgerId(orgId, noLedgerData?.id);
     }
   }
 
