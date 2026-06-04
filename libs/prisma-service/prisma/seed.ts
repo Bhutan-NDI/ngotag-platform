@@ -6,7 +6,7 @@ import * as util from 'util';
 import { HttpStatus, Logger } from '@nestjs/common';
 
 import { CommonConstants } from '../../common/src/common.constant';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { exec } from 'child_process';
 
 import { Country, State, City } from 'country-state-city';
@@ -927,7 +927,14 @@ const seedMarketplacePlans = async (): Promise<void> => {
       includedSchemas: 1,
       maxOrganizations: 1,
       maxUsers: 1,
-      features: { schemaCreate: true, credentialDefinitionCreate: true, issuance: true, bulkIssuance: true, verification: true, apiAccess: true }
+      features: {
+        schemaCreate: true,
+        credentialDefinitionCreate: true,
+        issuance: true,
+        bulkIssuance: true,
+        verification: true,
+        apiAccess: true
+      }
     },
     {
       offerId,
@@ -940,7 +947,14 @@ const seedMarketplacePlans = async (): Promise<void> => {
       includedSchemas: 5,
       maxOrganizations: 1,
       maxUsers: 2,
-      features: { schemaCreate: true, credentialDefinitionCreate: true, issuance: true, bulkIssuance: true, verification: true, apiAccess: true }
+      features: {
+        schemaCreate: true,
+        credentialDefinitionCreate: true,
+        issuance: true,
+        bulkIssuance: true,
+        verification: true,
+        apiAccess: true
+      }
     },
     {
       offerId,
@@ -953,27 +967,29 @@ const seedMarketplacePlans = async (): Promise<void> => {
       includedSchemas: 10,
       maxOrganizations: 5,
       maxUsers: 5,
-      features: { schemaCreate: true, credentialDefinitionCreate: true, issuance: true, bulkIssuance: true, verification: true, apiAccess: true }
+      features: {
+        schemaCreate: true,
+        credentialDefinitionCreate: true,
+        issuance: true,
+        bulkIssuance: true,
+        verification: true,
+        apiAccess: true
+      }
     }
   ];
 
   try {
-    let seeded = 0;
+    // Upsert so the seed is idempotent and self-correcting: re-running it restores the
+    // canonical commercial-spec quotas for the configured offer (matched on offerId+planId).
     for (const plan of plans) {
-      const existing = await prisma.marketplace_plan.findUnique({
-        where: { offerId_planId: { offerId: plan.offerId, planId: plan.planId } }
+      await prisma.marketplace_plan.upsert({
+        where: { offerId_planId: { offerId: plan.offerId, planId: plan.planId } },
+        create: { ...plan, features: plan.features as Prisma.InputJsonValue },
+        update: { ...plan, features: plan.features as Prisma.InputJsonValue }
       });
-      if (!existing) {
-        await prisma.marketplace_plan.create({ data: { ...plan, features: plan.features as any } });
-        seeded++;
-        logger.log(`Seeded marketplace plan: ${plan.planId} for offer ${offerId}`);
-      }
+      logger.log(`Upserted marketplace plan: ${plan.planId} for offer ${offerId}`);
     }
-    if (seeded === 0) {
-      logger.log(`Marketplace plans already exist for offer ${offerId} — skipping`);
-    } else {
-      logger.log(`Seeded ${seeded} marketplace plan(s) for offer ${offerId}`);
-    }
+    logger.log(`Upserted ${plans.length} marketplace plan(s) for offer ${offerId}`);
   } catch (error) {
     logger.error('An error occurred seeding marketplace plans:', error);
     throw error;
