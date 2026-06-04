@@ -469,40 +469,33 @@ export class VerificationController {
       });
 
     // Best-effort marketplace usage capture on verification completion. Never blocks the webhook.
-    const proofWh = proofPresentationPayload as unknown as {
-      id?: string;
-      presentationId?: string;
-      threadId?: string;
-      state?: string;
-      orgId?: string;
-      connectionId?: string;
-      createdAt?: string;
-      updatedAt?: string;
-      isVerified?: boolean;
-    };
+    // proofPresentationPayload is already typed as WebhookPresentationProofDto — no separate cast needed.
+    // orgId is resolved from webhookProofPresentation (the persisted presentations row) because
+    // the DTO orgId may not be set for shared/cloud agents; the microservice resolves it correctly.
+    const resolvedOrgId = (webhookProofPresentation as { orgId?: string } | undefined)?.orgId;
+    const verificationSourceId = proofPresentationPayload.presentationId || proofPresentationPayload.threadId;
     if (
-      proofWh.isVerified ||
-      'verified' === `${proofWh.state}`.toLowerCase() ||
-      'done' === `${proofWh.state}`.toLowerCase()
+      resolvedOrgId &&
+      verificationSourceId &&
+      (proofPresentationPayload.isVerified ||
+        'verified' === `${proofPresentationPayload.state}`.toLowerCase() ||
+        'done' === `${proofPresentationPayload.state}`.toLowerCase())
     ) {
       void this.marketplaceService
         .recordUsageEvent({
-          orgId: proofWh.orgId || orgId,
+          orgId: resolvedOrgId,
           eventType: 'verification_completed',
           sourceTable: 'presentations',
-          sourceId: proofWh.presentationId || proofWh.id || proofWh.threadId || `${orgId}:${proofWh.createdAt}`,
-          occurredAt: proofWh.updatedAt || proofWh.createdAt,
+          sourceId: verificationSourceId,
           quantity: 1,
           metadata: {
-            proofId: proofWh.id,
-            threadId: proofWh.threadId,
-            connectionId: proofWh.connectionId,
-            state: proofWh.state,
-            isVerified: proofWh.isVerified
+            threadId: proofPresentationPayload.threadId,
+            state: proofPresentationPayload.state,
+            isVerified: proofPresentationPayload.isVerified
           }
         })
         .catch((error) =>
-          this.logger.debug(`error in recording marketplace verification usage ::: ${JSON.stringify(error)}`)
+          this.logger.warn(`error in recording marketplace verification usage ::: ${JSON.stringify(error)}`)
         );
     }
 
