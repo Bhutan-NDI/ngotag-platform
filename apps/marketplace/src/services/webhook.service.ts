@@ -75,6 +75,7 @@ export class WebhookService {
       const latest = await this.microsoftMarketplaceClient.getSubscription(payload.subscriptionId);
       await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
       await this.patchOperationIfNeeded(payload, true);
+      if (payload.id) await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
       return;
     }
 
@@ -82,6 +83,7 @@ export class WebhookService {
       const latest = await this.microsoftMarketplaceClient.getSubscription(payload.subscriptionId);
       await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
       await this.patchOperationIfNeeded(payload, true);
+      if (payload.id) await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
       return;
     }
 
@@ -97,6 +99,7 @@ export class WebhookService {
       // Reinstate requires a Success acknowledgement back to MS, otherwise MS will
       // keep retrying the webhook. This was previously missing (P1 bug).
       await this.patchOperationIfNeeded(payload, true);
+      if (payload.id) await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
       return;
     }
 
@@ -114,10 +117,14 @@ export class WebhookService {
     if (!payload.id) {
       return;
     }
+    const planId = payload.action === 'ChangePlan' ? payload.planId : undefined;
+    const quantity = payload.action === 'ChangeQuantity' ? payload.quantity : undefined;
     await this.microsoftMarketplaceClient.patchOperation(
       payload.subscriptionId,
       payload.id,
-      success ? 'Success' : 'Failure'
+      success ? 'Success' : 'Failure',
+      planId,
+      quantity
     );
   }
 

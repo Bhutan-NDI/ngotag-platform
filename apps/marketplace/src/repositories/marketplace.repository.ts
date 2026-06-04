@@ -360,6 +360,23 @@ export class MarketplaceRepository {
     });
   }
 
+  async updateOperationAckStatus(
+    operationId: string,
+    subscriptionId: string,
+    ackStatus: 'success' | 'failure',
+    ackError?: string
+  ): Promise<void> {
+    await this.prisma.marketplace_operation.update({
+      where: {
+        operationId_marketplaceSubscriptionId: {
+          operationId,
+          marketplaceSubscriptionId: subscriptionId
+        }
+      },
+      data: { ackStatus, ackError, lastChangedDateTime: new Date() }
+    });
+  }
+
   private toSubscriptionData(resolved: MarketplaceResolvedSubscription): Prisma.marketplace_subscriptionCreateInput {
     return {
       marketplaceSubscriptionId: resolved.id,

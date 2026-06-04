@@ -69,6 +69,18 @@ export class MarketplaceEntitlementGuard implements CanActivate {
           message: 'Marketplace schema creation limit has been reached for this plan'
         });
       }
+      if (('issuance' === feature || 'bulkIssuance' === feature) && this.isUsageLimitReached(entitlements, 'issuance_txn')) {
+        throw new ForbiddenException({
+          code: 'marketplace_issuance_limit_reached',
+          message: 'Marketplace issuance transaction limit has been reached for this plan'
+        });
+      }
+      if ('verification' === feature && this.isUsageLimitReached(entitlements, 'verification_txn')) {
+        throw new ForbiddenException({
+          code: 'marketplace_verification_limit_reached',
+          message: 'Marketplace verification transaction limit has been reached for this plan'
+        });
+      }
       return true;
     }
 
