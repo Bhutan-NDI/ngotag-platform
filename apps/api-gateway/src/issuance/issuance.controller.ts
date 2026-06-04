@@ -973,35 +973,30 @@ export class IssuanceController {
       });
 
     // Best-effort marketplace usage capture on issuance completion. Never blocks the webhook.
-    const issuanceWh = issueCredentialDto as unknown as {
-      id?: string;
-      threadId?: string;
-      state?: string;
-      orgId?: string;
-      schemaId?: string;
-      credDefId?: string;
-      connectionId?: string;
-      createdAt?: string;
-      updatedAt?: string;
-    };
-    if (this.isIssuedCredentialState(issuanceWh.state)) {
+    // issueCredentialDto is already typed as IssuanceDto — no need for a separate cast.
+    // orgId is resolved from getCredentialDetails (the persisted credentials row) because
+    // issueCredentialDto.orgId is only set when contextCorrelationId === 'default'; for
+    // shared/cloud agents the microservice resolves it via tenant lookup and returns it here.
+    const resolvedOrgId = (getCredentialDetails as { response?: { orgId?: string } } | undefined)?.response?.orgId;
+    const issuanceSourceId = issueCredentialDto.id || issueCredentialDto.threadId;
+    if (resolvedOrgId && issuanceSourceId && this.isIssuedCredentialState(issueCredentialDto.state)) {
       void this.marketplaceService
         .recordUsageEvent({
-          orgId: issuanceWh.orgId || id,
+          orgId: resolvedOrgId,
           eventType: 'issuance_completed',
           sourceTable: 'credentials',
-          sourceId: issuanceWh.id || issuanceWh.threadId || `${id}:${issuanceWh.createdAt}`,
-          occurredAt: issuanceWh.updatedAt || issuanceWh.createdAt,
+          sourceId: issuanceSourceId,
+          occurredAt: issueCredentialDto.createdAt,
           quantity: 1,
           metadata: {
-            schemaId: issuanceWh.schemaId,
-            credDefId: issuanceWh.credDefId,
-            connectionId: issuanceWh.connectionId,
-            state: issuanceWh.state
+            schemaId: issueCredentialDto.schemaId,
+            credDefId: issueCredentialDto.credDefId,
+            connectionId: issueCredentialDto.connectionId,
+            state: issueCredentialDto.state
           }
         })
         .catch((error) =>
-          this.logger.debug(`error in recording marketplace issuance usage ::: ${JSON.stringify(error)}`)
+          this.logger.warn(`error in recording marketplace issuance usage ::: ${JSON.stringify(error)}`)
         );
     }
 
