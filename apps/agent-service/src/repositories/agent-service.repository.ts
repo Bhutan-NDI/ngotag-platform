@@ -238,6 +238,66 @@ export class AgentServiceRepository {
   }
 
   /**
+   * Atomically persist a newly created DID together with the related org_agents updates.
+   * Wrapping these writes in a single transaction prevents partial/inconsistent state (e.g. a DID
+   * row stored in org_dids while org_agents is never updated) when one write fails after a
+   * successful blockchain write. The agent-controller HTTP call and the read-only ledger lookup are
+   * intentionally performed by the caller BEFORE this transaction - never inside it.
+   */
+  // eslint-disable-next-line camelcase
+  async persistDidWithUpdates(params: {
+    createdDidDetails: IStoreDidDetails;
+    ledgerId: string | null;
+    updateSpinupStatus: boolean;
+  }): Promise<org_dids> {
+    const { createdDidDetails, ledgerId, updateSpinupStatus } = params;
+    const { orgId, did, didDocument, isPrimaryDid, userId, orgAgentId } = createdDidDetails;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        if (isPrimaryDid) {
+          await tx.org_dids.updateMany({ where: { orgId }, data: { isPrimaryDid: false } });
+        }
+
+        const storedDid = await tx.org_dids.create({
+          data: {
+            orgId,
+            did,
+            didDocument,
+            isPrimaryDid,
+            createdBy: userId,
+            lastChangedBy: userId,
+            orgAgentId
+          }
+        });
+
+        if (isPrimaryDid) {
+          if (storedDid.did && storedDid.didDocument) {
+            await tx.org_agents.update({
+              where: { orgId },
+              data: { orgDid: storedDid.did, didDocument: storedDid.didDocument }
+            });
+          }
+          if (ledgerId) {
+            await tx.org_agents.update({ where: { orgId }, data: { ledgerId } });
+          }
+        }
+
+        if (updateSpinupStatus) {
+          await tx.org_agents.update({
+            where: { orgId },
+            data: { agentSpinUpStatus: AgentSpinUpStatus.DID_CREATED }
+          });
+        }
+
+        return storedDid;
+      });
+    } catch (error) {
+      this.logger.error(`[persistDidWithUpdates] - Persist DID details: ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  /**
    * Set primary DID
    * @param did
    * @returns did details
