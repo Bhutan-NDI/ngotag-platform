@@ -274,6 +274,15 @@ export class CreateSchemaDto {
 }
 
 export class CreateW3CSchemaDto {
+  @ApiPropertyOptional({
+    description: 'Schema version, e.g. "1.0". Defaults to "1.0" if omitted.',
+    example: '1.0'
+  })
+  @IsOptional()
+  @IsString({ message: 'schemaVersion must be a string' })
+  @Transform(({ value }) => trim(value))
+  schemaVersion?: string;
+
   @ApiProperty({
     type: [W3CAttributeValue],
     example: [

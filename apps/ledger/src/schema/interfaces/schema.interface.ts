@@ -92,6 +92,7 @@ export interface ICreateW3CSchema {
   schemaName: string;
   description: string;
   schemaType: JSONSchemaType;
+  schemaVersion?: string;
 }
 export interface IGenericSchema {
   alias: string;
