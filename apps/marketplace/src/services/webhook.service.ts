@@ -74,6 +74,10 @@ export class WebhookService {
     if ('ChangePlan' === payload.action && payload.planId) {
       const latest = await this.microsoftMarketplaceClient.getSubscription(payload.subscriptionId);
       await this.marketplaceRepository.updateSubscriptionFromMicrosoft(latest);
+      // MS may not have committed the new plan yet when getSubscription is called, so the
+      // response can still carry the old planId. Explicitly set the target plan from the
+      // webhook payload which always reflects the intended new plan.
+      await this.marketplaceRepository.setSubscriptionPlanId(subscriptionId, payload.planId);
       await this.patchOperationIfNeeded(payload, true);
       if (payload.id) {
         await this.marketplaceRepository.updateOperationAckStatus(payload.id, subscriptionId, 'success');
