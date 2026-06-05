@@ -868,12 +868,15 @@ export class AgentServiceService {
     try {
       const agentDetails = await this.agentServiceRepository.getOrgAgentDetails(orgId);
 
+      // Look up the ledger for the requested network once and reuse it for both the network
+      // validation here and the primary-DID ledger update below (avoids a duplicate DB read and
+      // keeps validation and the update based on the same ledger row).
+      let networkLedgerId: string | null = null;
       if (createDidPayload?.network) {
         const getNameSpace = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload?.network);
-        if (agentDetails.ledgerId !== null) {
-          if (agentDetails.ledgerId !== getNameSpace.id) {
-            throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
-          }
+        networkLedgerId = getNameSpace.id;
+        if (agentDetails.ledgerId !== null && agentDetails.ledgerId !== getNameSpace.id) {
+          throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
         }
       }
       const getApiKey = await this.getOrgAgentApiKey(orgId);
@@ -885,14 +888,24 @@ export class AgentServiceService {
 
       const { isPrimaryDid, ...payload } = createDidPayload;
       const didDetails = await this.getDidDetails(url, payload, getApiKey);
-      const getDidByOrg = await this.agentServiceRepository.getOrgDid(orgId);
 
-      await this.checkDidExistence(getDidByOrg, didDetails);
+      // Normalize the DID/document once from the agent-controller response. Polygon only returns the
+      // DID under didState.did, so both the duplicate/retry detection and the persisted row must use
+      // the same normalized value - otherwise a retry would not recognise an already-stored DID.
+      const did = didDetails?.['did'] ?? didDetails?.['didState']?.['did'];
+      const didDocument =
+        didDetails?.['didDocument'] ?? didDetails?.['didDoc'] ?? didDetails?.['didState']?.['didDocument'];
+
+      // A matching row means a prior attempt already stored this DID. Rather than failing the retry
+      // with a conflict, reconcile it: persistDidWithUpdates finishes the related org_agents/spin-up
+      // updates that the earlier run may have failed to commit.
+      const getDidByOrg = await this.agentServiceRepository.getOrgDid(orgId);
+      const existingDid = getDidByOrg.find((orgDid) => orgDid.did === did) ?? null;
 
       const createdDidDetails = {
         orgId,
-        did: didDetails?.['did'] ?? didDetails?.['didState']?.['did'],
-        didDocument: didDetails?.['didDocument'] ?? didDetails?.['didDoc'] ?? didDetails?.['didState']?.['didDocument'],
+        did,
+        didDocument,
         isPrimaryDid,
         orgAgentId: agentDetails.id,
         userId: user.id
@@ -903,8 +916,7 @@ export class AgentServiceService {
       let ledgerId: string | null = null;
       if (isPrimaryDid) {
         if (createDidPayload.network) {
-          const getLedgerDetails = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload.network);
-          ledgerId = getLedgerDetails.id;
+          ledgerId = networkLedgerId;
         } else {
           const noLedgerData = await this.agentServiceRepository.getLedger(Ledgers.Not_Applicable);
           if (!noLedgerData) {
@@ -914,11 +926,12 @@ export class AgentServiceService {
         }
       }
 
-      // Persist the new DID and all related org_agents updates atomically. Previously these ran as
-      // separate, non-transactional writes, so a failure after the blockchain write could leave a
-      // half-written DB state that a retry could never reconcile.
+      // Persist the new DID (or reconcile an existing one) together with all related org_agents
+      // updates atomically. Previously these ran as separate, non-transactional writes, so a failure
+      // after the blockchain write could leave a half-written DB state that a retry could not repair.
       const storeDidDetails = await this.agentServiceRepository.persistDidWithUpdates({
         createdDidDetails,
+        existingDid,
         ledgerId,
         updateSpinupStatus: agentDetails.agentSpinUpStatus === AgentSpinUpStatus.WALLET_CREATED
       });
@@ -962,16 +975,6 @@ export class AgentServiceService {
     }
 
     return didDetails;
-  }
-
-  private checkDidExistence(getDidByOrg, didDetails): void {
-    const didExist = getDidByOrg.some((orgDidExist) => orgDidExist.did === didDetails.did);
-    if (didExist) {
-      throw new ConflictException(ResponseMessages.agent.error.didAlreadyExist, {
-        cause: new Error(),
-        description: ResponseMessages.errorMessages.serverError
-      });
-    }
   }
 
   /**
