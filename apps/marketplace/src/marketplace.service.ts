@@ -70,11 +70,7 @@ export class MarketplaceService extends BaseService {
     super('MarketplaceService');
   }
 
-  private sendNatsMessage<T = any>(
-    serviceProxy: Pick<ClientProxy, 'send'>,
-    cmd: string,
-    payload: unknown
-  ): Promise<T> {
+  private sendNatsMessage<T = any>(serviceProxy: Pick<ClientProxy, 'send'>, cmd: string, payload: unknown): Promise<T> {
     const headers = nats.headers();
     headers.set('contextId', v4());
     const record = new NatsRecordBuilder(payload).setHeaders(headers).build();
@@ -168,6 +164,14 @@ export class MarketplaceService extends BaseService {
   async linkOrganization(message: LinkOrganizationMessage): Promise<object> {
     const session = await this.getValidSession(message.sessionId);
 
+    // The onboarding session must already be account-linked to the signed-in user before
+    // an org can be attached. getValidSession only checks expiry, so without this guard a
+    // caller holding a valid sessionId could skip linkAccount and bind someone else's
+    // subscription (its entitlements + setup-fee billing) to an org they own. linkAccount
+    // sets subscription.localUserId only after verifying the Marketplace purchaser, so
+    // that binding is the authoritative session-owner check here. Fail hard otherwise.
+    this.assertSessionAccountLinkedTo(session, message.user.id);
+
     if (message.payload.mode === 'link_existing') {
       if (!message.payload.orgId) {
         throw new BadRequestException('orgId is required when linking an existing organization');
@@ -179,16 +183,20 @@ export class MarketplaceService extends BaseService {
       // not own. Verified over NATS against the organization service (source of truth).
       await this.assertUserOwnsOrganization(message.user.id, message.payload.orgId);
 
-      // Only a still-live subscription blocks re-linking. A cancelled (Unsubscribed) prior
-      // subscription must not block the cancel → re-subscribe → re-link the same org flow.
+      // Any *other* still-live subscription on this org blocks re-linking. We query by org
+      // excluding the current subscription id so a pre-existing older active row is caught
+      // even when the most-recent row is this session's own subscription. A cancelled
+      // (Unsubscribed) prior subscription must not block the cancel → re-subscribe → re-link
+      // the same org flow. The DB partial unique index is the atomic backstop for races.
       const activeSubscription = await this.marketplaceRepository.getActiveSubscriptionByOrgId(
-        message.payload.orgId
+        message.payload.orgId,
+        session.subscription.id
       );
-      if (activeSubscription && activeSubscription.id !== session.subscription.id) {
+      if (activeSubscription) {
         throw new ConflictException('Organization is already linked to another active Marketplace subscription');
       }
 
-      await this.marketplaceRepository.linkOrganization(session.subscription.id, message.payload.orgId);
+      await this.linkSubscriptionToOrg(session.subscription.id, message.payload.orgId);
       await this.marketplaceRepository.updateOnboardingSession(session.id, 'org_linked');
       return { orgId: message.payload.orgId, nextAction: 'activate' };
     }
@@ -208,13 +216,18 @@ export class MarketplaceService extends BaseService {
       keycloakUserId: message.user.keycloakUserId
     });
 
-    await this.marketplaceRepository.linkOrganization(session.subscription.id, organization.id);
+    await this.linkSubscriptionToOrg(session.subscription.id, organization.id);
     await this.marketplaceRepository.updateOnboardingSession(session.id, 'org_linked');
     return { orgId: organization.id, nextAction: 'activate' };
   }
 
   async activateSubscription(message: { sessionId: string; orgId: string; userId: string }): Promise<object> {
     const session = await this.getValidSession(message.sessionId);
+
+    // Same session-owner guard as linkOrganization: getValidSession only checks expiry, and
+    // activation records setup-fee billing, so a bare sessionId must not let a caller activate
+    // (and bill) a subscription that was not account-linked to them.
+    this.assertSessionAccountLinkedTo(session, message.userId);
 
     if (session.subscription.orgId !== message.orgId) {
       throw new BadRequestException('Marketplace subscription is not linked to the requested organization');
@@ -354,6 +367,40 @@ export class MarketplaceService extends BaseService {
   async submitMetering(): Promise<object> {
     await this.meteringService.aggregateAndSubmitUsage();
     return { submitted: true };
+  }
+
+  // The onboarding session is only authorized for the user who account-linked it.
+  // linkAccount writes subscription.localUserId after verifying the Marketplace purchaser,
+  // so a matching localUserId is what proves this caller owns the session/subscription.
+  private assertSessionAccountLinkedTo(
+    session: { id: string; subscription: { localUserId: string | null } },
+    userId: string
+  ): void {
+    if (!session.subscription.localUserId || session.subscription.localUserId !== userId) {
+      this.logger.warn(
+        `Marketplace link_organization blocked on session ${session.id}: subscription is not account-linked to the signed-in user`
+      );
+      throw new ForbiddenException({
+        code: 'marketplace_account_link_required',
+        message: 'Link your account to this Marketplace subscription before linking an organization.'
+      });
+    }
+  }
+
+  // Persists the subscription → org link, translating the active-org partial unique index
+  // violation (a concurrent link of a second still-live subscription to the same org) into
+  // the same ConflictException the read-then-check path returns. This closes the
+  // read-then-write race that the in-process occupancy check alone cannot.
+  private async linkSubscriptionToOrg(subscriptionId: string, orgId: string): Promise<void> {
+    try {
+      await this.marketplaceRepository.linkOrganization(subscriptionId, orgId);
+    } catch (error) {
+      if ('P2002' === (error as { code?: string })?.code) {
+        this.logger.warn(`Marketplace link_organization race lost for org ${orgId}: another live subscription won`);
+        throw new ConflictException('Organization is already linked to another active Marketplace subscription');
+      }
+      throw error;
+    }
   }
 
   // Authorize that `userId` is an owner of `orgId` before linking a subscription to it.

@@ -37,16 +37,20 @@ describe('MarketplaceService.linkOrganization (link_existing)', () => {
   const buildService = (overrides: {
     owner?: unknown;
     activeSubscription?: unknown;
+    sessionLocalUserId?: string | null;
   }): BuiltService => {
     const repository = {
       getOnboardingSession: jest.fn().mockResolvedValue({
         id: sessionId,
         expiresAt: futureDate,
-        subscription: { id: subscriptionInternalId }
+        // localUserId is what linkAccount binds after verifying the Marketplace purchaser;
+        // default it to the calling user so the account-link guard passes unless overridden.
+        subscription: {
+          id: subscriptionInternalId,
+          localUserId: overrides.sessionLocalUserId === undefined ? userId : overrides.sessionLocalUserId
+        }
       }),
-      getActiveSubscriptionByOrgId: jest
-        .fn()
-        .mockResolvedValue(overrides.activeSubscription ?? null),
+      getActiveSubscriptionByOrgId: jest.fn().mockResolvedValue(overrides.activeSubscription ?? null),
       linkOrganization: jest.fn().mockResolvedValue(undefined),
       updateOnboardingSession: jest.fn().mockResolvedValue(undefined)
     };
@@ -84,8 +88,31 @@ describe('MarketplaceService.linkOrganization (link_existing)', () => {
 
     const result = await service.linkOrganization(message);
 
+    // The occupancy check must exclude the current subscription so a pre-existing older
+    // active row is still detected; the repository excludes Unsubscribed rows itself.
+    expect(repository.getActiveSubscriptionByOrgId).toHaveBeenCalledWith(orgId, subscriptionInternalId);
     expect(repository.linkOrganization).toHaveBeenCalledWith(subscriptionInternalId, orgId);
     expect(result).toEqual({ orgId, nextAction: 'activate' });
+  });
+
+  it('rejects linking when the subscription is not yet account-linked to the caller', async () => {
+    // A valid sessionId alone must not be enough: linkAccount has not bound this
+    // subscription to the caller (localUserId differs), so org linking must fail before
+    // any ownership lookup, occupancy check, or write happens.
+    const { service, repository, organizationClient } = buildService({ sessionLocalUserId: 'someone-else' });
+
+    await expect(service.linkOrganization(message)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(organizationClient.send).not.toHaveBeenCalled();
+    expect(repository.getActiveSubscriptionByOrgId).not.toHaveBeenCalled();
+    expect(repository.linkOrganization).not.toHaveBeenCalled();
+  });
+
+  it('rejects linking when the subscription has no linked account yet (localUserId null)', async () => {
+    const { service, repository, organizationClient } = buildService({ sessionLocalUserId: null });
+
+    await expect(service.linkOrganization(message)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(organizationClient.send).not.toHaveBeenCalled();
+    expect(repository.linkOrganization).not.toHaveBeenCalled();
   });
 
   it('blocks when another live subscription already occupies the org', async () => {
@@ -105,5 +132,59 @@ describe('MarketplaceService.linkOrganization (link_existing)', () => {
     await expect(service.linkOrganization(message)).rejects.toBeInstanceOf(ForbiddenException);
     expect(repository.getActiveSubscriptionByOrgId).not.toHaveBeenCalled();
     expect(repository.linkOrganization).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The activation step records setup-fee billing, so it carries the same session-owner risk
+ * as linkOrganization: a bare sessionId must not let a caller activate a subscription that
+ * was not account-linked to them.
+ */
+describe('MarketplaceService.activateSubscription (session-owner guard)', () => {
+  const sessionId = 'session-1';
+  const orgId = '00000000-0000-0000-0000-000000000001';
+  const userId = 'user-1';
+  const subscriptionInternalId = 'sub-internal-1';
+  const oneHourMs = 60 * 60 * 1000;
+  const futureDate = new Date(Date.now() + oneHourMs);
+
+  const buildService = (
+    sessionLocalUserId: string | null
+  ): { service: MarketplaceService; repository: Record<string, jest.Mock> } => {
+    const repository = {
+      getOnboardingSession: jest.fn().mockResolvedValue({
+        id: sessionId,
+        expiresAt: futureDate,
+        subscription: {
+          id: subscriptionInternalId,
+          orgId,
+          localUserId: sessionLocalUserId,
+          saasSubscriptionStatus: 'Subscribed',
+          marketplaceSubscriptionId: 'ms-sub-1',
+          planId: 'business'
+        }
+      }),
+      setActivationStatus: jest.fn().mockResolvedValue(undefined),
+      updateOnboardingSession: jest.fn().mockResolvedValue(undefined)
+    };
+
+    const service = new MarketplaceService(
+      { send: jest.fn() } as never,
+      repository as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    return { service, repository };
+  };
+
+  it('rejects activation when the subscription is not account-linked to the caller', async () => {
+    const { service, repository } = buildService('someone-else');
+
+    await expect(service.activateSubscription({ sessionId, orgId, userId })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.setActivationStatus).not.toHaveBeenCalled();
+    expect(repository.updateOnboardingSession).not.toHaveBeenCalled();
   });
 });
