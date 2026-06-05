@@ -173,9 +173,19 @@ export class MarketplaceService extends BaseService {
         throw new BadRequestException('orgId is required when linking an existing organization');
       }
 
-      const existingSubscription = await this.marketplaceRepository.getSubscriptionByOrgId(message.payload.orgId);
-      if (existingSubscription && existingSubscription.id !== session.subscription.id) {
-        throw new ConflictException('Organization is already linked to another Marketplace subscription');
+      // A linked session lets a buyer attach this subscription (and its entitlements +
+      // setup-fee billing) to an org. Only the org owner may do that, otherwise any
+      // account-linked buyer could attach their subscription to an organization they do
+      // not own. Verified over NATS against the organization service (source of truth).
+      await this.assertUserOwnsOrganization(message.user.id, message.payload.orgId);
+
+      // Only a still-live subscription blocks re-linking. A cancelled (Unsubscribed) prior
+      // subscription must not block the cancel → re-subscribe → re-link the same org flow.
+      const activeSubscription = await this.marketplaceRepository.getActiveSubscriptionByOrgId(
+        message.payload.orgId
+      );
+      if (activeSubscription && activeSubscription.id !== session.subscription.id) {
+        throw new ConflictException('Organization is already linked to another active Marketplace subscription');
       }
 
       await this.marketplaceRepository.linkOrganization(session.subscription.id, message.payload.orgId);
@@ -344,6 +354,41 @@ export class MarketplaceService extends BaseService {
   async submitMetering(): Promise<object> {
     await this.meteringService.aggregateAndSubmitUsage();
     return { submitted: true };
+  }
+
+  // Authorize that `userId` is an owner of `orgId` before linking a subscription to it.
+  // Reuses the organization service's existing 'get-organization-owner' query (owner role)
+  // rather than reaching into org tables from this microservice.
+  private async assertUserOwnsOrganization(userId: string, orgId: string): Promise<void> {
+    let ownerOrg: { userOrgRoles?: { user?: { id?: string } }[] } | null = null;
+    try {
+      ownerOrg = await this.sendNatsMessage<{ userOrgRoles?: { user?: { id?: string } }[] }>(
+        this.organizationClient,
+        'get-organization-owner',
+        orgId
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Marketplace org-ownership check failed for org ${orgId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      throw new ForbiddenException({
+        code: 'marketplace_org_ownership_unverified',
+        message: 'Unable to verify your ownership of the selected organization.'
+      });
+    }
+
+    const isOwner =
+      Array.isArray(ownerOrg?.userOrgRoles) && ownerOrg.userOrgRoles.some((role) => role?.user?.id === userId);
+
+    if (!isOwner) {
+      this.logger.warn(`Marketplace link_existing blocked: user is not an owner of org ${orgId}`);
+      throw new ForbiddenException({
+        code: 'marketplace_org_ownership_required',
+        message: 'You can only link a Marketplace subscription to an organization you own.'
+      });
+    }
   }
 
   private async getValidSession(sessionId: string) {
