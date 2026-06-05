@@ -149,6 +149,13 @@ export class MarketplaceRepository {
     });
   }
 
+  async setSubscriptionPlanId(id: string, planId: string): Promise<void> {
+    await this.prisma.marketplace_subscription.update({
+      where: { id },
+      data: { planId, lastChangedDateTime: new Date() }
+    });
+  }
+
   async setSubscriptionStatus(id: string, status: MarketplaceSubscriptionStatus): Promise<void> {
     await this.prisma.marketplace_subscription.update({
       where: { id },
