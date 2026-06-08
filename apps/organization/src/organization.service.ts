@@ -901,7 +901,7 @@ export class OrganizationService {
       const valid =
         Boolean(invitation) &&
         invitation.status === Invitation.PENDING &&
-        invitation.email.toLowerCase() === email.toLowerCase();
+        invitation.email?.toLowerCase() === email.toLowerCase();
       return { valid };
     } catch (error) {
       this.logger.error(`error in verifyInvitationPending: ${JSON.stringify(error)}`);
