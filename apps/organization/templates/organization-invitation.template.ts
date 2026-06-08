@@ -30,6 +30,7 @@ export class OrganizationInviteTemplate {
     const safeEmail = escapeHtml(email);
     const safeOrgName = escapeHtml(orgName);
     const safeFirstName = escapeHtml(firstName);
+    const safeValidUrl = escapeHtml(validUrl);
     return `<!DOCTYPE html>
         <html lang="en">
         
@@ -62,12 +63,12 @@ export class OrganizationInviteTemplate {
                </p>
 
               <div style="text-align: center;">
-                  <a clicktracking=off href="${validUrl}"
+                  <a clicktracking=off href="${safeValidUrl}"
                       style="padding: 10px 20px 10px 20px;color: #fff;background: #1F4EAD;border-radius: 5px;text-decoration: none;">
                       
                      ${Button} 
                   </a>
-                  <p>Verification Link: <a clicktracking=off href="${validUrl}">${validUrl}</a></p>
+                  <p>Verification Link: <a clicktracking=off href="${safeValidUrl}">${safeValidUrl}</a></p>
               </div>
               <p>${secondMessage}</p>
               <hr style="border-top:1px solid #e8e8e8" />
