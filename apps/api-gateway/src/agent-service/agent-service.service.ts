@@ -46,6 +46,11 @@ export class AgentService extends BaseService {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'create-did', payload);
   }
 
+  async generateWebDid(createDidDto: CreateDidDto, orgId: string): Promise<object> {
+    const payload = { createDidDto, orgId };
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'generate-web-did', payload);
+  }
+
   async createWallet(createWalletDto: CreateWalletDto, user: user): Promise<IWalletRecord> {
     const payload = { createWalletDto, user };
     // NATS call

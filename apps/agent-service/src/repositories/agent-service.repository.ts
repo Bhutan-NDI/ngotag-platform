@@ -630,6 +630,7 @@ export class AgentServiceRepository {
     }
   }
 
+
   async deleteOrgAgentByOrg(orgId: string): Promise<{
     orgDid: Prisma.BatchPayload;
     agentInvitation: Prisma.BatchPayload;

@@ -887,6 +887,14 @@ export class AgentServiceService {
       }
 
       const { isPrimaryDid, ...payload } = createDidPayload;
+
+      // For did:web, verify the DID Document is correctly hosted before writing to the wallet or DB.
+      // The agent write call is still made once below; this pre-flight ensures the document is live
+      // and matches what the agent would produce, so we never store an unresolvable DID.
+      if (createDidPayload.method === DidMethod.WEB) {
+        await this.verifyWebDidHosting(agentDetails.agentEndPoint, createDidPayload, getApiKey);
+      }
+
       const didDetails = await this.getDidDetails(url, payload, getApiKey);
 
       // Normalize the DID/document once from the agent-controller response. Polygon only returns the
@@ -955,6 +963,60 @@ export class AgentServiceService {
       } else {
         throw new RpcException(error.response ? error.response : error);
       }
+    }
+  }
+
+  /**
+   * Generate a did:web DID Document without writing it to the platform DB.
+   * Calls the agent write endpoint (wallet state is set) and returns the result
+   * so the caller can host the document before calling createDid.
+   */
+  async generateWebDid(createDidPayload: IDidCreate, orgId: string): Promise<object> {
+    try {
+      const agentDetails = await this.agentServiceRepository.getOrgAgentDetails(orgId);
+      const getApiKey = await this.getOrgAgentApiKey(orgId);
+      const url = this.constructUrl(agentDetails);
+      const didDetails = await this.getDidDetails(url, createDidPayload, getApiKey);
+      return {
+        did: didDetails?.['did'],
+        didDocument: didDetails?.['didDocument']
+      };
+    } catch (error) {
+      this.logger.error(`error in generateWebDid: ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  /**
+   * Verify that the DID Document for a did:web is correctly hosted at its
+   * resolution URL before the DID is committed to the platform DB.
+   */
+  private async verifyWebDidHosting(agentEndPoint: string, createDidPayload: IDidCreate, apiKey: string): Promise<void> {
+    const domain = createDidPayload.domain;
+    const resolutionUrl = `https://${domain}/.well-known/did.json`;
+
+    let hostedDoc: object;
+    try {
+      hostedDoc = await this.commonService.httpGet(resolutionUrl);
+    } catch {
+      throw new BadRequestException(
+        `DID Document not reachable at ${resolutionUrl}. Host the document before creating the DID.`
+      );
+    }
+
+    if (!hostedDoc) {
+      throw new BadRequestException(
+        `No DID Document found at ${resolutionUrl}.`
+      );
+    }
+
+    // Get the expected DID Document from the agent (same call as create, wallet write is idempotent)
+    const url = `${agentEndPoint}${CommonConstants.URL_AGENT_WRITE_DID}`;
+    const expectedDetails = await this.getDidDetails(url, createDidPayload, apiKey);
+    const expectedDoc = expectedDetails?.['didDocument'];
+
+    if (JSON.stringify(expectedDoc) !== JSON.stringify(hostedDoc)) {
+      throw new BadRequestException(ResponseMessages.agent.error.webDidDocumentMismatch);
     }
   }
 
