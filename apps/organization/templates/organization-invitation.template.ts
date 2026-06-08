@@ -6,9 +6,17 @@ export class OrganizationInviteTemplate {
     orgName: string,
     orgRolesDetails: object[],
     firstName: string,
-    isUserExist: boolean
+    isUserExist: boolean,
+    invitationId?: string
   ): string {
-    const validUrl = isUserExist ? `${process.env.FRONT_END_URL}/sign-in` : `${process.env.FRONT_END_URL}/sign-up`;
+    let validUrl: string;
+    if (isUserExist) {
+      validUrl = `${process.env.FRONT_END_URL}/sign-in`;
+    } else if (invitationId) {
+      validUrl = `${process.env.FRONT_END_URL}/sign-up?invitationId=${encodeURIComponent(invitationId)}&email=${encodeURIComponent(email)}`;
+    } else {
+      validUrl = `${process.env.FRONT_END_URL}/sign-up`;
+    }
 
     const message = isUserExist
       ? `Please accept the invitation using the following link:`
