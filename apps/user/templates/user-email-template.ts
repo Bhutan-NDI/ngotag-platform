@@ -5,7 +5,8 @@ export class URLUserEmailTemplate {
     brandLogoUrl: string,
     platformName: string,
     redirectTo?: string,
-    clientAlias?: string
+    clientAlias?: string,
+    invitationId?: string
   ): string {
     const baseDomain = `${process.env.FRONT_END_URL}`;
     const apiUrl = new URL('/verify-email-success', baseDomain);
@@ -19,6 +20,10 @@ export class URLUserEmailTemplate {
 
     if (clientAlias) {
       apiUrl.searchParams.append('clientAlias', clientAlias);
+    }
+
+    if (invitationId) {
+      apiUrl.searchParams.append('invitationId', invitationId);
     }
 
     const validUrl = apiUrl.href;
