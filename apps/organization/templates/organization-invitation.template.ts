@@ -11,7 +11,7 @@ export class OrganizationInviteTemplate {
   ): string {
     let validUrl: string;
     if (isUserExist) {
-      validUrl = `${process.env.FRONT_END_URL}/sign-in`;
+      validUrl = `${process.env.FRONT_END_URL}/sign-in?redirectTo=${encodeURIComponent('/invitations')}`;
     } else if (invitationId) {
       validUrl = `${process.env.FRONT_END_URL}/sign-up?invitationId=${encodeURIComponent(invitationId)}&email=${encodeURIComponent(email)}`;
     } else {
@@ -23,7 +23,7 @@ export class OrganizationInviteTemplate {
       : `To get started, kindly register on ${process.env.PLATFORM_NAME} platform using this link:`;
 
     const secondMessage = isUserExist
-      ? `After successful login into ${process.env.PLATFORM_NAME} click on "Accept Organization Invitation" link on your dashboard.`
+      ? `After logging in you will be taken directly to your invitations page to accept.`
       : `After successful registration, you can log in to the platform and click on “Accept Organization Invitation” on your dashboard.`;
 
     const Button = isUserExist ? `Accept Organization Invitation` : `Register on ${process.env.PLATFORM_NAME}`;
