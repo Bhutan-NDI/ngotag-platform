@@ -895,6 +895,20 @@ export class OrganizationService {
    * @param email
    * @returns
    */
+  async verifyInvitationPending(invitationId: string, email: string): Promise<{ valid: boolean }> {
+    try {
+      const invitation = await this.organizationRepository.getInvitationById(invitationId);
+      const valid =
+        Boolean(invitation) &&
+        invitation.status === Invitation.PENDING &&
+        invitation.email.toLowerCase() === email.toLowerCase();
+      return { valid };
+    } catch (error) {
+      this.logger.error(`error in verifyInvitationPending: ${JSON.stringify(error)}`);
+      return { valid: false };
+    }
+  }
+
   async checkInvitationExist(email: string, orgId: string): Promise<boolean> {
     try {
       const query = {

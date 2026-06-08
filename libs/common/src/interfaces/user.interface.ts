@@ -21,6 +21,7 @@ export interface ISendVerificationEmail {
   platformName?: string;
   redirectTo?: string;
   clientAlias?: string;
+  invitationId?: string;
 }
 
 export interface IClientDetailsSSO {
@@ -79,4 +80,5 @@ export interface IVerificationEmail {
   platformName: string;
   redirectTo?: string;
   clientAlias?: string;
+  invitationId?: string;
 }

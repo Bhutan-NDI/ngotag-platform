@@ -115,7 +115,7 @@ export class UserService {
 
   async sendVerificationMail(userEmailVerification: ISendVerificationEmail): Promise<user> {
     try {
-      const { email, brandLogoUrl, platformName, clientAlias, redirectTo } = userEmailVerification;
+      const { email, brandLogoUrl, platformName, clientAlias, redirectTo, invitationId } = userEmailVerification;
 
       if ('PROD' === process.env.PLATFORM_PROFILE_MODE) {
         // eslint-disable-next-line prefer-destructuring
@@ -167,7 +167,8 @@ export class UserService {
           // ?token=) so it survives the email round-trip; otherwise fall back to the
           // client's configured domain (the previous, default behavior).
           redirectTo: redirectTo ?? clientDetails.domain,
-          clientAlias
+          clientAlias,
+          invitationId
         });
       } catch (error) {
         throw new InternalServerErrorException(ResponseMessages.user.error.emailSend);
@@ -219,7 +220,7 @@ export class UserService {
 
   async sendEmailForVerification(verificationEmailParameter: IVerificationEmail): Promise<boolean> {
     try {
-      const { email, verificationCode, brandLogoUrl, platformName, redirectTo, clientAlias } =
+      const { email, verificationCode, brandLogoUrl, platformName, redirectTo, clientAlias, invitationId } =
         verificationEmailParameter;
       const platformConfigData = await this.prisma.platform_config.findMany();
 
@@ -236,7 +237,8 @@ export class UserService {
         brandLogoUrl,
         platformName,
         redirectTo,
-        clientAlias
+        clientAlias,
+        invitationId
       );
       const isEmailSent = await this.emailService.sendEmail(emailData);
       if (isEmailSent) {

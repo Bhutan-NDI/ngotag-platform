@@ -181,6 +181,11 @@ export class OrganizationService extends BaseService {
     return this.natsClient.sendNatsMessage(this.serviceProxy, 'send-invitation', payload);
   }
 
+  async verifyInvitationPending(invitationId: string, email: string): Promise<{ valid: boolean }> {
+    const payload = { invitationId, email };
+    return this.natsClient.sendNatsMessage(this.serviceProxy, 'verify-invitation-pending', payload);
+  }
+
   async registerOrgsMapUsers(): Promise<string> {
     const payload = {};
     return this.natsClient.sendNatsMessage(this.serviceProxy, 'register-orgs-users-map', payload);

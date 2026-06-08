@@ -49,4 +49,12 @@ export class UserEmailVerificationDto {
   @IsString({ message: 'redirectTo should be string' })
   @Matches(/^\/(?!\/)/, { message: 'redirectTo must be a relative path beginning with /' })
   redirectTo?: string;
+
+  @ApiPropertyOptional({ example: '3fa85f64-5717-4562-b3fc-2c963f66afa6' })
+  @IsOptional()
+  @IsString({ message: 'invitationId should be string' })
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, {
+    message: 'invitationId must be a valid UUID'
+  })
+  invitationId?: string;
 }

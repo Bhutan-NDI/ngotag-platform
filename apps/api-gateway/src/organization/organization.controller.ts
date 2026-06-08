@@ -255,6 +255,32 @@ export class OrganizationController {
     return res.status(HttpStatus.OK).json(finalResponse);
   }
   /**
+   * Check whether an org invitation is still pending and matches the given email.
+   * Public — no auth required; called by the sign-up page before showing the form.
+   */
+  @Get('/invitations/verify-pending')
+  @ApiOperation({
+    summary: 'Verify a pending invitation',
+    description:
+      'Returns whether the invitation exists, is pending, and matches the given email. No authentication required.'
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  @ApiQuery({ name: 'invitationId', type: String, required: true })
+  @ApiQuery({ name: 'email', type: String, required: true })
+  async verifyInvitationPending(
+    @Query('invitationId') invitationId: string,
+    @Query('email') email: string,
+    @Res() res: Response
+  ): Promise<Response> {
+    const result = await this.organizationService.verifyInvitationPending(invitationId, email);
+    return res.status(HttpStatus.OK).json({
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.organisation.success.getInvitation,
+      data: result
+    });
+  }
+
+  /**
    * Get all invitations
    * @param orgId The ID of the organization
    * @returns List of all invitations
