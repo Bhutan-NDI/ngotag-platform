@@ -892,7 +892,7 @@ export class AgentServiceService {
       // The agent write call is still made once below; this pre-flight ensures the document is live
       // and matches what the agent would produce, so we never store an unresolvable DID.
       if (createDidPayload.method === DidMethod.WEB) {
-        await this.verifyWebDidHosting(agentDetails.agentEndPoint, createDidPayload, getApiKey);
+        await this.verifyWebDidHosting(agentDetails.agentEndPoint, payload, getApiKey);
       }
 
       const didDetails = await this.getDidDetails(url, payload, getApiKey);
