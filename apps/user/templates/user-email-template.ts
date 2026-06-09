@@ -12,7 +12,7 @@ export class URLUserEmailTemplate {
     const apiUrl = new URL('/verify-email-success', baseDomain);
 
     apiUrl.searchParams.append('verificationCode', verificationCode);
-    apiUrl.searchParams.append('email', encodeURIComponent(email));
+    apiUrl.searchParams.append('email', email);
 
     if (redirectTo) {
       apiUrl.searchParams.append('redirectTo', redirectTo);
