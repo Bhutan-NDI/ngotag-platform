@@ -55,6 +55,7 @@ import { User } from './decorators/user.decorator';
 import { user } from '@prisma/client';
 import * as useragent from 'express-useragent';
 import { EmptyStringParamPipe, TrimStringParamPipe } from '@credebl/common/cast.helper';
+import { OrganizationService } from '../organization/organization.service';
 
 @Controller('auth')
 @ApiTags('auth')
@@ -64,7 +65,8 @@ export class AuthzController {
 
   constructor(
     private readonly authzService: AuthzService,
-    private readonly commonService: CommonService
+    private readonly commonService: CommonService,
+    private readonly organizationService: OrganizationService
   ) {}
 
   /**
@@ -135,6 +137,21 @@ export class AuthzController {
     @Res() res: Response
   ): Promise<Response> {
     userEmailVerification.clientAlias = clientAlias ?? (await getDefaultClient()).alias;
+
+    if (userEmailVerification.invitationId) {
+      try {
+        const { valid } = await this.organizationService.verifyInvitationPending(
+          userEmailVerification.invitationId,
+          userEmailVerification.email
+        );
+        if (!valid) {
+          userEmailVerification.invitationId = undefined;
+        }
+      } catch {
+        userEmailVerification.invitationId = undefined;
+      }
+    }
+
     await this.authzService.sendVerificationMail(userEmailVerification);
     const finalResponse: IResponseType = {
       statusCode: HttpStatus.CREATED,

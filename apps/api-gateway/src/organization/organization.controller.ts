@@ -56,6 +56,7 @@ import { GetAllOrganizationsDto } from './dtos/get-organizations.dto';
 import { PrimaryDid } from './dtos/set-primary-did.dto';
 import { TrimStringParamPipe } from '@credebl/common/cast.helper';
 import { ClientTokenDto } from './dtos/client-token.dto';
+import { VerifyInvitationPendingQueryDto } from './dtos/verify-invitation-pending-query.dto';
 import { EcosystemRolesGuard } from '../authz/guards/ecosystem-roles.guard';
 import { TrustServiceRoleGuard } from '../authz/guards/trust-service-role.guard';
 
@@ -265,14 +266,14 @@ export class OrganizationController {
       'Returns whether the invitation exists, is pending, and matches the given email. No authentication required.'
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
-  @ApiQuery({ name: 'invitationId', type: String, required: true })
-  @ApiQuery({ name: 'email', type: String, required: true })
+  @ApiQuery({ name: 'invitationId', type: String, required: true, description: 'UUID of the invitation' })
+  @ApiQuery({ name: 'email', type: String, required: true, description: 'Email address of the invitee' })
   async verifyInvitationPending(
-    @Query('invitationId') invitationId: string,
-    @Query('email') email: string,
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    query: VerifyInvitationPendingQueryDto,
     @Res() res: Response
   ): Promise<Response> {
-    const result = await this.organizationService.verifyInvitationPending(invitationId, email);
+    const result = await this.organizationService.verifyInvitationPending(query.invitationId, query.email);
     return res.status(HttpStatus.OK).json({
       statusCode: HttpStatus.OK,
       message: ResponseMessages.organisation.success.getInvitation,
