@@ -1026,7 +1026,12 @@ export class AgentServiceService {
   }
 
   private async getDidDetails(url, payload, apiKey): Promise<object> {
-    const didDetails = await this.commonService.httpPost(url, payload, {
+    // Strip empty-string and null values so the agent controller does not
+    // reject them as invalid values for optional fields.
+    const cleanPayload = Object.fromEntries(
+      Object.entries(payload).filter(([, v]) => v !== '' && v !== null && v !== undefined)
+    );
+    const didDetails = await this.commonService.httpPost(url, cleanPayload, {
       headers: { authorization: apiKey }
     });
 
