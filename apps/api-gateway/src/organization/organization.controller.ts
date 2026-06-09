@@ -266,11 +266,8 @@ export class OrganizationController {
       'Returns whether the invitation exists, is pending, and matches the given email. No authentication required.'
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
-  @ApiQuery({ name: 'invitationId', type: String, required: true, description: 'UUID of the invitation' })
-  @ApiQuery({ name: 'email', type: String, required: true, description: 'Email address of the invitee' })
   async verifyInvitationPending(
-    @Query(new ValidationPipe({ transform: true, whitelist: true }))
-    query: VerifyInvitationPendingQueryDto,
+    @Query() query: VerifyInvitationPendingQueryDto,
     @Res() res: Response
   ): Promise<Response> {
     const result = await this.organizationService.verifyInvitationPending(query.invitationId, query.email);
