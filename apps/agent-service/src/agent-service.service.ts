@@ -976,7 +976,8 @@ export class AgentServiceService {
       const agentDetails = await this.agentServiceRepository.getOrgAgentDetails(orgId);
       const getApiKey = await this.getOrgAgentApiKey(orgId);
       const url = this.constructUrl(agentDetails);
-      const didDetails = await this.getDidDetails(url, createDidPayload, getApiKey);
+      const { isPrimaryDid: _isPrimaryDid, ...payload } = createDidPayload;
+      const didDetails = await this.getDidDetails(url, payload, getApiKey);
       return {
         did: didDetails?.['did'],
         didDocument: didDetails?.['didDocument']
