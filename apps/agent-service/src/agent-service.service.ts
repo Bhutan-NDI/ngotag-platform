@@ -974,6 +974,16 @@ export class AgentServiceService {
   async generateWebDid(createDidPayload: IDidCreate, orgId: string): Promise<object> {
     try {
       const agentDetails = await this.agentServiceRepository.getOrgAgentDetails(orgId);
+
+      // Block generate if a did:web DID for this domain is already committed to the platform DB.
+      // The agent wallet write is idempotent, but regenerating with a different seed would overwrite
+      // the wallet key and silently break the existing DID's signing capability.
+      const expectedDid = `did:${DidMethod.WEB}:${createDidPayload.domain}`;
+      const existingDids = await this.agentServiceRepository.getOrgDid(orgId);
+      if (existingDids.some((d) => d.did === expectedDid)) {
+        throw new BadRequestException(ResponseMessages.agent.error.webDidDomainAlreadyExists);
+      }
+
       const getApiKey = await this.getOrgAgentApiKey(orgId);
       const url = this.constructUrl(agentDetails);
       const { isPrimaryDid: _isPrimaryDid, ...payload } = createDidPayload;

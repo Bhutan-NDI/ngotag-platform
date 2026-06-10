@@ -414,6 +414,7 @@ export const ResponseMessages = {
       requiredTenantId: 'Tenant Id is required',
       createDid: 'Error while creating DID',
       webDidDocumentMismatch: 'Hosted DID Document does not match the generated DID Document. Ensure you host the exact document returned by the generate endpoint.',
+      webDidDomainAlreadyExists: 'A did:web DID for this domain already exists for this organization.',
       networkMismatch: 'The network is mismatched.',
       didAlreadyExist: 'DID already exist',
       storeDid: 'Error while storing DID',
