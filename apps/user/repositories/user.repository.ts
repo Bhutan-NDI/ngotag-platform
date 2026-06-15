@@ -75,7 +75,11 @@ export class UserRepository {
    * @param userEmailVerification
    * @returns user's email
    */
-  async createUser(userEmailVerification: ISendVerificationEmail, verifyCode: string): Promise<user> {
+  async createUser(
+    userEmailVerification: ISendVerificationEmail,
+    verifyCode: string,
+    isEmailVerified = false
+  ): Promise<user> {
     try {
       const saveResponse = await this.prisma.user.upsert({
         where: {
@@ -87,7 +91,10 @@ export class UserRepository {
           verificationCode: verifyCode.toString(),
           clientId: userEmailVerification.clientId,
           clientSecret: userEmailVerification.clientSecret,
-          publicProfile: true
+          publicProfile: true,
+          // Invited users prove email ownership via their invitation link, so they are
+          // created already verified in a single write (no separate verifyUser call).
+          isEmailVerified
         },
         update: {
           verificationCode: verifyCode.toString()

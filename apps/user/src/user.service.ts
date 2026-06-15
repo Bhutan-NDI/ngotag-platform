@@ -143,6 +143,22 @@ export class UserService {
       if (process.env.ADMIN_CLIENT_ALIAS === clientAlias) {
         throw new ForbiddenException(ResponseMessages.user.error.adminAlias);
       }
+
+      // Invited users arrive via an invitation link delivered to their inbox, which already
+      // proves they control this email (the gateway has validated the invitation is pending
+      // and belongs to it before forwarding the id). Create the account already verified and
+      // skip the redundant verification-code email.
+      if (invitationId) {
+        userEmailVerification.username = await this.createUsername(email, verifyCode);
+        userEmailVerification.clientId = clientDetails.clientId;
+        userEmailVerification.clientSecret = clientDetails.clientSecret;
+        // Single atomic write: create the account already verified. Avoids the
+        // create-then-verify window where a failed second write would leave an
+        // unverified account the user can no longer retry past.
+        const resUser = await this.userRepository.createUser(userEmailVerification, verifyCode, true);
+        return resUser;
+      }
+
       try {
         const token = await this.clientRegistrationService.getManagementToken(
           clientDetails.clientId,
