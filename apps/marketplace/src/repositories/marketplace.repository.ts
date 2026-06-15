@@ -213,6 +213,24 @@ export class MarketplaceRepository {
     });
   }
 
+  async getMeteringTotalsByDimension(
+    orgId: string
+  ): Promise<{ dimension: string; status: MarketplaceUsageStatus; quantity: number }[]> {
+    const events = await this.prisma.marketplace_usage_event.groupBy({
+      by: ['dimension', 'status'],
+      where: { orgId },
+      _sum: { quantity: true }
+    });
+
+    return events.map(
+      (event: { dimension: string; status: MarketplaceUsageStatus; _sum: { quantity: number | null } }) => ({
+        dimension: event.dimension,
+        status: event.status,
+        quantity: Number(event._sum.quantity || 0)
+      })
+    );
+  }
+
   async recordBillingUsageEvent(
     payload: MarketplaceUsageEventPayload,
     marketplaceSubscriptionId?: string
