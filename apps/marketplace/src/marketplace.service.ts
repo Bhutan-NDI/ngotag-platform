@@ -334,14 +334,35 @@ export class MarketplaceService extends BaseService {
 
   async getUsageSummary(message: { orgId: string; period?: string }): Promise<object> {
     const entitlements = await this.entitlementService.getEntitlements(message.orgId);
+
+    // Derive the metering-submission counters per dimension from marketplace_usage_event
+    // (the aggregated overage that is/was submitted to Microsoft) instead of hardcoding 0.
+    //  - pendingSubmission: overage awaiting or retrying submission ('pending' + 'failed',
+    //    which the metering cron re-picks up on its next run).
+    //  - acceptedByMicrosoft: overage Microsoft has billed ('accepted' + 'duplicate', which MS
+    //    treats as already-recorded).
+    // 'expired' rows (missed the 24h submission window) are terminal and counted in neither.
+    // NOTE: these stay 0 for a dimension until usage exceeds the plan's included quota — only
+    // overage is ever metered/submitted. They are not a per-transaction counter (that is `used`).
+    const meteringTotals = await this.marketplaceRepository.getMeteringTotalsByDimension(message.orgId);
+    const pendingByDimension: Record<string, number> = {};
+    const acceptedByDimension: Record<string, number> = {};
+    for (const total of meteringTotals) {
+      if ('pending' === total.status || 'failed' === total.status) {
+        pendingByDimension[total.dimension] = (pendingByDimension[total.dimension] || 0) + total.quantity;
+      } else if ('accepted' === total.status || 'duplicate' === total.status) {
+        acceptedByDimension[total.dimension] = (acceptedByDimension[total.dimension] || 0) + total.quantity;
+      }
+    }
+
     const dimensions = Object.entries(entitlements.usage).map(([dimension, usage]) => ({
       dimension,
       displayName: this.displayNameForDimension(dimension),
       included: usage.included,
       used: usage.used,
       overage: usage.overage,
-      pendingSubmission: 0,
-      acceptedByMicrosoft: 0
+      pendingSubmission: pendingByDimension[dimension] || 0,
+      acceptedByMicrosoft: acceptedByDimension[dimension] || 0
     }));
 
     return {
