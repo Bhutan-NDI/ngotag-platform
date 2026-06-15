@@ -152,10 +152,13 @@ export class AuthzController {
       }
     }
 
-    await this.authzService.sendVerificationMail(userEmailVerification);
+    const createdUser = await this.authzService.sendVerificationMail(userEmailVerification);
     const finalResponse: IResponseType = {
       statusCode: HttpStatus.CREATED,
-      message: ResponseMessages.user.success.sendVerificationCode
+      message: ResponseMessages.user.success.sendVerificationCode,
+      // Tell the client whether the account was already verified (invited users are verified
+      // via their invitation link) so the sign-up UI can skip the "check your inbox" step.
+      data: { isEmailVerified: Boolean(createdUser?.isEmailVerified) }
     };
     return res.status(HttpStatus.CREATED).json(finalResponse);
   }
