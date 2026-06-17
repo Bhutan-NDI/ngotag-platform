@@ -55,6 +55,10 @@ on:
         description: 'Build utility'
         type: boolean
         default: false
+      marketplace:
+        description: 'Build marketplace'
+        type: boolean
+        default: false
       build_all:
         description: 'Build all prod services'
         type: boolean
@@ -86,7 +90,7 @@ jobs:
       - name: Build service list
         id: set-matrix
         run: |
-          ALL_SERVICES="utility notification ledger agent-provisioning user organization agent-service connection ecosystem issuance verification webhook api-gateway"
+          ALL_SERVICES="utility notification ledger agent-provisioning user organization agent-service connection ecosystem issuance verification webhook api-gateway marketplace"
 
           if [ "${{ github.event.inputs.build_all }}" = "true" ]; then
             SERVICES="$ALL_SERVICES"
@@ -105,6 +109,7 @@ jobs:
             [ "${{ github.event.inputs.notification }}" = "true" ] && SERVICES="$SERVICES notification"
             [ "${{ github.event.inputs.ledger }}" = "true" ] && SERVICES="$SERVICES ledger"
             [ "${{ github.event.inputs.utility }}" = "true" ] && SERVICES="$SERVICES utility"
+            [ "${{ github.event.inputs.marketplace }}" = "true" ] && SERVICES="$SERVICES marketplace"
           fi
 
           SERVICES=$(echo "$SERVICES" | xargs)
@@ -193,11 +198,12 @@ jobs:
 
           for svc in $BUILT_SERVICES; do
             echo "Updating prod image tag for: $svc"
+            IMAGE_POLICY_MARKER='# {"$imagepolicy": "flux-system:phenix-platform-'"$svc"':tag"}'
             sed -i "s|^  # - \.\./base/phenix-platform/${svc}\$|  - ../base/phenix-platform/${svc}|" kustomization.yaml
             if grep -q "phenix-platform-$svc" kustomization.yaml; then
-              sed -i "/phenix-platform-$svc/,/newTag:/s/newTag: .*/newTag: $SHORT_SHA/" kustomization.yaml
+              sed -i "/phenix-platform-$svc/,/newTag:/s|newTag: .*|newTag: $SHORT_SHA $IMAGE_POLICY_MARKER|" kustomization.yaml
             else
-              sed -i "/^patches:/i\\  - name: phenixdevacr.azurecr.io/phenix-platform-$svc\\n    newName: ${{ env.ACR_SERVER }}/phenix-platform-$svc\\n    newTag: $SHORT_SHA" kustomization.yaml
+              sed -i "/^patches:/i\\  - name: phenixdevacr.azurecr.io/phenix-platform-$svc\\n    newName: ${{ env.ACR_SERVER }}/phenix-platform-$svc\\n    newTag: $SHORT_SHA $IMAGE_POLICY_MARKER" kustomization.yaml
             fi
           done
 
