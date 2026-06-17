@@ -199,11 +199,14 @@ jobs:
           for svc in $BUILT_SERVICES; do
             echo "Updating prod image tag for: $svc"
             IMAGE_POLICY_MARKER='# {"$imagepolicy": "flux-system:phenix-platform-'"$svc"':tag"}'
+            if [ "$svc" = "marketplace" ]; then
+              IMAGE_POLICY_MARKER=""
+            fi
             sed -i "s|^  # - \.\./base/phenix-platform/${svc}\$|  - ../base/phenix-platform/${svc}|" kustomization.yaml
             if grep -q "phenix-platform-$svc" kustomization.yaml; then
-              sed -i "/phenix-platform-$svc/,/newTag:/s|newTag: .*|newTag: $SHORT_SHA $IMAGE_POLICY_MARKER|" kustomization.yaml
+              sed -i "/phenix-platform-$svc/,/newTag:/s|newTag: .*|newTag: $SHORT_SHA${IMAGE_POLICY_MARKER:+ $IMAGE_POLICY_MARKER}|" kustomization.yaml
             else
-              sed -i "/^patches:/i\\  - name: phenixdevacr.azurecr.io/phenix-platform-$svc\\n    newName: ${{ env.ACR_SERVER }}/phenix-platform-$svc\\n    newTag: $SHORT_SHA $IMAGE_POLICY_MARKER" kustomization.yaml
+              sed -i "/^patches:/i\\  - name: phenixdevacr.azurecr.io/phenix-platform-$svc\\n    newName: ${{ env.ACR_SERVER }}/phenix-platform-$svc\\n    newTag: $SHORT_SHA${IMAGE_POLICY_MARKER:+ $IMAGE_POLICY_MARKER}" kustomization.yaml
             fi
           done
 
