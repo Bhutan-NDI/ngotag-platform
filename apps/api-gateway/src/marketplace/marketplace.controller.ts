@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Headers, HttpStatus, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { OrgRoles } from 'libs/org-roles/enums';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { Response } from 'express';
@@ -123,6 +124,25 @@ export class MarketplaceController {
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()
   async getEntitlements(@Param('orgId') orgId: string, @User() reqUser: user, @Res() res: Response): Promise<Response> {
+    if (this.isPlatformAdmin(reqUser)) {
+      const data = {
+        orgId,
+        features: {
+          schemaCreate: true,
+          credentialDefinitionCreate: true,
+          issuance: true,
+          bulkIssuance: true,
+          verification: true,
+          apiAccess: true
+        },
+        limits: {},
+        usage: {},
+        blockedReason: null
+      };
+      const finalResponse: IResponse = { statusCode: HttpStatus.OK, message: 'Success', data };
+      return res.status(HttpStatus.OK).json(finalResponse);
+    }
+
     const data = await this.marketplaceService.getEntitlements(orgId, reqUser.id);
     const finalResponse: IResponse = { statusCode: HttpStatus.OK, message: 'Success', data };
     return res.status(HttpStatus.OK).json(finalResponse);
@@ -153,5 +173,17 @@ export class MarketplaceController {
     const data = await this.marketplaceService.getMeteringEvents(orgId, reqUser.id);
     const finalResponse: IResponse = { statusCode: HttpStatus.OK, message: 'Success', data };
     return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  private isPlatformAdmin(user: user & { userOrgRoles?: { orgRole?: { name?: string } }[] }): boolean {
+    const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL;
+    if (platformAdminEmail && user?.email === platformAdminEmail) {
+      return true;
+    }
+
+    return Boolean(
+      Array.isArray(user?.userOrgRoles) &&
+      user.userOrgRoles.some((orgDetails) => orgDetails?.orgRole?.name === OrgRoles.PLATFORM_ADMIN)
+    );
   }
 }
