@@ -86,6 +86,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       has_changes: ${{ steps.set-matrix.outputs.has_changes }}
+      release_tag: ${{ steps.set-matrix.outputs.release_tag }}
     steps:
       - name: Build service list
         id: set-matrix
@@ -121,8 +122,10 @@ jobs:
           fi
 
           JSON_ARRAY=$(echo "$SERVICES" | tr ' ' '\n' | jq -R . | jq -s -c .)
+          RELEASE_TAG="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::8}"
           echo "matrix={\"service\":$JSON_ARRAY}" >> "$GITHUB_OUTPUT"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
   build:
     needs: select-services
@@ -154,7 +157,9 @@ jobs:
 
       - name: Set image tag
         id: tag
-        run: echo "sha=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "sha=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${{ needs.select-services.outputs.release_tag }}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -165,6 +170,7 @@ jobs:
           tags: |
             ${{ env.ACR_SERVER }}/phenix-platform-${{ matrix.service }}:latest
             ${{ env.ACR_SERVER }}/phenix-platform-${{ matrix.service }}:${{ steps.tag.outputs.sha }}
+            ${{ env.ACR_SERVER }}/phenix-platform-${{ matrix.service }}:${{ steps.tag.outputs.release_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -190,7 +196,7 @@ jobs:
 
       - name: Update prod image tags
         run: |
-          SHORT_SHA=${GITHUB_SHA::8}
+          RELEASE_TAG='${{ needs.select-services.outputs.release_tag }}'
           SERVICES='${{ needs.select-services.outputs.matrix }}'
 
           cd manifests/apps/${{ env.MANIFEST_ENV }}
@@ -199,14 +205,11 @@ jobs:
           for svc in $BUILT_SERVICES; do
             echo "Updating prod image tag for: $svc"
             IMAGE_POLICY_MARKER='# {"$imagepolicy": "flux-system:phenix-platform-'"$svc"':tag"}'
-            if [ "$svc" = "marketplace" ]; then
-              IMAGE_POLICY_MARKER=""
-            fi
             sed -i "s|^  # - \.\./base/phenix-platform/${svc}\$|  - ../base/phenix-platform/${svc}|" kustomization.yaml
             if grep -q "phenix-platform-$svc" kustomization.yaml; then
-              sed -i "/phenix-platform-$svc/,/newTag:/s|newTag: .*|newTag: $SHORT_SHA${IMAGE_POLICY_MARKER:+ $IMAGE_POLICY_MARKER}|" kustomization.yaml
+              sed -i "/phenix-platform-$svc/,/newTag:/s|newTag: .*|newTag: $RELEASE_TAG${IMAGE_POLICY_MARKER:+ $IMAGE_POLICY_MARKER}|" kustomization.yaml
             else
-              sed -i "/^patches:/i\\  - name: phenixdevacr.azurecr.io/phenix-platform-$svc\\n    newName: ${{ env.ACR_SERVER }}/phenix-platform-$svc\\n    newTag: $SHORT_SHA${IMAGE_POLICY_MARKER:+ $IMAGE_POLICY_MARKER}" kustomization.yaml
+              sed -i "/^patches:/i\\  - name: ${{ env.ACR_SERVER }}/phenix-platform-$svc\\n    newName: ${{ env.ACR_SERVER }}/phenix-platform-$svc\\n    newTag: $RELEASE_TAG${IMAGE_POLICY_MARKER:+ $IMAGE_POLICY_MARKER}" kustomization.yaml
             fi
           done
 
@@ -220,7 +223,7 @@ jobs:
           git config user.email "phenix-ci[bot]@users.noreply.github.com"
           git add -A
           if ! git diff --staged --quiet; then
-            git commit -m "[prod] Update phenix-platform ($BUILT_SERVICES) to ${GITHUB_SHA::8}"
+            git commit -m "[prod] Update phenix-platform ($BUILT_SERVICES) to ${{ needs.select-services.outputs.release_tag }}"
             git push
           else
             echo "No changes to commit"
