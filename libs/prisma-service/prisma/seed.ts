@@ -767,15 +767,12 @@ export async function getKeycloakToken(): Promise<string> {
 
 export async function createKeycloakUser(): Promise<void> {
   logger.log(`✅ Creating keycloak user for platform admin`);
-  const { platformAdminData } = JSON.parse(configData);
-  if (!platformAdminData?.password) {
-    throw new Error('platformAdminData password is missing from credebl-master-table.json');
-  }
   if (!cachedConfig) {
     throw new Error('failed to load platform config data from db');
   }
 
-  const { KEYCLOAK_DOMAIN, KEYCLOAK_REALM, ADMIN_KEYCLOAK_ID, ADMIN_KEYCLOAK_SECRET, CRYPTO_PRIVATE_KEY } = process.env;
+  const { KEYCLOAK_DOMAIN, KEYCLOAK_REALM, ADMIN_KEYCLOAK_ID, ADMIN_KEYCLOAK_SECRET, PLATFORM_ADMIN_PASSWORD } =
+    process.env;
 
   if (!KEYCLOAK_DOMAIN) {
     throw new Error('Missing environment variable: KEYCLOAK_DOMAIN');
@@ -793,18 +790,17 @@ export async function createKeycloakUser(): Promise<void> {
     throw new Error('Missing environment variable: ADMIN_KEYCLOAK_SECRET');
   }
 
-  if (!CRYPTO_PRIVATE_KEY) {
-    throw new Error('Missing environment variable: CRYPTO_PRIVATE_KEY');
+  if (!PLATFORM_ADMIN_PASSWORD) {
+    throw new Error('Missing environment variable: PLATFORM_ADMIN_PASSWORD');
   }
 
-  const decryptedPassword = CryptoJS.AES.decrypt(platformAdminData.password, CRYPTO_PRIVATE_KEY);
   const token = await getKeycloakToken();
   const user = {
     username: cachedConfig.platformEmail,
     email: cachedConfig.platformEmail,
     firstName: cachedConfig.platformName,
     lastName: cachedConfig.platformName,
-    password: decryptedPassword.toString(CryptoJS.enc.Utf8)
+    password: PLATFORM_ADMIN_PASSWORD
   };
   const res = await fetch(`${KEYCLOAK_DOMAIN}admin/realms/${KEYCLOAK_REALM}/users`, {
     method: 'POST',
