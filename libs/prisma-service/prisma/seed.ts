@@ -169,6 +169,10 @@ const createPlatformUser = async (): Promise<void> => {
     const { platformAdminData } = JSON.parse(configData);
     platformAdminData.email = process.env.PLATFORM_ADMIN_EMAIL;
     platformAdminData.username = process.env.PLATFORM_ADMIN_EMAIL;
+    platformAdminData.password = CryptoJS.AES.encrypt(
+      process.env.PLATFORM_ADMIN_PASSWORD,
+      process.env.CRYPTO_PRIVATE_KEY
+    ).toString();
 
     const existPlatformAdminUser = await prisma.user.findMany({
       where: {
