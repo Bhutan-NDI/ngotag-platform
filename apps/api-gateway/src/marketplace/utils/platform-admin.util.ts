@@ -1,8 +1,8 @@
 import { OrgRoles } from 'libs/org-roles/enums';
 
 export interface MarketplaceRequestUser {
-  id?: string;
-  email?: string;
+  id?: string | null;
+  email?: string | null;
   userOrgRoles?: { orgRole?: { name?: string } }[];
 }
 
