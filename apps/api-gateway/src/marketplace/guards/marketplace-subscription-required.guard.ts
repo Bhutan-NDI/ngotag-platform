@@ -1,13 +1,5 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { OrgRoles } from 'libs/org-roles/enums';
-
-// Minimal shape of the JWT-authenticated request user, limited to the fields this guard
-// reads. Mirrors what the JWT strategy populates (also used by OrgRolesGuard).
-interface MarketplaceRequestUser {
-  id?: string;
-  email?: string;
-  userOrgRoles?: { orgRole?: { name?: string } }[];
-}
+import { isPlatformAdmin, MarketplaceRequestUser } from '../utils/platform-admin.util';
 
 /**
  * Blocks standalone organization creation when the Microsoft Marketplace is the only
@@ -34,7 +26,7 @@ export class MarketplaceSubscriptionRequiredGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<{ user?: MarketplaceRequestUser }>();
     const { user } = request;
 
-    if (this.isPlatformAdmin(user)) {
+    if (isPlatformAdmin(user)) {
       return true;
     }
 
@@ -46,21 +38,5 @@ export class MarketplaceSubscriptionRequiredGuard implements CanActivate {
       code: 'marketplace_subscription_required',
       message: 'Organizations can only be created through a Microsoft Marketplace subscription.'
     });
-  }
-
-  private isPlatformAdmin(user: MarketplaceRequestUser | undefined): boolean {
-    if (!user) {
-      return false;
-    }
-
-    const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL;
-    if (platformAdminEmail && user.email === platformAdminEmail) {
-      return true;
-    }
-
-    return Boolean(
-      Array.isArray(user.userOrgRoles) &&
-      user.userOrgRoles.some((orgDetails) => orgDetails?.orgRole?.name === OrgRoles.PLATFORM_ADMIN)
-    );
   }
 }

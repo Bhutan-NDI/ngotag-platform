@@ -167,12 +167,20 @@ const createEcosystemRoles = async (): Promise<void> => {
 const createPlatformUser = async (): Promise<void> => {
   try {
     const { platformAdminData } = JSON.parse(configData);
+    const platformAdminPassword = process.env.PLATFORM_ADMIN_PASSWORD;
+    const cryptoPrivateKey = process.env.CRYPTO_PRIVATE_KEY;
+
+    if (!platformAdminPassword) {
+      throw new Error('Missing environment variable: PLATFORM_ADMIN_PASSWORD');
+    }
+
+    if (!cryptoPrivateKey) {
+      throw new Error('Missing environment variable: CRYPTO_PRIVATE_KEY');
+    }
+
     platformAdminData.email = process.env.PLATFORM_ADMIN_EMAIL;
     platformAdminData.username = process.env.PLATFORM_ADMIN_EMAIL;
-    platformAdminData.password = CryptoJS.AES.encrypt(
-      process.env.PLATFORM_ADMIN_PASSWORD,
-      process.env.CRYPTO_PRIVATE_KEY
-    ).toString();
+    platformAdminData.password = CryptoJS.AES.encrypt(platformAdminPassword, cryptoPrivateKey).toString();
 
     const existPlatformAdminUser = await prisma.user.findMany({
       where: {
@@ -775,8 +783,14 @@ export async function createKeycloakUser(): Promise<void> {
     throw new Error('failed to load platform config data from db');
   }
 
-  const { KEYCLOAK_DOMAIN, KEYCLOAK_REALM, ADMIN_KEYCLOAK_ID, ADMIN_KEYCLOAK_SECRET, PLATFORM_ADMIN_PASSWORD } =
-    process.env;
+  const {
+    KEYCLOAK_DOMAIN,
+    KEYCLOAK_REALM,
+    ADMIN_KEYCLOAK_ID,
+    ADMIN_KEYCLOAK_SECRET,
+    PLATFORM_ADMIN_PASSWORD,
+    CRYPTO_PRIVATE_KEY
+  } = process.env;
 
   if (!KEYCLOAK_DOMAIN) {
     throw new Error('Missing environment variable: KEYCLOAK_DOMAIN');
