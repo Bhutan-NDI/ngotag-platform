@@ -2,18 +2,12 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable, Logger }
 import { Reflector } from '@nestjs/core';
 import { MARKETPLACE_FEATURE_KEY, MarketplaceFeature } from '../decorators/requires-marketplace-feature.decorator';
 import { MarketplaceService } from '../marketplace.service';
-import { OrgRoles } from 'libs/org-roles/enums';
+import { isPlatformAdmin } from '../utils/platform-admin.util';
 
 interface EntitlementResponse {
   features?: Record<string, boolean>;
   blockedReason?: string | null;
   usage?: Record<string, { included: number; used: number; overage: number }>;
-}
-
-interface MarketplaceRequestUser {
-  id?: string;
-  email?: string;
-  userOrgRoles?: { orgRole?: { name?: string } }[];
 }
 
 @Injectable()
@@ -43,7 +37,7 @@ export class MarketplaceEntitlementGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest();
 
-    if (this.isPlatformAdmin(request.user)) {
+    if (isPlatformAdmin(request.user)) {
       return true;
     }
 
@@ -103,22 +97,6 @@ export class MarketplaceEntitlementGuard implements CanActivate {
       code: entitlements.blockedReason || 'marketplace_feature_not_allowed',
       message: 'Marketplace subscription does not allow this action'
     });
-  }
-
-  private isPlatformAdmin(user: MarketplaceRequestUser | undefined): boolean {
-    if (!user) {
-      return false;
-    }
-
-    const platformAdminEmail = process.env.PLATFORM_ADMIN_EMAIL;
-    if (platformAdminEmail && user.email === platformAdminEmail) {
-      return true;
-    }
-
-    return Boolean(
-      Array.isArray(user.userOrgRoles) &&
-      user.userOrgRoles.some((orgDetails) => orgDetails?.orgRole?.name === OrgRoles.PLATFORM_ADMIN)
-    );
   }
 
   private isUsageLimitReached(entitlements: EntitlementResponse, dimension: string): boolean {
