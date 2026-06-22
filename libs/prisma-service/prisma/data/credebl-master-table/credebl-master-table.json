@@ -4,7 +4,7 @@
     "inboundEndpoint": "##Machine Ip Address/Domain for agent setup##",
     "username": "credebl",
     "sgApiKey": "###Sendgrid Key###",
-    "emailFrom": "##Senders Mail ID##",
+    "emailFrom": "PHENIX ID <noreply@phenix-id.com>",
     "apiEndpoint": "## Platform API Ip Address##",
     "tailsFileServer": "##Machine Ip Address for agent setup##"
   },
