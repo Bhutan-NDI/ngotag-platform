@@ -71,7 +71,7 @@ export class AgentService extends BaseService {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'sign-data-from-agent', payload);
   }
 
-  async verifysignature(data: unknown, orgId: string): Promise<AgentStatus> {
+  async verifysignature(data: unknown, orgId: string): Promise<boolean> {
     const payload = { data, orgId };
 
     // NATS call

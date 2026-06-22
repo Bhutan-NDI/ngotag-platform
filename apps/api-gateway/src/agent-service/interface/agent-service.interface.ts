@@ -26,6 +26,10 @@ export interface IWalletRecord {
 }
 
 export interface IVerifySignature {
-  credential: unknown;
-  verifyCredentialStatus?: boolean;
+  did: string;
+  data: string;
+  signature: string;
+  keyType?: string;
+  method?: string;
+  publicKeyBase58?: string;
 }

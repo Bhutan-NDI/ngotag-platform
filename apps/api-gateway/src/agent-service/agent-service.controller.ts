@@ -46,7 +46,6 @@ import { CreateNewDidDto } from './dto/create-new-did.dto';
 import { AgentSpinupValidator, TrimStringParamPipe } from '@credebl/common/cast.helper';
 import { AgentConfigureDto } from './dto/agent-configure.dto';
 import { UnauthorizedErrorDto } from '../dtos/unauthorized-error.dto';
-import { IVerifySignature } from './interface/agent-service.interface';
 
 const seedLength = 32;
 
@@ -142,13 +141,14 @@ export class AgentController {
    */
   @ApiBody({
     description:
-      'Enter the data you would like to verify the signature for. It can be of type w3c jsonld credential or any type that needs to be verified',
+      'DID-bound raw signature verification payload. The server resolves the verification key from the DID Document.',
     type: VerifySignatureDto
   })
   @Post('/orgs/:orgId/agents/verify-signature')
   @ApiOperation({
-    summary: 'Validates signed data from agent, including credentials',
-    description: 'Credentials or any other data signed by the organisation is validated'
+    summary: 'Verify a raw Ed25519 signature against the holder DID',
+    description:
+      'Verifies a challenge-response signature for DID-based authentication. The public key is resolved from the DID Document server-side.'
   })
   // @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
   // @Roles(
@@ -162,7 +162,7 @@ export class AgentController {
   // )
   async verifysignature(
     @Param('orgId') orgId: string,
-    @Body() data: IVerifySignature,
+    @Body() data: VerifySignatureDto,
     @Res() res: Response
   ): Promise<Response> {
     const agentData = await this.agentService.verifysignature(data, orgId);

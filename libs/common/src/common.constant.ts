@@ -112,7 +112,8 @@ export enum CommonConstants {
 
   // sign data from agent
   URL_AGENT_SIGN_DATA = '/agent/credential/sign',
-  URL_AGENT_VERIFY_SIGNED_DATA = '/agent/credential/verify',
+  // verify raw signature (tenant context resolved from the agent API token)
+  URL_AGENT_VERIFY_SIGNED_DATA = '/agent/verify',
 
   // CREATE KEYS
   CREATE_POLYGON_SECP256k1_KEY = '/polygon/create-keys',

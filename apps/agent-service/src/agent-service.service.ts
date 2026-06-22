@@ -1002,8 +1002,12 @@ export class AgentServiceService {
    * Verify that the DID Document for a did:web is correctly hosted at its
    * resolution URL before the DID is committed to the platform DB.
    */
-  private async verifyWebDidHosting(agentEndPoint: string, createDidPayload: IDidCreate, apiKey: string): Promise<void> {
-    const domain = createDidPayload.domain;
+  private async verifyWebDidHosting(
+    agentEndPoint: string,
+    createDidPayload: IDidCreate,
+    apiKey: string
+  ): Promise<void> {
+    const { domain } = createDidPayload;
     const resolutionUrl = `https://${domain}/.well-known/did.json`;
 
     let hostedDoc: object;
@@ -1016,9 +1020,7 @@ export class AgentServiceService {
     }
 
     if (!hostedDoc) {
-      throw new BadRequestException(
-        `No DID Document found at ${resolutionUrl}.`
-      );
+      throw new BadRequestException(`No DID Document found at ${resolutionUrl}.`);
     }
 
     // Get the expected DID Document from the agent (same call as create, wallet write is idempotent)
@@ -1752,18 +1754,18 @@ export class AgentServiceService {
   }
 
   /**
-   * Get agent health
+   * Verify a raw Ed25519 signature against the key resolved from the holder's DID.
+   * The agent verify endpoint resolves the tenant context from the API token, so the
+   * same /agent/verify route serves both dedicated and shared (multi-tenant) agents
+   * (mirrors signDataFromAgent and the previous W3C verify path).
+   * @param data Verify payload ({ did, data, signature, ... })
    * @param orgId
-   * @returns agent status
+   * @returns true if the signature is valid for the DID-resolved key, false otherwise
    */
-  async verifysignature(data: unknown, orgId: string): Promise<IAgentStatus> {
+  async verifysignature(data: unknown, orgId: string): Promise<boolean> {
     try {
       // Get organization agent details
       const orgAgentDetails: org_agents = await this.agentServiceRepository.getOrgAgentDetails(orgId);
-      let agentApiKey;
-      if (orgAgentDetails) {
-        agentApiKey = await this.getOrgAgentApiKey(orgId);
-      }
 
       if (!orgAgentDetails) {
         throw new NotFoundException(ResponseMessages.agent.error.agentNotExists, {
@@ -1778,16 +1780,15 @@ export class AgentServiceService {
           description: ResponseMessages.errorMessages.notFound
         });
       }
+
+      const agentApiKey = await this.getOrgAgentApiKey(orgId);
       const url = getAgentUrl(orgAgentDetails.agentEndPoint, CommonConstants.VERIFY_SIGNED_DATA_FROM_AGENT);
 
-      // Invoke an API request from the agent to assess its current status
-      const signedDataFromAgent = await this.commonService
-        .httpPost(`${url}`, data, {
-          headers: { authorization: agentApiKey }
-        })
-        .then(async (response) => response);
+      const verificationResult = await this.commonService.httpPost(`${url}`, data, {
+        headers: { authorization: agentApiKey }
+      });
 
-      return signedDataFromAgent;
+      return verificationResult;
     } catch (error) {
       this.logger.error(`Agent signature request details : ${JSON.stringify(error)}`);
       throw new RpcException(error.response ?? error);
