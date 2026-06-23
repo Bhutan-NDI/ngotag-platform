@@ -34,6 +34,35 @@ let platformUserId = '';
 let cachedConfig: PlatformConfig;
 
 const configData = fs.readFileSync(`${__dirname}/data/credebl-master-table/credebl-master-table.json`, 'utf8');
+
+const getEncryptedPlatformAdminPassword = (): string | undefined => {
+  const { PLATFORM_ADMIN_PASSWORD, CRYPTO_PRIVATE_KEY } = process.env;
+
+  if (!PLATFORM_ADMIN_PASSWORD) {
+    return undefined;
+  }
+
+  if (!CRYPTO_PRIVATE_KEY) {
+    throw new Error('Missing environment variable: CRYPTO_PRIVATE_KEY');
+  }
+
+  return CryptoJS.AES.encrypt(JSON.stringify(PLATFORM_ADMIN_PASSWORD), CRYPTO_PRIVATE_KEY).toString();
+};
+
+const decryptSeedPassword = (encryptedPassword: string, privateKey: string): string => {
+  const decryptedPassword = CryptoJS.AES.decrypt(encryptedPassword, privateKey).toString(CryptoJS.enc.Utf8);
+
+  if (!decryptedPassword) {
+    throw new Error('Platform admin password could not be decrypted');
+  }
+
+  try {
+    return JSON.parse(decryptedPassword);
+  } catch {
+    return decryptedPassword;
+  }
+};
+
 const createPlatformConfig = async (): Promise<void> => {
   try {
     const existPlatformAdmin = await prisma.platform_config.findMany();
@@ -168,19 +197,19 @@ const createPlatformUser = async (): Promise<void> => {
   try {
     const { platformAdminData } = JSON.parse(configData);
     const platformAdminPassword = process.env.PLATFORM_ADMIN_PASSWORD;
-    const cryptoPrivateKey = process.env.CRYPTO_PRIVATE_KEY;
 
     if (!platformAdminPassword) {
       throw new Error('Missing environment variable: PLATFORM_ADMIN_PASSWORD');
     }
 
-    if (!cryptoPrivateKey) {
-      throw new Error('Missing environment variable: CRYPTO_PRIVATE_KEY');
-    }
-
     platformAdminData.email = process.env.PLATFORM_ADMIN_EMAIL;
     platformAdminData.username = process.env.PLATFORM_ADMIN_EMAIL;
-    platformAdminData.password = CryptoJS.AES.encrypt(platformAdminPassword, cryptoPrivateKey).toString();
+    const encryptedPlatformAdminPassword = getEncryptedPlatformAdminPassword();
+
+    if (encryptedPlatformAdminPassword) {
+      platformAdminData.password = encryptedPlatformAdminPassword;
+      platformAdminData.isEmailVerified = true;
+    }
 
     const existPlatformAdminUser = await prisma.user.findMany({
       where: {
@@ -197,6 +226,19 @@ const createPlatformUser = async (): Promise<void> => {
 
       logger.log(platformUser);
     } else {
+      platformUserId = existPlatformAdminUser[0].id;
+
+      if (encryptedPlatformAdminPassword) {
+        await prisma.user.update({
+          where: { email: platformAdminData.email },
+          data: {
+            password: encryptedPlatformAdminPassword,
+            isEmailVerified: true
+          }
+        });
+        logger.log('Updated platform admin password from PLATFORM_ADMIN_PASSWORD');
+      }
+
       logger.log('Already seeding in user');
     }
   } catch (error) {
@@ -779,6 +821,10 @@ export async function getKeycloakToken(): Promise<string> {
 
 export async function createKeycloakUser(): Promise<void> {
   logger.log(`✅ Creating keycloak user for platform admin`);
+  const { platformAdminData } = JSON.parse(configData);
+  if (!process.env.PLATFORM_ADMIN_PASSWORD && !platformAdminData?.password) {
+    throw new Error('PLATFORM_ADMIN_PASSWORD or platformAdminData password is required');
+  }
   if (!cachedConfig) {
     throw new Error('failed to load platform config data from db');
   }
@@ -808,17 +854,51 @@ export async function createKeycloakUser(): Promise<void> {
     throw new Error('Missing environment variable: ADMIN_KEYCLOAK_SECRET');
   }
 
-  if (!PLATFORM_ADMIN_PASSWORD) {
-    throw new Error('Missing environment variable: PLATFORM_ADMIN_PASSWORD');
+  if (!CRYPTO_PRIVATE_KEY) {
+    throw new Error('Missing environment variable: CRYPTO_PRIVATE_KEY');
   }
 
+  const platformAdminPassword = PLATFORM_ADMIN_PASSWORD ?? decryptSeedPassword(platformAdminData.password, CRYPTO_PRIVATE_KEY);
   const token = await getKeycloakToken();
   const user = {
     username: cachedConfig.platformEmail,
     email: cachedConfig.platformEmail,
     firstName: cachedConfig.platformName,
     lastName: cachedConfig.platformName,
-    password: PLATFORM_ADMIN_PASSWORD
+    password: platformAdminPassword
+  };
+  const encClientId = CryptoJS.AES.encrypt(JSON.stringify(ADMIN_KEYCLOAK_ID), CRYPTO_PRIVATE_KEY).toString();
+  const encClientSecret = CryptoJS.AES.encrypt(JSON.stringify(ADMIN_KEYCLOAK_SECRET), CRYPTO_PRIVATE_KEY).toString();
+  const updatePlatformAdminUser = async (keycloakUserId: string): Promise<void> => {
+    await prisma.user.update({
+      where: { email: cachedConfig.platformEmail },
+      data: {
+        keycloakUserId,
+        clientId: encClientId,
+        clientSecret: encClientSecret
+      }
+    });
+  };
+  const resetKeycloakUserPassword = async (keycloakUserId: string): Promise<void> => {
+    const passwordResponse = await fetch(
+      `${KEYCLOAK_DOMAIN}admin/realms/${KEYCLOAK_REALM}/users/${keycloakUserId}/reset-password`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          type: 'password',
+          value: platformAdminPassword,
+          temporary: false
+        })
+      }
+    );
+
+    if (!passwordResponse.ok) {
+      throw new Error(`Failed to reset platform admin Keycloak password (${passwordResponse.status})`);
+    }
   };
   const res = await fetch(`${KEYCLOAK_DOMAIN}admin/realms/${KEYCLOAK_REALM}/users`, {
     method: 'POST',
@@ -847,6 +927,31 @@ export async function createKeycloakUser(): Promise<void> {
 
   if (HttpStatus.CONFLICT === res.status) {
     logger.log(`⚠️ User ${user.username} already exists`);
+    const searchResponse = await fetch(
+      `${KEYCLOAK_DOMAIN}admin/realms/${KEYCLOAK_REALM}/users?exact=true&email=${encodeURIComponent(user.email)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }
+    );
+
+    if (!searchResponse.ok) {
+      throw new Error(`Failed to find existing platform admin Keycloak user (${searchResponse.status})`);
+    }
+
+    const existingUsers = await searchResponse.json();
+    const existingKeycloakUser = existingUsers.find(
+      (existingUser) => existingUser?.email?.toLowerCase() === user.email.toLowerCase()
+    );
+
+    if (!existingKeycloakUser?.id) {
+      throw new Error(`Existing platform admin Keycloak user not found for ${user.email}`);
+    }
+
+    await resetKeycloakUserPassword(existingKeycloakUser.id);
+    await updatePlatformAdminUser(existingKeycloakUser.id);
+    logger.log(`✅ Platform admin Keycloak user password reset and database record updated`);
     return;
   }
 
@@ -873,18 +978,7 @@ export async function createKeycloakUser(): Promise<void> {
     }
     logger.log(`✅ Platform admin found in database`);
 
-    const encClientId = CryptoJS.AES.encrypt(JSON.stringify(ADMIN_KEYCLOAK_ID), CRYPTO_PRIVATE_KEY).toString();
-
-    const encClientSecret = CryptoJS.AES.encrypt(JSON.stringify(ADMIN_KEYCLOAK_SECRET), CRYPTO_PRIVATE_KEY).toString();
-
-    await prisma.user.update({
-      where: { email: cachedConfig.platformEmail },
-      data: {
-        keycloakUserId: userId,
-        clientId: encClientId,
-        clientSecret: encClientSecret
-      }
-    });
+    await updatePlatformAdminUser(userId);
     logger.log(`✅ Platform admin added and updated to user's table sucessfully`);
   } else {
     throw new Error('Failed to extract user ID from Location header');
