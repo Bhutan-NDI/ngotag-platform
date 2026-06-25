@@ -24,6 +24,19 @@ export class EntitlementService {
   constructor(private readonly marketplaceRepository: MarketplaceRepository) {}
 
   async getEntitlements(orgId: string): Promise<MarketplaceEntitlementResponse> {
+    // First-party / foundational orgs are core national infrastructure, not Marketplace tenants.
+    // Grant them the full feature set (equivalent to PLATFORM_ADMIN_ENTITLEMENTS) regardless of
+    // subscription state, scoped only to the allow-listed org ids.
+    if (this.isExemptOrg(orgId)) {
+      return {
+        orgId,
+        features: defaultFeatures,
+        limits: {},
+        usage: {},
+        blockedReason: null
+      };
+    }
+
     const subscription = await this.marketplaceRepository.getSubscriptionByOrgId(orgId);
 
     if (!subscription) {
@@ -58,6 +71,17 @@ export class EntitlementService {
       usage,
       blockedReason: isActive ? null : this.blockedReason(subscription)
     };
+  }
+
+  private isExemptOrg(orgId: string): boolean {
+    if (!orgId) {
+      return false;
+    }
+    const exempt = `${process.env.MARKETPLACE_EXEMPT_ORG_IDS || ''}`
+      .split(',')
+      .map((id) => id.trim().toLowerCase())
+      .filter(Boolean);
+    return exempt.includes(orgId.trim().toLowerCase());
   }
 
   async isFeatureAllowed(orgId: string, feature: string): Promise<boolean> {
