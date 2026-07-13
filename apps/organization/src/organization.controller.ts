@@ -202,6 +202,11 @@ export class OrganizationController {
    * @param payload
    * @returns Updated invitation status
    */
+  @MessagePattern({ cmd: 'verify-invitation-pending' })
+  async verifyInvitationPending(@Body() payload: { invitationId: string; email: string }): Promise<{ valid: boolean }> {
+    return this.organizationService.verifyInvitationPending(payload.invitationId, payload.email);
+  }
+
   @MessagePattern({ cmd: 'update-invitation-status' })
   async updateOrgInvitation(@Body() payload: UpdateInvitationDto): Promise<string> {
     return this.organizationService.updateOrgInvitation(payload);

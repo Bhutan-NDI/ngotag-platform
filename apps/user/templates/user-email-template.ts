@@ -5,13 +5,14 @@ export class URLUserEmailTemplate {
     brandLogoUrl: string,
     platformName: string,
     redirectTo?: string,
-    clientAlias?: string
+    clientAlias?: string,
+    invitationId?: string
   ): string {
     const baseDomain = `${process.env.FRONT_END_URL}`;
     const apiUrl = new URL('/verify-email-success', baseDomain);
 
     apiUrl.searchParams.append('verificationCode', verificationCode);
-    apiUrl.searchParams.append('email', encodeURIComponent(email));
+    apiUrl.searchParams.append('email', email);
 
     if (redirectTo) {
       apiUrl.searchParams.append('redirectTo', redirectTo);
@@ -19,6 +20,10 @@ export class URLUserEmailTemplate {
 
     if (clientAlias) {
       apiUrl.searchParams.append('clientAlias', clientAlias);
+    }
+
+    if (invitationId) {
+      apiUrl.searchParams.append('invitationId', invitationId);
     }
 
     const validUrl = apiUrl.href;

@@ -6,22 +6,31 @@ export class OrganizationInviteTemplate {
     orgName: string,
     orgRolesDetails: object[],
     firstName: string,
-    isUserExist: boolean
+    isUserExist: boolean,
+    invitationId?: string
   ): string {
-    const validUrl = isUserExist ? `${process.env.FRONT_END_URL}/sign-in` : `${process.env.FRONT_END_URL}/sign-up`;
+    let validUrl: string;
+    if (isUserExist) {
+      validUrl = `${process.env.FRONT_END_URL}/sign-in?redirectTo=${encodeURIComponent('/invitations')}`;
+    } else if (invitationId) {
+      validUrl = `${process.env.FRONT_END_URL}/sign-up?invitationId=${encodeURIComponent(invitationId)}&email=${encodeURIComponent(email)}`;
+    } else {
+      validUrl = `${process.env.FRONT_END_URL}/sign-up`;
+    }
 
     const message = isUserExist
       ? `Please accept the invitation using the following link:`
       : `To get started, kindly register on ${process.env.PLATFORM_NAME} platform using this link:`;
 
     const secondMessage = isUserExist
-      ? `After successful login into ${process.env.PLATFORM_NAME} click on "Accept Organization Invitation" link on your dashboard.`
+      ? `After logging in you will be taken directly to your invitations page to accept.`
       : `After successful registration, you can log in to the platform and click on “Accept Organization Invitation” on your dashboard.`;
 
     const Button = isUserExist ? `Accept Organization Invitation` : `Register on ${process.env.PLATFORM_NAME}`;
     const safeEmail = escapeHtml(email);
     const safeOrgName = escapeHtml(orgName);
     const safeFirstName = escapeHtml(firstName);
+    const safeValidUrl = escapeHtml(validUrl);
     return `<!DOCTYPE html>
         <html lang="en">
         
@@ -54,12 +63,12 @@ export class OrganizationInviteTemplate {
                </p>
 
               <div style="text-align: center;">
-                  <a clicktracking=off href="${validUrl}"
+                  <a clicktracking=off href="${safeValidUrl}"
                       style="padding: 10px 20px 10px 20px;color: #fff;background: #1F4EAD;border-radius: 5px;text-decoration: none;">
                       
                      ${Button} 
                   </a>
-                  <p>Verification Link: <a clicktracking=off href="${validUrl}">${validUrl}</a></p>
+                  <p>Verification Link: <a clicktracking=off href="${safeValidUrl}">${safeValidUrl}</a></p>
               </div>
               <p>${secondMessage}</p>
               <hr style="border-top:1px solid #e8e8e8" />

@@ -1,148 +1,108 @@
-version: '3'
+x-platform-networks: &platform-networks
+  - phenix-platform-network
+  - nats_default
+  - credo-network
+  - kc_default
+  - phenix-schema-file-server_default
 
 services:
-  nats:
-    container_name: credebl-nats
-    image: nats
-    command: ["-c", "/nats-server.conf"]
-    ports:
-      - '4222:4222'
-      - '6222:6222'
-      - '8222:8222'
-    volumes:
-      - ./nats-server.conf:/nats-server.conf:ro
-  redis:
-    container_name: credebl-redis
-    image: redis:6.2-alpine
-    restart: always
-    ports:
-      - '6379:6379'
-    command: redis-server --save 20 1 --loglevel warning
-    volumes: 
-      - cache:/data
-  postgres:
-    container_name: credebl-postgres
-    image: postgres:16
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=credebl
-    volumes:
-      - platform-volume:/var/lib/postgresql/data
-  seed:
-    container_name: seed-service
-    image: ghcr.io/credebl/seed:latest
+  geo-location:
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.geolocation
     env_file:
       - ./.env
-    volumes:
-      - $PWD/libs/prisma-service/prisma/data/credebl-master-table/credebl-master-table.json:/app/libs/prisma-service/prisma/data/credebl-master-table.json
-  schema-file-server:
-    container_name: schema-file-server
-    image: ghcr.io/credebl/schema-file-server:latest
-    ports:
-      - '4000:4000'
-    env_file:
-      - ./.env
-    volumes:
-      - $PWD/apps/schemas:/app/schemas
+    networks: *platform-networks
+
   api-gateway:
-    container_name: api-gateway
     depends_on:
-      - nats  # Use depends_on instead of needs
-      - redis
-    image: ghcr.io/credebl/api-gateway:latest
+      - geo-location
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.api-gateway
     ports:
       - '5000:5000'
     env_file:
       - ./.env
-    volumes:
-    - $PWD/apps/uploadedFiles/exports:/app/uploadedFiles/exports
+    networks: *platform-networks
+
   user:
-    container_name: user-service
     depends_on:
-      - nats  # Use depends_on instead of needs
       - api-gateway
-    image: ghcr.io/credebl/user:latest
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.user
     env_file:
       - ./.env
-  utility:
-    container_name: utility-service
-    depends_on:
-      - nats  # Use depends_on instead of needs
-      - api-gateway
-    image: ghcr.io/credebl/utility:latest
-    env_file:
-      - ./.env
+    networks: *platform-networks
+
   connection:
-    container_name: connection-service
     depends_on:
-      - nats  # Use depends_on instead of needs
       - api-gateway
-      - utility
       - user
-    image: ghcr.io/credebl/connection:latest
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.connection
     env_file:
       - ./.env
+    networks: *platform-networks
+
   issuance:
-    container_name: issuance-service
     depends_on:
-      - nats  # Use depends_on instead of needs
-      - redis
       - api-gateway
       - user
       - connection
-    image: ghcr.io/credebl/issuance:latest
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.issuance
     env_file:
       - ./.env
-    volumes:
-    - $PWD/apps/uploadedFiles/exports:/app/uploadedFiles/exports
+    networks: *platform-networks
+
   ledger:
-    container_name: ledger-service
     depends_on:
-      - nats  # Use depends_on instead of needs
       - api-gateway
       - user
       - connection
       - issuance
-    image: ghcr.io/credebl/ledger:latest
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.ledger
     env_file:
       - ./.env
+    networks: *platform-networks
+
   organization:
-    container_name: organization-service
     depends_on:
-      - nats  # Use depends_on instead of needs
       - api-gateway
       - user
       - connection
       - issuance
       - ledger
-    image: ghcr.io/credebl/organization:latest
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.organization
     env_file:
       - ./.env
+    networks: *platform-networks
+
   verification:
-    container_name: verification-service
     depends_on:
-      - nats  # Use depends_on instead of needs
       - api-gateway
       - user
       - connection
       - issuance
       - ledger
       - organization
-    image: ghcr.io/credebl/verification:latest
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.verification
     env_file:
       - ./.env
-  agent-provisioning:
-    container_name: agent-provisioning-service
+    networks: *platform-networks
+
+  agent-service:
     depends_on:
-      - nats  # Use depends_on instead of needs
       - api-gateway
       - user
       - connection
@@ -150,104 +110,91 @@ services:
       - ledger
       - organization
       - verification
-    image: ghcr.io/credebl/agent-provisioning:latest
-    # args:
-    #   - ROOT_PATH=$PWD/apps/agent-provisioning/AFJ/agent-config
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.agent-service
+    env_file:
+      - ./.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: *platform-networks
+
+  ecosystem:
+    depends_on:
+      - api-gateway
+      - organization
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.ecosystem
+    env_file:
+      - ./.env
+    networks: *platform-networks
+
+  utility:
+    depends_on:
+      - api-gateway
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.utility
+    env_file:
+      - ./.env
+    networks: *platform-networks
+
+  notification:
+    depends_on:
+      - api-gateway
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.notification
+    env_file:
+      - ./.env
+    networks: *platform-networks
+
+  webhook:
+    depends_on:
+      - api-gateway
+      - issuance
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.webhook
+    env_file:
+      - ./.env
+    networks: *platform-networks
+
+  marketplace:
+    depends_on:
+      - api-gateway
+      - organization
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.marketplace
+    env_file:
+      - ./.env
+    networks: *platform-networks
+
+  seed:
+    profiles:
+      - seed
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.seed
     env_file:
       - ./.env
     environment:
-      - ROOT_PATH=$PWD/apps/agent-provisioning/AFJ/agent-config
-    user: root
-    volumes:
-      - $PWD/apps/agent-provisioning/AFJ/agent-config:/app/agent-provisioning/AFJ/agent-config
-      - /var/run/docker.sock:/var/run/docker.sock
-      - $PWD/agent.env:/app/agent.env
-  agent-service:
-    container_name: agent-service
-    depends_on:
-      - nats  # Use depends_on instead of needs
-      - api-gateway
-      - user
-      - connection
-      - issuance
-      - ledger
-      - organization
-      - verification
-      - agent-provisioning
-    command: sh -c 'until (docker logs agent-provisioning-service | grep "Agent-Provisioning-Service Microservice is listening to NATS"); do sleep 1; done && node dist/apps/agent-service/main.js'
-    image: ghcr.io/credebl/agent-service:latest
-    env_file:
-      - ./.env
-    user: root
-    volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
-    volumes_from:
-      - agent-provisioning
-  cloud-wallet:
-    container_name: cloud-wallet-service
-    depends_on:
-      - nats
-      - api-gateway
-    image: ghcr.io/credebl/cloud-wallet:latest
-    env_file:
-      - ./.env
-  geolocation:
-    container_name: geolocation-service
-    depends_on:
-      - nats
-      - api-gateway
-    image: ghcr.io/credebl/geolocation:latest
-    env_file:
-      - ./.env
-  notification:
-    container_name: notification-service
-    depends_on:
-      - nats
-      - api-gateway
-    image: ghcr.io/credebl/notification:latest
-    env_file:
-      - ./.env
-  webhook:
-    container_name: webhook-service
-    depends_on:
-      - nats
-      - api-gateway
-    image: ghcr.io/credebl/webhook:latest
-    env_file:
-      - ./.env
-  ecosystem:
-    container_name: ecosystem-service
-    depends_on:
-      - nats
-      - api-gateway
-    image: ghcr.io/credebl/ecosystem:latest
-    env_file:
-      - ./.env
-  oid4vc-issuance:
-    container_name: oid4vc-issuance-service
-    depends_on:
-      - nats
-      - api-gateway
-    image: ghcr.io/credebl/oid4vc-issuance:latest
-    env_file:
-      - ./.env
-  oid4vc-verification:
-    container_name: oid4vc-verification-service
-    depends_on:
-      - nats
-      - api-gateway
-    image: ghcr.io/credebl/oid4vc-verification:latest
-    env_file:
-      - ./.env
-  x509:
-    container_name: x509-service
-    depends_on:
-      - nats
-      - api-gateway
-    image: ghcr.io/credebl/x509:latest
-    env_file:
-      - ./.env
-  
-volumes:
-  cache:
-    driver: local
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}
+      POOL_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}
+      UPDATE_CLIENT_CREDENTIAL_SCRIPT: libs/prisma-service/prisma/scripts/update_client_credential_data.sh
+    restart: "no"
+    networks: *platform-networks
+
+networks:
+  phenix-platform-network:
+    external: true
+  nats_default:
+    external: true
+  credo-network:
+    external: true
+  kc_default:
+    external: true
+  phenix-schema-file-server_default:
+    external: true

@@ -98,6 +98,24 @@ export class SchemaRepository {
     }
   }
 
+  async w3cSchemaExists(schemaName: string, schemaVersion: string, orgId: string): Promise<boolean> {
+    try {
+      const count = await this.prisma.schema.count({
+        where: {
+          type: SchemaType.W3C_Schema,
+          isSchemaArchived: false,
+          name: { equals: schemaName, mode: 'insensitive' },
+          version: { equals: schemaVersion, mode: 'insensitive' },
+          orgId
+        }
+      });
+      return count > 0;
+    } catch (error) {
+      this.logger.error(`Error in w3cSchemaExists: ${error}`);
+      throw error;
+    }
+  }
+
   async getSchemas(payload: ISchemaSearchCriteria, orgId: string): Promise<ISchemasWithCount> {
     try {
       const schemasResult = await this.prisma.schema.findMany({

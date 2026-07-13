@@ -53,7 +53,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Invitation, ProviderType, SessionType, TokenType, UserRole } from '@credebl/enum/enum';
 import validator from 'validator';
 import { DISALLOWED_EMAIL_DOMAIN } from '@credebl/common/common.constant';
-import { AwsService } from '@credebl/aws';
+import { AzureStorageService } from '@credebl/azure-storage';
 import { IUsersActivity } from 'libs/user-activity/interface';
 import {
   ISendVerificationEmail,
@@ -83,7 +83,7 @@ export class UserService {
     private readonly userOrgRoleService: UserOrgRolesService,
     private readonly userActivityService: UserActivityService,
     private readonly userRepository: UserRepository,
-    private readonly awsService: AwsService,
+    private readonly azureStorageService: AzureStorageService,
     private readonly userDevicesRepository: UserDevicesRepository,
     private readonly logger: Logger,
     @Inject('NATS_CLIENT') private readonly userServiceProxy: ClientProxy,
@@ -115,7 +115,7 @@ export class UserService {
 
   async sendVerificationMail(userEmailVerification: ISendVerificationEmail): Promise<user> {
     try {
-      const { email, brandLogoUrl, platformName, clientAlias } = userEmailVerification;
+      const { email, brandLogoUrl, platformName, clientAlias, redirectTo, invitationId } = userEmailVerification;
 
       if ('PROD' === process.env.PLATFORM_PROFILE_MODE) {
         // eslint-disable-next-line prefer-destructuring
@@ -143,6 +143,22 @@ export class UserService {
       if (process.env.ADMIN_CLIENT_ALIAS === clientAlias) {
         throw new ForbiddenException(ResponseMessages.user.error.adminAlias);
       }
+
+      // Invited users arrive via an invitation link delivered to their inbox, which already
+      // proves they control this email (the gateway has validated the invitation is pending
+      // and belongs to it before forwarding the id). Create the account already verified and
+      // skip the redundant verification-code email.
+      if (invitationId) {
+        userEmailVerification.username = await this.createUsername(email, verifyCode);
+        userEmailVerification.clientId = clientDetails.clientId;
+        userEmailVerification.clientSecret = clientDetails.clientSecret;
+        // Single atomic write: create the account already verified. Avoids the
+        // create-then-verify window where a failed second write would leave an
+        // unverified account the user can no longer retry past.
+        const resUser = await this.userRepository.createUser(userEmailVerification, verifyCode, true);
+        return resUser;
+      }
+
       try {
         const token = await this.clientRegistrationService.getManagementToken(
           clientDetails.clientId,
@@ -163,8 +179,12 @@ export class UserService {
           clientId: clientDetails.clientId,
           brandLogoUrl,
           platformName,
-          redirectTo: clientDetails.domain,
-          clientAlias
+          // Honor a caller-supplied return path (e.g. the marketplace landing with its
+          // ?token=) so it survives the email round-trip; otherwise fall back to the
+          // client's configured domain (the previous, default behavior).
+          redirectTo: redirectTo ?? clientDetails.domain,
+          clientAlias,
+          invitationId
         });
       } catch (error) {
         throw new InternalServerErrorException(ResponseMessages.user.error.emailSend);
@@ -216,7 +236,7 @@ export class UserService {
 
   async sendEmailForVerification(verificationEmailParameter: IVerificationEmail): Promise<boolean> {
     try {
-      const { email, verificationCode, brandLogoUrl, platformName, redirectTo, clientAlias } =
+      const { email, verificationCode, brandLogoUrl, platformName, redirectTo, clientAlias, invitationId } =
         verificationEmailParameter;
       const platformConfigData = await this.prisma.platform_config.findMany();
 
@@ -233,7 +253,8 @@ export class UserService {
         brandLogoUrl,
         platformName,
         redirectTo,
-        clientAlias
+        clientAlias,
+        invitationId
       );
       const isEmailSent = await this.emailService.sendEmail(emailData);
       if (isEmailSent) {

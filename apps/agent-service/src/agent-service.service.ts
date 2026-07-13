@@ -50,7 +50,6 @@ import {
   AgentHealthData,
   IAgentStore,
   IAgentConfigure,
-  OrgDid,
   IBasicMessage,
   WalletDetails,
   ILedger,
@@ -755,32 +754,7 @@ export class AgentServiceService {
    */
   async _createTenant(payload: ITenantDto, user: IUserRequestInterface): Promise<IStoreOrgAgentDetails> {
     let agentProcess;
-    let ledgerIdData = [];
     try {
-      let ledger;
-      const { network } = payload;
-      if (network) {
-        ledger = await ledgerName(network);
-      } else {
-        ledger = Ledgers.Not_Applicable;
-      }
-
-      const ledgerList = await this._getALlLedgerDetails();
-      if (!ledgerList) {
-        throw new BadRequestException(ResponseMessages.agent.error.invalidLedger, {
-          cause: new Error(),
-          description: ResponseMessages.errorMessages.notFound
-        });
-      }
-      const isLedgerExist = ledgerList.find((existingLedgers) => existingLedgers.name === ledger);
-      if (!isLedgerExist) {
-        throw new BadRequestException(ResponseMessages.agent.error.invalidLedger, {
-          cause: new Error(),
-          description: ResponseMessages.errorMessages.notFound
-        });
-      }
-      ledgerIdData = await this.agentServiceRepository.getLedgerDetails(ledger);
-
       const agentSpinUpStatus = AgentSpinUpStatus.WALLET_CREATED;
 
       // Create and stored agent details
@@ -789,7 +763,6 @@ export class AgentServiceService {
       // Get platform admin details
       const platformAdminSpinnedUp = await this.getPlatformAdminAndNotify(payload.clientSocketId);
 
-      payload.endpoint = platformAdminSpinnedUp.org_agents[0].agentEndPoint;
       // Create tenant wallet
       const tenantDetails = await this.createTenantAndNotify(payload, platformAdminSpinnedUp);
 
@@ -840,6 +813,15 @@ export class AgentServiceService {
 
       return orgAgentDetails;
     } catch (error) {
+      // Clean up the org_agents record created at the start of this flow
+      // so a failed wallet creation does not leave an orphan that blocks org deletion
+      if (agentProcess?.id) {
+        try {
+          await this.agentServiceRepository.deleteOrgAgentById(agentProcess.id);
+        } catch (cleanupError) {
+          this.logger.error(`Failed to clean up org_agents record ${agentProcess.id}: ${cleanupError.message}`);
+        }
+      }
       this.handleError(error, payload.clientSocketId);
       throw error;
     }
@@ -886,12 +868,15 @@ export class AgentServiceService {
     try {
       const agentDetails = await this.agentServiceRepository.getOrgAgentDetails(orgId);
 
+      // Look up the ledger for the requested network once and reuse it for both the network
+      // validation here and the primary-DID ledger update below (avoids a duplicate DB read and
+      // keeps validation and the update based on the same ledger row).
+      let networkLedgerId: string | null = null;
       if (createDidPayload?.network) {
         const getNameSpace = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload?.network);
-        if (agentDetails.ledgerId !== null) {
-          if (agentDetails.ledgerId !== getNameSpace.id) {
-            throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
-          }
+        networkLedgerId = getNameSpace.id;
+        if (agentDetails.ledgerId !== null && agentDetails.ledgerId !== getNameSpace.id) {
+          throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
         }
       }
       const getApiKey = await this.getOrgAgentApiKey(orgId);
@@ -902,30 +887,68 @@ export class AgentServiceService {
       }
 
       const { isPrimaryDid, ...payload } = createDidPayload;
-      const didDetails = await this.getDidDetails(url, payload, getApiKey);
-      const getDidByOrg = await this.agentServiceRepository.getOrgDid(orgId);
 
-      await this.checkDidExistence(getDidByOrg, didDetails);
-
-      if (isPrimaryDid) {
-        await this.updateAllDidsToNonPrimary(orgId, getDidByOrg);
+      // For did:web, verify the DID Document is correctly hosted before writing to the wallet or DB.
+      // The agent write call is still made once below; this pre-flight ensures the document is live
+      // and matches what the agent would produce, so we never store an unresolvable DID.
+      if (createDidPayload.method === DidMethod.WEB) {
+        await this.verifyWebDidHosting(agentDetails.agentEndPoint, payload, getApiKey);
       }
+
+      const didDetails = await this.getDidDetails(url, payload, getApiKey);
+
+      // Normalize the DID/document once from the agent-controller response. Polygon only returns the
+      // DID under didState.did, so both the duplicate/retry detection and the persisted row must use
+      // the same normalized value - otherwise a retry would not recognise an already-stored DID.
+      const did = didDetails?.['did'] ?? didDetails?.['didState']?.['did'];
+      const didDocument =
+        didDetails?.['didDocument'] ?? didDetails?.['didDoc'] ?? didDetails?.['didState']?.['didDocument'];
+
+      // A matching row means a prior attempt already stored this DID. Rather than failing the retry
+      // with a conflict, reconcile it: persistDidWithUpdates finishes the related org_agents/spin-up
+      // updates that the earlier run may have failed to commit.
+      const getDidByOrg = await this.agentServiceRepository.getOrgDid(orgId);
+      const existingDid = getDidByOrg.find((orgDid) => orgDid.did === did) ?? null;
 
       const createdDidDetails = {
         orgId,
-        did: didDetails?.['did'] ?? didDetails?.['didState']?.['did'],
-        didDocument: didDetails?.['didDocument'] ?? didDetails?.['didDoc'] ?? didDetails?.['didState']?.['didDocument'],
+        did,
+        didDocument,
         isPrimaryDid,
         orgAgentId: agentDetails.id,
         userId: user.id
       };
-      const storeDidDetails = await this.storeDid(createdDidDetails);
 
+      // Resolve the ledger id (read-only lookup + validation) BEFORE the transaction, so the
+      // transaction body performs only writes and is never held open across reads/HTTP calls.
+      let ledgerId: string | null = null;
       if (isPrimaryDid) {
-        await this.setPrimaryDidAndLedger(orgId, storeDidDetails, createDidPayload.network, createDidPayload.method);
+        if (createDidPayload.network) {
+          ledgerId = networkLedgerId;
+        } else {
+          const noLedgerData = await this.agentServiceRepository.getLedger(Ledgers.Not_Applicable);
+          if (!noLedgerData) {
+            throw new NotFoundException(ResponseMessages.agent.error.noLedgerFound);
+          }
+          ledgerId = noLedgerData.id;
+        }
       }
-      if (agentDetails.agentSpinUpStatus === AgentSpinUpStatus.WALLET_CREATED) {
-        await this.agentServiceRepository.updateAgentSpinupStatus(orgId);
+
+      // Persist the new DID (or reconcile an existing one) together with all related org_agents
+      // updates atomically. Previously these ran as separate, non-transactional writes, so a failure
+      // after the blockchain write could leave a half-written DB state that a retry could not repair.
+      const storeDidDetails = await this.agentServiceRepository.persistDidWithUpdates({
+        createdDidDetails,
+        existingDid,
+        ledgerId,
+        updateSpinupStatus: agentDetails.agentSpinUpStatus === AgentSpinUpStatus.WALLET_CREATED
+      });
+
+      if (!storeDidDetails) {
+        throw new InternalServerErrorException(ResponseMessages.agent.error.storeDid, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
       }
 
       return storeDidDetails;
@@ -943,12 +966,84 @@ export class AgentServiceService {
     }
   }
 
+  /**
+   * Generate a did:web DID Document without writing it to the platform DB.
+   * Calls the agent write endpoint (wallet state is set) and returns the result
+   * so the caller can host the document before calling createDid.
+   */
+  async generateWebDid(createDidPayload: IDidCreate, orgId: string): Promise<object> {
+    try {
+      const agentDetails = await this.agentServiceRepository.getOrgAgentDetails(orgId);
+
+      // Block generate if a did:web DID for this domain is already committed to the platform DB.
+      // The agent wallet write is idempotent, but regenerating with a different seed would overwrite
+      // the wallet key and silently break the existing DID's signing capability.
+      const expectedDid = `did:${DidMethod.WEB}:${createDidPayload.domain}`;
+      const existingDids = await this.agentServiceRepository.getOrgDid(orgId);
+      if (existingDids.some((d) => d.did === expectedDid)) {
+        throw new BadRequestException(ResponseMessages.agent.error.webDidDomainAlreadyExists);
+      }
+
+      const getApiKey = await this.getOrgAgentApiKey(orgId);
+      const url = this.constructUrl(agentDetails);
+      const { isPrimaryDid: _isPrimaryDid, ...payload } = createDidPayload;
+      const didDetails = await this.getDidDetails(url, payload, getApiKey);
+      return {
+        did: didDetails?.['did'],
+        didDocument: didDetails?.['didDocument']
+      };
+    } catch (error) {
+      this.logger.error(`error in generateWebDid: ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  /**
+   * Verify that the DID Document for a did:web is correctly hosted at its
+   * resolution URL before the DID is committed to the platform DB.
+   */
+  private async verifyWebDidHosting(
+    agentEndPoint: string,
+    createDidPayload: IDidCreate,
+    apiKey: string
+  ): Promise<void> {
+    const { domain } = createDidPayload;
+    const resolutionUrl = `https://${domain}/.well-known/did.json`;
+
+    let hostedDoc: object;
+    try {
+      hostedDoc = await this.commonService.httpGet(resolutionUrl);
+    } catch {
+      throw new BadRequestException(
+        `DID Document not reachable at ${resolutionUrl}. Host the document before creating the DID.`
+      );
+    }
+
+    if (!hostedDoc) {
+      throw new BadRequestException(`No DID Document found at ${resolutionUrl}.`);
+    }
+
+    // Get the expected DID Document from the agent (same call as create, wallet write is idempotent)
+    const url = `${agentEndPoint}${CommonConstants.URL_AGENT_WRITE_DID}`;
+    const expectedDetails = await this.getDidDetails(url, createDidPayload, apiKey);
+    const expectedDoc = expectedDetails?.['didDocument'];
+
+    if (JSON.stringify(expectedDoc) !== JSON.stringify(hostedDoc)) {
+      throw new BadRequestException(ResponseMessages.agent.error.webDidDocumentMismatch);
+    }
+  }
+
   private constructUrl(agentDetails): string {
     return `${agentDetails.agentEndPoint}${CommonConstants.URL_AGENT_WRITE_DID}`;
   }
 
   private async getDidDetails(url, payload, apiKey): Promise<object> {
-    const didDetails = await this.commonService.httpPost(url, payload, {
+    // Strip empty-string and null values so the agent controller does not
+    // reject them as invalid values for optional fields.
+    const cleanPayload = Object.fromEntries(
+      Object.entries(payload).filter(([, v]) => v !== '' && v !== null && v !== undefined)
+    );
+    const didDetails = await this.commonService.httpPost(url, cleanPayload, {
       headers: { authorization: apiKey }
     });
 
@@ -960,54 +1055,6 @@ export class AgentServiceService {
     }
 
     return didDetails;
-  }
-
-  private checkDidExistence(getDidByOrg, didDetails): void {
-    const didExist = getDidByOrg.some((orgDidExist) => orgDidExist.did === didDetails.did);
-    if (didExist) {
-      throw new ConflictException(ResponseMessages.agent.error.didAlreadyExist, {
-        cause: new Error(),
-        description: ResponseMessages.errorMessages.serverError
-      });
-    }
-  }
-
-  private async updateAllDidsToNonPrimary(orgId, getDidByOrg): Promise<void> {
-    await Promise.all(
-      getDidByOrg.map(async () => {
-        await this.agentServiceRepository.updateIsPrimaryDid(orgId, false);
-      })
-    );
-  }
-
-  private async storeDid(createdDidDetails): Promise<OrgDid> {
-    const storeDidDetails = await this.agentServiceRepository.storeDidDetails(createdDidDetails);
-
-    if (!storeDidDetails) {
-      throw new InternalServerErrorException(ResponseMessages.agent.error.storeDid, {
-        cause: new Error(),
-        description: ResponseMessages.errorMessages.serverError
-      });
-    }
-
-    return storeDidDetails;
-  }
-
-  private async setPrimaryDidAndLedger(orgId, storeDidDetails, network, method): Promise<void> {
-    if (storeDidDetails.did && storeDidDetails.didDocument) {
-      await this.agentServiceRepository.setPrimaryDid(storeDidDetails.did, orgId, storeDidDetails.didDocument);
-    }
-
-    if (network) {
-      const getLedgerDetails = await this.agentServiceRepository.getLedgerByNameSpace(network);
-      await this.agentServiceRepository.updateLedgerId(orgId, getLedgerDetails.id);
-    } else {
-      const noLedgerData = await this.agentServiceRepository.getLedger(Ledgers.Not_Applicable);
-      if (!noLedgerData) {
-        throw new NotFoundException(ResponseMessages.agent.error.noLedgerFound);
-      }
-      await this.agentServiceRepository.updateLedgerId(orgId, noLedgerData?.id);
-    }
   }
 
   /**
@@ -1077,7 +1124,6 @@ export class AgentServiceService {
     delete WalletSetupPayload.label;
     delete WalletSetupPayload.clientSocketId;
     delete WalletSetupPayload.orgId;
-    delete WalletSetupPayload.ledgerId;
 
     const getDcryptedToken = await this.commonService.decryptPassword(platformAdminSpinnedUp?.org_agents[0].apiKey);
     const walletResponseDetails = await this._createTenantWallet(
@@ -1708,18 +1754,18 @@ export class AgentServiceService {
   }
 
   /**
-   * Get agent health
+   * Verify a raw Ed25519 signature against the key resolved from the holder's DID.
+   * The agent verify endpoint resolves the tenant context from the API token, so the
+   * same /agent/verify route serves both dedicated and shared (multi-tenant) agents
+   * (mirrors signDataFromAgent and the previous W3C verify path).
+   * @param data Verify payload ({ did, data, signature, ... })
    * @param orgId
-   * @returns agent status
+   * @returns true if the signature is valid for the DID-resolved key, false otherwise
    */
-  async verifysignature(data: unknown, orgId: string): Promise<IAgentStatus> {
+  async verifysignature(data: unknown, orgId: string): Promise<boolean> {
     try {
       // Get organization agent details
       const orgAgentDetails: org_agents = await this.agentServiceRepository.getOrgAgentDetails(orgId);
-      let agentApiKey;
-      if (orgAgentDetails) {
-        agentApiKey = await this.getOrgAgentApiKey(orgId);
-      }
 
       if (!orgAgentDetails) {
         throw new NotFoundException(ResponseMessages.agent.error.agentNotExists, {
@@ -1734,16 +1780,15 @@ export class AgentServiceService {
           description: ResponseMessages.errorMessages.notFound
         });
       }
+
+      const agentApiKey = await this.getOrgAgentApiKey(orgId);
       const url = getAgentUrl(orgAgentDetails.agentEndPoint, CommonConstants.VERIFY_SIGNED_DATA_FROM_AGENT);
 
-      // Invoke an API request from the agent to assess its current status
-      const signedDataFromAgent = await this.commonService
-        .httpPost(`${url}`, data, {
-          headers: { authorization: agentApiKey }
-        })
-        .then(async (response) => response);
+      const verificationResult = await this.commonService.httpPost(`${url}`, data, {
+        headers: { authorization: agentApiKey }
+      });
 
-      return signedDataFromAgent;
+      return verificationResult;
     } catch (error) {
       this.logger.error(`Agent signature request details : ${JSON.stringify(error)}`);
       throw new RpcException(error.response ?? error);
@@ -1882,6 +1927,13 @@ export class AgentServiceService {
 
       const orgAgent = orgAgentResult?.value;
 
+      // Handle orphaned partial record — wallet creation failed before Credo was called,
+      // so there is nothing in Credo to delete. Just clean up the DB record.
+      if (!orgAgent.tenantId || !orgAgent.orgAgentTypeId) {
+        await this.agentServiceRepository.deleteOrgAgentByOrg(orgAgent.orgId);
+        return;
+      }
+
       const orgAgentTypeResult = await this.agentServiceRepository.getOrgAgentType(orgAgent.orgAgentTypeId);
 
       if (!orgAgentTypeResult) {
@@ -1905,6 +1957,12 @@ export class AgentServiceService {
           ? `${orgAgent.agentEndPoint}${CommonConstants.URL_SHAGENT_DELETE_SUB_WALLET}`.replace('#', orgAgent?.tenantId)
           : `${orgAgent.agentEndPoint}${CommonConstants.URL_DELETE_WALLET}`;
 
+      // Archive schemas before deletion so that failure leaves the org intact
+      const did = orgAgent?.orgDid;
+      if (did) {
+        await this._updateIsSchemaArchivedFlag(did);
+      }
+
       // Perform the deletion in a transaction
       return await this.prisma.$transaction(async (prisma) => {
         // Delete org agent and related records
@@ -1916,7 +1974,8 @@ export class AgentServiceService {
           headers: { authorization: getApiKey }
         });
 
-        if (deleteWallet.status !== HttpStatus.NO_CONTENT) {
+        // 204 = deleted, 404 = already gone — both are acceptable (idempotent delete)
+        if (deleteWallet.status !== HttpStatus.NO_CONTENT && deleteWallet.status !== HttpStatus.NOT_FOUND) {
           throw new InternalServerErrorException(ResponseMessages.agent.error.walletNotDeleted);
         }
 
@@ -1925,11 +1984,6 @@ export class AgentServiceService {
           { records: agentInvitation.count, tableName: 'agent_invitations' },
           { records: deleteOrgAgent ? 1 : 0, tableName: 'org_agents' }
         ];
-
-        const did = orgAgent?.orgDid;
-
-        //archive schemas
-        await this._updateIsSchemaArchivedFlag(did);
 
         const logDeletionActivity = async (records, tableName): Promise<void> => {
           if (records) {

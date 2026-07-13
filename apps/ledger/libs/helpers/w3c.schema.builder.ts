@@ -11,7 +11,12 @@ import MultipleOf from 'libs/validations/multipleOf';
 import Pattern from 'libs/validations/pattern';
 import UniqueItems from 'libs/validations/uniqueItems';
 
-export function w3cSchemaBuilder(attributes: IW3CAttributeValue[], schemaName: string, description: string): object {
+export function w3cSchemaBuilder(
+  attributes: IW3CAttributeValue[],
+  schemaName: string,
+  description: string,
+  schemaUrl?: string
+): object {
   // Function to apply validations based on attribute properties
   const applyValidations = (attribute, propertyObj): ISchemaAttributesFormat => {
     const context = { ...propertyObj };
@@ -287,7 +292,7 @@ export function w3cSchemaBuilder(attributes: IW3CAttributeValue[], schemaName: s
   // Create the final W3C Schema
   const W3CSchema = {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: `https://example.com/schemas/${schemaName.toLowerCase().replace(/\s+/g, '-')}`,
+    $id: schemaUrl ?? `https://example.com/schemas/${schemaName.toLowerCase().replace(/\s+/g, '-')}`,
     title: schemaName,
     description,
     type: 'object',

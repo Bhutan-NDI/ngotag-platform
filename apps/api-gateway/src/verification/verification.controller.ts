@@ -53,12 +53,18 @@ import { user } from '@prisma/client';
 import { TrimStringParamPipe } from '@credebl/common/cast.helper';
 import { Validator } from '@credebl/common/validator';
 import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
+import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
+import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
+import { MarketplaceService } from '../marketplace/marketplace.service';
 
 @UseFilters(CustomExceptionFilter)
 @Controller()
 @ApiTags('verifications')
 export class VerificationController {
-  constructor(private readonly verificationService: VerificationService) {}
+  constructor(
+    private readonly verificationService: VerificationService,
+    private readonly marketplaceService: MarketplaceService
+  ) {}
 
   private readonly logger = new Logger('VerificationController');
 
@@ -251,7 +257,8 @@ export class VerificationController {
     enum: ProofRequestType
   })
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('verification')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
   async sendPresentationRequest(
     @Res() res: Response,
@@ -370,7 +377,8 @@ export class VerificationController {
   @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('verification')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   async verifyPresentation(
     @Res() res: Response,
     @User() user: IUserRequest,
@@ -406,7 +414,8 @@ export class VerificationController {
   })
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('verification')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   async sendOutOfBandPresentationRequest(
     @Res() res: Response,
     @User() user: IUserRequest,
@@ -458,6 +467,38 @@ export class VerificationController {
       .catch((error) => {
         this.logger.debug(`error in saving verification webhook ::: ${JSON.stringify(error)}`);
       });
+
+    // Best-effort marketplace usage capture on verification completion. Never blocks the webhook.
+    // proofPresentationPayload is already typed as WebhookPresentationProofDto — no separate cast needed.
+    // orgId is resolved from webhookProofPresentation (the persisted presentations row) because
+    // the DTO orgId may not be set for shared/cloud agents; the microservice resolves it correctly.
+    const resolvedOrgId = (webhookProofPresentation as { orgId?: string } | undefined)?.orgId;
+    const verificationSourceId = proofPresentationPayload.presentationId || proofPresentationPayload.threadId;
+    if (
+      resolvedOrgId &&
+      verificationSourceId &&
+      (proofPresentationPayload.isVerified ||
+        'verified' === `${proofPresentationPayload.state}`.toLowerCase() ||
+        'done' === `${proofPresentationPayload.state}`.toLowerCase())
+    ) {
+      void this.marketplaceService
+        .recordUsageEvent({
+          orgId: resolvedOrgId,
+          eventType: 'verification_completed',
+          sourceTable: 'presentations',
+          sourceId: verificationSourceId,
+          quantity: 1,
+          metadata: {
+            threadId: proofPresentationPayload.threadId,
+            state: proofPresentationPayload.state,
+            isVerified: proofPresentationPayload.isVerified
+          }
+        })
+        .catch((error) =>
+          this.logger.warn(`error in recording marketplace verification usage ::: ${JSON.stringify(error)}`)
+        );
+    }
+
     const finalResponse: IResponse = {
       statusCode: HttpStatus.CREATED,
       message: ResponseMessages.verification.success.create,

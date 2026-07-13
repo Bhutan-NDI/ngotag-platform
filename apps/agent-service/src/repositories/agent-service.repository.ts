@@ -238,6 +238,74 @@ export class AgentServiceRepository {
   }
 
   /**
+   * Atomically persist a created DID together with the related org_agents updates.
+   * Wrapping these writes in a single transaction prevents partial/inconsistent state (e.g. a DID
+   * row stored in org_dids while org_agents is never updated) when one write fails after a
+   * successful blockchain write. The agent-controller HTTP call and the read-only ledger lookup are
+   * intentionally performed by the caller BEFORE this transaction - never inside it.
+   *
+   * Idempotent retry: when `existingDid` is supplied the DID was already stored by a prior attempt,
+   * so we update that row instead of inserting and still apply the org_agents/spin-up updates the
+   * earlier run may have failed to commit - reconciling partial state rather than failing.
+   */
+  // eslint-disable-next-line camelcase
+  async persistDidWithUpdates(params: {
+    createdDidDetails: IStoreDidDetails;
+    existingDid: OrgDid | null;
+    ledgerId: string | null;
+    updateSpinupStatus: boolean;
+  }): Promise<org_dids> {
+    const { createdDidDetails, existingDid, ledgerId, updateSpinupStatus } = params;
+    const { orgId, did, didDocument, isPrimaryDid, userId, orgAgentId } = createdDidDetails;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        // Demote only the *other* DIDs so re-asserting an existing primary DID on retry does not
+        // flip itself off. The partial unique index on org_dids(orgId) WHERE isPrimaryDid is the
+        // DB-level backstop: two concurrent primary creations can't both end up live - the second
+        // commit fails with a unique violation.
+        if (isPrimaryDid) {
+          await tx.org_dids.updateMany({ where: { orgId, NOT: { did } }, data: { isPrimaryDid: false } });
+        }
+
+        const storedDid = existingDid
+          ? await tx.org_dids.update({
+              where: { id: existingDid.id },
+              data: { isPrimaryDid, didDocument, lastChangedBy: userId }
+            })
+          : await tx.org_dids.create({
+              data: {
+                orgId,
+                did,
+                didDocument,
+                isPrimaryDid,
+                createdBy: userId,
+                lastChangedBy: userId,
+                orgAgentId
+              }
+            });
+
+        // Collapse the related org_agents writes into a single update - they all target the same
+        // org_agents row (where: { orgId }), so one round-trip is enough.
+        const orgAgentData = {
+          ...(isPrimaryDid && storedDid.did && storedDid.didDocument
+            ? { orgDid: storedDid.did, didDocument: storedDid.didDocument }
+            : {}),
+          ...(isPrimaryDid && ledgerId ? { ledgerId } : {}),
+          ...(updateSpinupStatus ? { agentSpinUpStatus: AgentSpinUpStatus.DID_CREATED } : {})
+        };
+        if (0 < Object.keys(orgAgentData).length) {
+          await tx.org_agents.update({ where: { orgId }, data: orgAgentData });
+        }
+
+        return storedDid;
+      });
+    } catch (error) {
+      this.logger.error(`[persistDidWithUpdates] - Persist DID details: ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  /**
    * Set primary DID
    * @param did
    * @returns did details
@@ -562,6 +630,7 @@ export class AgentServiceRepository {
     }
   }
 
+
   async deleteOrgAgentByOrg(orgId: string): Promise<{
     orgDid: Prisma.BatchPayload;
     agentInvitation: Prisma.BatchPayload;
@@ -599,6 +668,15 @@ export class AgentServiceRepository {
       });
     } catch (error) {
       this.logger.error(`[deleteOrgAgentByOrg] - Error deleting org agent record: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async deleteOrgAgentById(id: string): Promise<void> {
+    try {
+      await this.prisma.org_agents.delete({ where: { id } });
+    } catch (error) {
+      this.logger.error(`[deleteOrgAgentById] - Error deleting org agent record by id: ${error.message}`);
       throw error;
     }
   }

@@ -50,7 +50,6 @@ import { Cache } from 'cache-manager';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { CommonService } from '@credebl/common';
-import { W3CSchemaVersion } from './enum/schema.enum';
 import { v4 as uuidv4 } from 'uuid';
 import { networkNamespace } from '@credebl/common/common.utils';
 import { checkDidLedgerAndNetwork } from '@credebl/common/cast.helper';
@@ -282,7 +281,7 @@ export class SchemaService extends BaseService {
     try {
       let createSchema;
 
-      const { description, attributes, schemaName } = schemaPayload;
+      const { description, attributes, schemaName, schemaVersion = '1.0' } = schemaPayload;
       const agentDetails = await this.schemaRepository.getAgentDetailsByOrgId(orgId);
       if (!agentDetails) {
         throw new NotFoundException(ResponseMessages.schema.error.agentDetailsNotFound, {
@@ -299,8 +298,30 @@ export class SchemaService extends BaseService {
           description: ResponseMessages.errorMessages.badRequest
         });
       }
+
+      const schemaAlreadyExists = await this.schemaRepository.w3cSchemaExists(schemaName, schemaVersion, orgId);
+      if (schemaAlreadyExists) {
+        throw new ConflictException(ResponseMessages.schema.error.exists, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.conflict
+        });
+      }
+
       const url = `${agentEndPoint}${CommonConstants.CREATE_POLYGON_W3C_SCHEMA}`;
-      const schemaObject = await w3cSchemaBuilder(attributes, schemaName, description);
+
+      let schemaObject;
+      let schemaResourceId: string | undefined;
+
+      if (schemaPayload.schemaType === JSONSchemaType.LEDGER_LESS) {
+        // Generate the resource ID before building so $id in the document matches the hosted URL
+        schemaResourceId = uuidv4();
+        const schemaUrl = `${process.env.SCHEMA_FILE_SERVER_URL}${schemaResourceId}`;
+        schemaObject = w3cSchemaBuilder(attributes, schemaName, description, schemaUrl);
+      } else {
+        // POLYGON_W3C: URL is assigned by the agent after upload; $id cannot be set in advance
+        schemaObject = w3cSchemaBuilder(attributes, schemaName, description);
+      }
+
       if (!schemaObject) {
         throw new BadRequestException(ResponseMessages.schema.error.schemaBuilder, {
           cause: new Error(),
@@ -322,7 +343,7 @@ export class SchemaService extends BaseService {
         createSchema = createSchemaPayload.response;
         createSchema.type = JSONSchemaType.POLYGON_W3C;
       } else {
-        const createSchemaPayload = await this._createW3CledgerAgnostic(schemaObject);
+        const createSchemaPayload = await this._createW3CledgerAgnostic(schemaObject, schemaResourceId);
         if (!createSchemaPayload) {
           throw new BadRequestException(ResponseMessages.schema.error.schemaUploading, {
             cause: new Error(),
@@ -335,7 +356,7 @@ export class SchemaService extends BaseService {
         createSchema.schemaUrl = `${process.env.SCHEMA_FILE_SERVER_URL}${createSchemaPayload.data.schemaId}`;
       }
 
-      const storeW3CSchema = await this.storeW3CSchemas(createSchema, user, orgId, attributes, alias);
+      const storeW3CSchema = await this.storeW3CSchemas(createSchema, user, orgId, attributes, alias, schemaVersion);
 
       if (!storeW3CSchema) {
         throw new BadRequestException(ResponseMessages.schema.error.storeW3CSchema, {
@@ -351,7 +372,7 @@ export class SchemaService extends BaseService {
     }
   }
 
-  private async storeW3CSchemas(schemaDetails, user, orgId, attributes, alias): Promise<schema> {
+  private async storeW3CSchemas(schemaDetails, user, orgId, attributes, alias, schemaVersion: string): Promise<schema> {
     let ledgerDetails;
     const schemaServerUrl = `${process.env.SCHEMA_FILE_SERVER_URL}${schemaDetails.schemaId}`;
     const schemaRequest = await this.commonService.httpGet(schemaServerUrl).then(async (response) => response);
@@ -377,7 +398,7 @@ export class SchemaService extends BaseService {
     const storeSchemaDetails = {
       schema: {
         schemaName: schemaRequest.title,
-        schemaVersion: W3CSchemaVersion.W3C_SCHEMA_VERSION,
+        schemaVersion,
         attributes,
         id: schemaDetails.schemaUrl
       },
@@ -451,11 +472,9 @@ export class SchemaService extends BaseService {
   }
 
   // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types, @typescript-eslint/explicit-function-return-type
-  async _createW3CledgerAgnostic(payload) {
-    const schemaResourceId = uuidv4();
-
+  async _createW3CledgerAgnostic(payload, schemaResourceId: string) {
     const schemaPayload = JSON.stringify({
-      schemaId: `${schemaResourceId}`,
+      schemaId: schemaResourceId,
       schema: payload
     });
 

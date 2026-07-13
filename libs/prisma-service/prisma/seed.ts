@@ -6,9 +6,10 @@ import * as util from 'util';
 import { HttpStatus, Logger } from '@nestjs/common';
 
 import { CommonConstants } from '../../common/src/common.constant';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { exec } from 'child_process';
 
+import { Country, State, City } from 'country-state-city';
 const execPromise = util.promisify(exec);
 
 const prisma = new PrismaClient({
@@ -32,10 +33,36 @@ const logger = new Logger('Init seed DB');
 let platformUserId = '';
 let cachedConfig: PlatformConfig;
 
-const configData = fs.readFileSync(
-  `${process.cwd()}/prisma/data/credebl-master-table/credebl-master-table.json`,
-  'utf8'
-);
+const configData = fs.readFileSync(`${__dirname}/data/credebl-master-table/credebl-master-table.json`, 'utf8');
+
+const getEncryptedPlatformAdminPassword = (): string | undefined => {
+  const { PLATFORM_ADMIN_PASSWORD, CRYPTO_PRIVATE_KEY } = process.env;
+
+  if (!PLATFORM_ADMIN_PASSWORD) {
+    return undefined;
+  }
+
+  if (!CRYPTO_PRIVATE_KEY) {
+    throw new Error('Missing environment variable: CRYPTO_PRIVATE_KEY');
+  }
+
+  return CryptoJS.AES.encrypt(JSON.stringify(PLATFORM_ADMIN_PASSWORD), CRYPTO_PRIVATE_KEY).toString();
+};
+
+const decryptSeedPassword = (encryptedPassword: string, privateKey: string): string => {
+  const decryptedPassword = CryptoJS.AES.decrypt(encryptedPassword, privateKey).toString(CryptoJS.enc.Utf8);
+
+  if (!decryptedPassword) {
+    throw new Error('Platform admin password could not be decrypted');
+  }
+
+  try {
+    return JSON.parse(decryptedPassword);
+  } catch {
+    return decryptedPassword;
+  }
+};
+
 const createPlatformConfig = async (): Promise<void> => {
   try {
     const existPlatformAdmin = await prisma.platform_config.findMany();
@@ -169,8 +196,20 @@ const createEcosystemRoles = async (): Promise<void> => {
 const createPlatformUser = async (): Promise<void> => {
   try {
     const { platformAdminData } = JSON.parse(configData);
+    const platformAdminPassword = process.env.PLATFORM_ADMIN_PASSWORD;
+
+    if (!platformAdminPassword) {
+      throw new Error('Missing environment variable: PLATFORM_ADMIN_PASSWORD');
+    }
+
     platformAdminData.email = process.env.PLATFORM_ADMIN_EMAIL;
     platformAdminData.username = process.env.PLATFORM_ADMIN_EMAIL;
+    const encryptedPlatformAdminPassword = getEncryptedPlatformAdminPassword();
+
+    if (encryptedPlatformAdminPassword) {
+      platformAdminData.password = encryptedPlatformAdminPassword;
+      platformAdminData.isEmailVerified = true;
+    }
 
     const existPlatformAdminUser = await prisma.user.findMany({
       where: {
@@ -187,6 +226,19 @@ const createPlatformUser = async (): Promise<void> => {
 
       logger.log(platformUser);
     } else {
+      platformUserId = existPlatformAdminUser[0].id;
+
+      if (encryptedPlatformAdminPassword) {
+        await prisma.user.update({
+          where: { email: platformAdminData.email },
+          data: {
+            password: encryptedPlatformAdminPassword,
+            isEmailVerified: true
+          }
+        });
+        logger.log('Updated platform admin password from PLATFORM_ADMIN_PASSWORD');
+      }
+
       logger.log('Already seeding in user');
     }
   } catch (error) {
@@ -443,27 +495,132 @@ const addSchemaType = async (): Promise<void> => {
   }
 };
 
-const importGeoLocationMasterData = async (): Promise<void> => {
+// ---------------------------------------------------------------------------
+// Geo-location data patches — entries missing from country-state-city package
+// ---------------------------------------------------------------------------
+const GEO_STATE_PATCHES: Record<string, { name: string; isoCode: string; countryCode: string }[]> = {
+  BT: [{ name: 'Trashiyangtse District', isoCode: 'TY', countryCode: 'BT' }]
+};
+
+const SEED_BATCH_SIZE = 2000;
+
+const seedGeoLocationData = async (): Promise<void> => {
   try {
-    const scriptPath = process.env.GEO_LOCATION_MASTER_DATA_IMPORT_SCRIPT;
-    const dbUrl = process.env.DATABASE_URL;
-
-    if (!scriptPath || !dbUrl) {
-      throw new Error('Environment variables GEO_LOCATION_MASTER_DATA_IMPORT_SCRIPT or DATABASE_URL are not set.');
+    const existingCount = await prisma.countries.count();
+    if (0 < existingCount) {
+      logger.log(`Geo-location data already seeded (${existingCount} countries found). Skipping.`);
+      return;
     }
 
-    const command = `${process.cwd()}/${scriptPath} ${dbUrl}`;
+    // -----------------------------------------------------------------------
+    // 1. Countries
+    // -----------------------------------------------------------------------
+    const allCountries = Country.getAllCountries().sort((a, b) => a.name.localeCompare(b.name));
+    logger.log(`Seeding ${allCountries.length} countries...`);
 
-    const { stdout, stderr } = await execPromise(command);
+    await prisma.countries.createMany({
+      data: allCountries.map((c) => ({
+        name: c.name,
+        isoCode: c.isoCode,
+        phonecode: c.phonecode || null
+      }))
+    });
 
-    if (stdout) {
-      logger.log(`Shell script output: ${stdout}`);
+    // Fetch back with assigned DB IDs (seeded in alphabetical order)
+    const insertedCountries = await prisma.countries.findMany({ orderBy: { name: 'asc' } });
+    logger.log(`Countries seeded: ${insertedCountries.length}`);
+
+    // -----------------------------------------------------------------------
+    // 2. States — collected across all countries, inserted in batches
+    // -----------------------------------------------------------------------
+    logger.log('Seeding states...');
+    const statesBuffer: { name: string; countryId: number; countryCode: string; isoCode: string }[] = [];
+
+    for (const country of insertedCountries) {
+      const pkgStates = State.getStatesOfCountry(country.isoCode);
+      const patches = GEO_STATE_PATCHES[country.isoCode] || [];
+      const patchIsoCodes = new Set(patches.map((p) => p.isoCode));
+      const merged = [...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)), ...patches].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+
+      for (const state of merged) {
+        statesBuffer.push({
+          name: state.name,
+          countryId: country.id,
+          countryCode: state.countryCode,
+          isoCode: state.isoCode || ''
+        });
+      }
     }
-    if (stderr) {
-      logger.error(`Shell script error: ${stderr}`);
+
+    for (let i = 0; i < statesBuffer.length; i += SEED_BATCH_SIZE) {
+      await prisma.states.createMany({ data: statesBuffer.slice(i, i + SEED_BATCH_SIZE) });
     }
+    logger.log(`States seeded: ${statesBuffer.length}`);
+
+    // -----------------------------------------------------------------------
+    // 3. Cities — look up inserted state IDs by (countryId + isoCode) key
+    // -----------------------------------------------------------------------
+    logger.log('Seeding cities (this may take a moment)...');
+
+    const insertedStates = await prisma.states.findMany({
+      select: { id: true, countryId: true, isoCode: true }
+    });
+    // Map "countryId|stateIsoCode" → DB state id
+    const stateKeyToId = new Map(insertedStates.map((s) => [`${s.countryId}|${s.isoCode}`, s.id]));
+
+    let citiesBuffer: {
+      name: string;
+      stateId: number;
+      stateCode: string;
+      countryId: number;
+      countryCode: string;
+    }[] = [];
+    let totalCities = 0;
+
+    for (const country of insertedCountries) {
+      const pkgStates = State.getStatesOfCountry(country.isoCode);
+      const patches = GEO_STATE_PATCHES[country.isoCode] || [];
+      const patchIsoCodes = new Set(patches.map((p) => p.isoCode));
+      const allStates = [...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)), ...patches];
+
+      for (const state of allStates) {
+        const stateId = stateKeyToId.get(`${country.id}|${state.isoCode}`);
+        if (!stateId) {
+          continue;
+        }
+
+        const cities = City.getCitiesOfState(country.isoCode, state.isoCode);
+        for (const city of cities) {
+          citiesBuffer.push({
+            name: city.name,
+            stateId,
+            stateCode: city.stateCode,
+            countryId: country.id,
+            countryCode: city.countryCode
+          });
+        }
+
+        // Flush batch when large enough to keep memory usage low
+        if (citiesBuffer.length >= SEED_BATCH_SIZE * 5) {
+          await prisma.cities.createMany({ data: citiesBuffer });
+          totalCities += citiesBuffer.length;
+          citiesBuffer = [];
+        }
+      }
+    }
+
+    // Flush remaining cities
+    if (0 < citiesBuffer.length) {
+      await prisma.cities.createMany({ data: citiesBuffer });
+      totalCities += citiesBuffer.length;
+    }
+
+    logger.log(`Cities seeded: ${totalCities}`);
+    logger.log('Geo-location data seeding complete.');
   } catch (error) {
-    logger.error('An error occurred during importGeoLocationMasterData:', error);
+    logger.error('An error occurred during seedGeoLocationData:', error);
     throw error;
   }
 };
@@ -665,14 +822,21 @@ export async function getKeycloakToken(): Promise<string> {
 export async function createKeycloakUser(): Promise<void> {
   logger.log(`✅ Creating keycloak user for platform admin`);
   const { platformAdminData } = JSON.parse(configData);
-  if (!platformAdminData?.password) {
-    throw new Error('platformAdminData password is missing from credebl-master-table.json');
+  if (!process.env.PLATFORM_ADMIN_PASSWORD && !platformAdminData?.password) {
+    throw new Error('PLATFORM_ADMIN_PASSWORD or platformAdminData password is required');
   }
   if (!cachedConfig) {
     throw new Error('failed to load platform config data from db');
   }
 
-  const { KEYCLOAK_DOMAIN, KEYCLOAK_REALM, ADMIN_KEYCLOAK_ID, ADMIN_KEYCLOAK_SECRET, CRYPTO_PRIVATE_KEY } = process.env;
+  const {
+    KEYCLOAK_DOMAIN,
+    KEYCLOAK_REALM,
+    ADMIN_KEYCLOAK_ID,
+    ADMIN_KEYCLOAK_SECRET,
+    PLATFORM_ADMIN_PASSWORD,
+    CRYPTO_PRIVATE_KEY
+  } = process.env;
 
   if (!KEYCLOAK_DOMAIN) {
     throw new Error('Missing environment variable: KEYCLOAK_DOMAIN');
@@ -694,14 +858,47 @@ export async function createKeycloakUser(): Promise<void> {
     throw new Error('Missing environment variable: CRYPTO_PRIVATE_KEY');
   }
 
-  const decryptedPassword = CryptoJS.AES.decrypt(platformAdminData.password, CRYPTO_PRIVATE_KEY);
+  const platformAdminPassword = PLATFORM_ADMIN_PASSWORD ?? decryptSeedPassword(platformAdminData.password, CRYPTO_PRIVATE_KEY);
   const token = await getKeycloakToken();
   const user = {
     username: cachedConfig.platformEmail,
     email: cachedConfig.platformEmail,
     firstName: cachedConfig.platformName,
     lastName: cachedConfig.platformName,
-    password: decryptedPassword.toString(CryptoJS.enc.Utf8)
+    password: platformAdminPassword
+  };
+  const encClientId = CryptoJS.AES.encrypt(JSON.stringify(ADMIN_KEYCLOAK_ID), CRYPTO_PRIVATE_KEY).toString();
+  const encClientSecret = CryptoJS.AES.encrypt(JSON.stringify(ADMIN_KEYCLOAK_SECRET), CRYPTO_PRIVATE_KEY).toString();
+  const updatePlatformAdminUser = async (keycloakUserId: string): Promise<void> => {
+    await prisma.user.update({
+      where: { email: cachedConfig.platformEmail },
+      data: {
+        keycloakUserId,
+        clientId: encClientId,
+        clientSecret: encClientSecret
+      }
+    });
+  };
+  const resetKeycloakUserPassword = async (keycloakUserId: string): Promise<void> => {
+    const passwordResponse = await fetch(
+      `${KEYCLOAK_DOMAIN}admin/realms/${KEYCLOAK_REALM}/users/${keycloakUserId}/reset-password`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          type: 'password',
+          value: platformAdminPassword,
+          temporary: false
+        })
+      }
+    );
+
+    if (!passwordResponse.ok) {
+      throw new Error(`Failed to reset platform admin Keycloak password (${passwordResponse.status})`);
+    }
   };
   const res = await fetch(`${KEYCLOAK_DOMAIN}admin/realms/${KEYCLOAK_REALM}/users`, {
     method: 'POST',
@@ -730,6 +927,31 @@ export async function createKeycloakUser(): Promise<void> {
 
   if (HttpStatus.CONFLICT === res.status) {
     logger.log(`⚠️ User ${user.username} already exists`);
+    const searchResponse = await fetch(
+      `${KEYCLOAK_DOMAIN}admin/realms/${KEYCLOAK_REALM}/users?exact=true&email=${encodeURIComponent(user.email)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }
+    );
+
+    if (!searchResponse.ok) {
+      throw new Error(`Failed to find existing platform admin Keycloak user (${searchResponse.status})`);
+    }
+
+    const existingUsers = await searchResponse.json();
+    const existingKeycloakUser = existingUsers.find(
+      (existingUser) => existingUser?.email?.toLowerCase() === user.email.toLowerCase()
+    );
+
+    if (!existingKeycloakUser?.id) {
+      throw new Error(`Existing platform admin Keycloak user not found for ${user.email}`);
+    }
+
+    await resetKeycloakUserPassword(existingKeycloakUser.id);
+    await updatePlatformAdminUser(existingKeycloakUser.id);
+    logger.log(`✅ Platform admin Keycloak user password reset and database record updated`);
     return;
   }
 
@@ -756,18 +978,7 @@ export async function createKeycloakUser(): Promise<void> {
     }
     logger.log(`✅ Platform admin found in database`);
 
-    const encClientId = CryptoJS.AES.encrypt(JSON.stringify(ADMIN_KEYCLOAK_ID), CRYPTO_PRIVATE_KEY).toString();
-
-    const encClientSecret = CryptoJS.AES.encrypt(JSON.stringify(ADMIN_KEYCLOAK_SECRET), CRYPTO_PRIVATE_KEY).toString();
-
-    await prisma.user.update({
-      where: { email: cachedConfig.platformEmail },
-      data: {
-        keycloakUserId: userId,
-        clientId: encClientId,
-        clientSecret: encClientSecret
-      }
-    });
+    await updatePlatformAdminUser(userId);
     logger.log(`✅ Platform admin added and updated to user's table sucessfully`);
   } else {
     throw new Error('Failed to extract user ID from Location header');
@@ -805,6 +1016,94 @@ export async function getPlatformConfig(): Promise<PlatformConfig> {
   return cachedConfig;
 }
 
+const seedMarketplacePlans = async (): Promise<void> => {
+  const offerId = process.env.MARKETPLACE_OFFER_ID;
+  if (!offerId) {
+    logger.log('MARKETPLACE_OFFER_ID not set — skipping marketplace plan seeding');
+    return;
+  }
+
+  const plans = [
+    {
+      offerId,
+      planId: 'starter',
+      displayName: 'Starter',
+      baseMonthlyPriceUsd: 550,
+      setupFeeUsd: 30000,
+      includedIssuanceTransactions: 1000,
+      includedVerificationTransactions: 1000,
+      includedSchemas: 1,
+      maxOrganizations: 1,
+      maxUsers: 1,
+      features: {
+        schemaCreate: true,
+        credentialDefinitionCreate: true,
+        issuance: true,
+        bulkIssuance: true,
+        verification: true,
+        apiAccess: true
+      }
+    },
+    {
+      offerId,
+      planId: 'business',
+      displayName: 'Business',
+      baseMonthlyPriceUsd: 2750,
+      setupFeeUsd: 30000,
+      includedIssuanceTransactions: 5000,
+      includedVerificationTransactions: 5000,
+      includedSchemas: 5,
+      maxOrganizations: 1,
+      maxUsers: 2,
+      features: {
+        schemaCreate: true,
+        credentialDefinitionCreate: true,
+        issuance: true,
+        bulkIssuance: true,
+        verification: true,
+        apiAccess: true
+      }
+    },
+    {
+      offerId,
+      planId: 'enterprise',
+      displayName: 'Enterprise',
+      baseMonthlyPriceUsd: 5500,
+      setupFeeUsd: 30000,
+      includedIssuanceTransactions: 10000,
+      includedVerificationTransactions: 10000,
+      includedSchemas: 10,
+      maxOrganizations: 5,
+      maxUsers: 5,
+      features: {
+        schemaCreate: true,
+        credentialDefinitionCreate: true,
+        issuance: true,
+        bulkIssuance: true,
+        verification: true,
+        apiAccess: true
+      }
+    }
+  ];
+
+  try {
+    // Upsert so the seed is idempotent and self-correcting: re-running it restores the
+    // canonical commercial-spec quotas for the configured offer (matched on offerId+planId).
+    for (const plan of plans) {
+      await prisma.marketplace_plan.upsert({
+        where: { offerId_planId: { offerId: plan.offerId, planId: plan.planId } },
+        create: { ...plan, features: plan.features as Prisma.InputJsonValue },
+        update: { ...plan, features: plan.features as Prisma.InputJsonValue }
+      });
+      logger.log(`Upserted marketplace plan: ${plan.planId} for offer ${offerId}`);
+    }
+    logger.log(`Upserted ${plans.length} marketplace plan(s) for offer ${offerId}`);
+  } catch (error) {
+    logger.error('An error occurred seeding marketplace plans:', error);
+    throw error;
+  }
+};
+
 async function main(): Promise<void> {
   await createOrgRoles();
   await createAgentTypes();
@@ -818,7 +1117,7 @@ async function main(): Promise<void> {
   await createUserRole();
   await migrateOrgAgentDids();
   await addSchemaType();
-  await importGeoLocationMasterData();
+  await seedGeoLocationData();
   await updateClientCredential();
   await createPlatformConfig();
 
@@ -826,6 +1125,7 @@ async function main(): Promise<void> {
   await updateClientId();
   await updatePlatformUserRole();
   await createKeycloakUser();
+  await seedMarketplacePlans();
 }
 
 main()

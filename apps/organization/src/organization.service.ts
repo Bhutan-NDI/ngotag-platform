@@ -42,7 +42,7 @@ import { UserActivityService } from '@credebl/user-activity';
 import { ClientRegistrationService } from '@credebl/client-registration/client-registration.service';
 import { map } from 'rxjs/operators';
 import { Cache } from 'cache-manager';
-import { AwsService } from '@credebl/aws';
+import { AzureStorageService } from '@credebl/azure-storage';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
   IOrgCredentials,
@@ -77,7 +77,7 @@ export class OrganizationService {
     private readonly organizationRepository: OrganizationRepository,
     private readonly orgRoleService: OrgRolesService,
     private readonly userOrgRoleService: UserOrgRolesService,
-    private readonly awsService: AwsService,
+    private readonly azureStorageService: AzureStorageService,
     private readonly userActivityService: UserActivityService,
     private readonly logger: Logger,
     // TODO: Remove duplicate, unused variable
@@ -118,6 +118,9 @@ export class OrganizationService {
         throw new BadRequestException(ResponseMessages.organisation.error.MaximumOrgsLimit);
       }
 
+      // Enforce the marketplace plan organization limit after the platform-wide MAX_ORG_LIMIT.
+      await this.assertMarketplaceOrganizationLimit(userId, userOrgCount);
+
       const organizationExist = await this.organizationRepository.checkOrganizationNameExist(createOrgDto.name);
 
       if (organizationExist) {
@@ -137,7 +140,7 @@ export class OrganizationService {
       createOrgDto.lastChangedBy = userId;
 
       if (await this.isValidBase64(createOrgDto?.logo)) {
-        const imageUrl = await this.uploadFileToS3(createOrgDto.logo);
+        const imageUrl = await this.uploadFileToAzure(createOrgDto.logo);
         createOrgDto.logo = imageUrl;
       } else {
         createOrgDto.logo = '';
@@ -490,15 +493,15 @@ export class OrganizationService {
     }
   }
 
-  async uploadFileToS3(orgLogo: string): Promise<string> {
+  async uploadFileToAzure(orgLogo: string): Promise<string> {
     try {
       const updatedOrglogo = orgLogo.split(',')[1];
       const imgData = Buffer.from(updatedOrglogo, 'base64');
-      const logoUrl = await this.awsService.uploadFileToS3Bucket(
+      const logoUrl = await this.azureStorageService.uploadUserCertificate(
         imgData,
         'png',
         'orgLogo',
-        process.env.AWS_ORG_LOGO_BUCKET_NAME,
+        process.env.AZURE_STORAGE_CONTAINER_NAME || 'logo',
         'base64',
         'orgLogos'
       );
@@ -542,7 +545,7 @@ export class OrganizationService {
       updateOrgDto.userId = userId;
 
       if (await this.isValidBase64(updateOrgDto.logo)) {
-        const imageUrl = await this.uploadFileToS3(updateOrgDto.logo);
+        const imageUrl = await this.uploadFileToAzure(updateOrgDto.logo);
         updateOrgDto.logo = imageUrl;
       } else {
         delete updateOrgDto.logo;
@@ -892,6 +895,20 @@ export class OrganizationService {
    * @param email
    * @returns
    */
+  async verifyInvitationPending(invitationId: string, email: string): Promise<{ valid: boolean }> {
+    try {
+      const invitation = await this.organizationRepository.getInvitationById(invitationId);
+      const valid =
+        Boolean(invitation) &&
+        invitation.status === Invitation.PENDING &&
+        invitation.email?.toLowerCase() === email.toLowerCase();
+      return { valid };
+    } catch (error) {
+      this.logger.error(`error in verifyInvitationPending: ${JSON.stringify(error)}`);
+      return { valid: false };
+    }
+  }
+
   async checkInvitationExist(email: string, orgId: string): Promise<boolean> {
     try {
       const query = {
@@ -949,10 +966,22 @@ export class OrganizationService {
       const isInvitationExist = await this.checkInvitationExist(email, orgId);
 
       if (!isInvitationExist && userEmail !== invitation.email) {
-        await this.organizationRepository.createSendInvitation(email, String(orgId), String(userId), orgRoleId);
+        const createdInvitation = await this.organizationRepository.createSendInvitation(
+          email,
+          String(orgId),
+          String(userId),
+          orgRoleId
+        );
 
         try {
-          await this.sendInviteEmailTemplate(email, orgName, orgRolesDetails, firstName, isUserExist);
+          await this.sendInviteEmailTemplate(
+            email,
+            orgName,
+            orgRolesDetails,
+            firstName,
+            isUserExist,
+            createdInvitation.id
+          );
         } catch (error) {
           throw new InternalServerErrorException(ResponseMessages.user.error.emailSend);
         }
@@ -999,7 +1028,7 @@ export class OrganizationService {
       const isInvitationExist = await this.checkInvitationExist(email, orgId);
 
       if (!isInvitationExist && userEmail !== invitation.email) {
-        await this.organizationRepository.createSendInvitation(
+        const createdInvitation = await this.organizationRepository.createSendInvitation(
           email,
           String(orgId),
           String(userId),
@@ -1007,7 +1036,14 @@ export class OrganizationService {
         );
 
         try {
-          await this.sendInviteEmailTemplate(email, orgName, filteredOrgRoles, firstName, isUserExist);
+          await this.sendInviteEmailTemplate(
+            email,
+            orgName,
+            filteredOrgRoles,
+            firstName,
+            isUserExist,
+            createdInvitation.id
+          );
         } catch (error) {
           throw new InternalServerErrorException(ResponseMessages.user.error.emailSend);
         }
@@ -1030,6 +1066,8 @@ export class OrganizationService {
       if (!organizationDetails) {
         throw new NotFoundException(ResponseMessages.organisation.error.orgNotFound);
       }
+
+      await this.assertMarketplaceUserLimitAllowsInvitations(bulkInvitationDto, userEmail);
 
       if (!organizationDetails.idpId) {
         await this.createInvitationByOrgRoles(bulkInvitationDto, userEmail, userId, organizationDetails.name);
@@ -1069,7 +1107,8 @@ export class OrganizationService {
     orgName: string,
     orgRolesDetails: object[],
     firstName: string,
-    isUserExist: boolean
+    isUserExist: boolean,
+    invitationId?: string
   ): Promise<boolean> {
     const platformConfigData = await this.prisma.platform_config.findMany();
 
@@ -1084,7 +1123,8 @@ export class OrganizationService {
       orgName,
       orgRolesDetails,
       firstName,
-      isUserExist
+      isUserExist,
+      invitationId
     );
 
     //Email is sent to user for the verification through emailData
@@ -1225,6 +1265,86 @@ export class OrganizationService {
    * @param payload
    * @returns Updated invitation response
    */
+  private async assertMarketplaceOrganizationLimit(userId: string, currentOrgCount: number): Promise<void> {
+    const maxOrganizations = await this.organizationRepository.getMarketplaceMaxOrganizationsByUser(userId);
+
+    if (!maxOrganizations) {
+      return;
+    }
+
+    if (currentOrgCount >= maxOrganizations) {
+      throw new BadRequestException({
+        code: 'marketplace_org_limit_reached',
+        message: `Marketplace plan allows ${maxOrganizations} organization${
+          1 === maxOrganizations ? '' : 's'
+        } for this subscription`
+      });
+    }
+  }
+
+  private async assertMarketplaceUserLimitAllowsInvitations(
+    bulkInvitationDto: BulkSendInvitationDto,
+    senderEmail: string
+  ): Promise<void> {
+    const { invitations = [], orgId } = bulkInvitationDto;
+    const maxUsers = await this.organizationRepository.getMarketplaceMaxUsers(orgId);
+
+    if (!maxUsers) {
+      return;
+    }
+
+    const newInviteEmails = new Set<string>();
+
+    for (const invitation of invitations) {
+      const email = invitation.email?.trim().toLowerCase();
+      if (!email || email === senderEmail?.trim().toLowerCase()) {
+        continue;
+      }
+
+      const isInvitationExist = await this.checkInvitationExist(invitation.email, orgId);
+      if (!isInvitationExist) {
+        newInviteEmails.add(email);
+      }
+    }
+
+    if (!newInviteEmails.size) {
+      return;
+    }
+
+    const [activeUsers, pendingInvitations] = await Promise.all([
+      this.organizationRepository.getOrganizationUserCount(orgId),
+      this.organizationRepository.getPendingOrganizationInvitationCount(orgId)
+    ]);
+
+    if (activeUsers + pendingInvitations + newInviteEmails.size > maxUsers) {
+      throw new BadRequestException({
+        code: 'marketplace_user_limit_reached',
+        message: `Marketplace plan allows ${maxUsers} Studio user${1 === maxUsers ? '' : 's'} for this organization`
+      });
+    }
+  }
+
+  private async assertMarketplaceUserLimitAllowsAcceptance(orgId: string, userId: string): Promise<void> {
+    const maxUsers = await this.organizationRepository.getMarketplaceMaxUsers(orgId);
+
+    if (!maxUsers) {
+      return;
+    }
+
+    const isExistingOrgUser = await this.userOrgRoleService.checkUserOrgExist(userId, orgId);
+    if (isExistingOrgUser) {
+      return;
+    }
+
+    const activeUsers = await this.organizationRepository.getOrganizationUserCount(orgId);
+    if (activeUsers + 1 > maxUsers) {
+      throw new BadRequestException({
+        code: 'marketplace_user_limit_reached',
+        message: `Marketplace plan allows ${maxUsers} Studio user${1 === maxUsers ? '' : 's'} for this organization`
+      });
+    }
+  }
+
   async updateOrgInvitation(payload: UpdateInvitationDto): Promise<string> {
     try {
       const { orgId, status, invitationId, userId, keycloakUserId, email } = payload;
@@ -1236,6 +1356,11 @@ export class OrganizationService {
         if (userOrgCount >= toNumber(`${process.env.MAX_ORG_LIMIT}`)) {
           throw new BadRequestException(ResponseMessages.organisation.error.MaximumOrgsLimit);
         }
+
+        // Enforce the marketplace plan organization limit after the platform-wide MAX_ORG_LIMIT.
+        await this.assertMarketplaceOrganizationLimit(userId, userOrgCount);
+
+        await this.assertMarketplaceUserLimitAllowsAcceptance(orgId, userId);
       }
       if (!invitation || (invitation && invitation.email !== email)) {
         throw new NotFoundException(ResponseMessages.user.error.invitationNotFound);

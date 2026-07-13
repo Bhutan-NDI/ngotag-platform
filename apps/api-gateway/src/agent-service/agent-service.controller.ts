@@ -35,7 +35,6 @@ import { AgentSpinupDto, SignDataDto, VerifySignatureDto } from './dto/agent-ser
 import { Response } from 'express';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { user } from '@prisma/client';
-import { CreateTenantDto } from './dto/create-tenant.dto';
 import { User } from '../authz/decorators/user.decorator';
 import { CustomExceptionFilter } from 'apps/api-gateway/common/exception-handler';
 import { Roles } from '../authz/decorators/roles.decorator';
@@ -47,7 +46,6 @@ import { CreateNewDidDto } from './dto/create-new-did.dto';
 import { AgentSpinupValidator, TrimStringParamPipe } from '@credebl/common/cast.helper';
 import { AgentConfigureDto } from './dto/agent-configure.dto';
 import { UnauthorizedErrorDto } from '../dtos/unauthorized-error.dto';
-import { IVerifySignature } from './interface/agent-service.interface';
 
 const seedLength = 32;
 
@@ -143,13 +141,14 @@ export class AgentController {
    */
   @ApiBody({
     description:
-      'Enter the data you would like to verify the signature for. It can be of type w3c jsonld credential or any type that needs to be verified',
+      'DID-bound raw signature verification payload. The server resolves the verification key from the DID Document.',
     type: VerifySignatureDto
   })
   @Post('/orgs/:orgId/agents/verify-signature')
   @ApiOperation({
-    summary: 'Validates signed data from agent, including credentials',
-    description: 'Credentials or any other data signed by the organisation is validated'
+    summary: 'Verify a raw Ed25519 signature against the holder DID',
+    description:
+      'Verifies a challenge-response signature for DID-based authentication. The public key is resolved from the DID Document server-side.'
   })
   // @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
   // @Roles(
@@ -163,7 +162,7 @@ export class AgentController {
   // )
   async verifysignature(
     @Param('orgId') orgId: string,
-    @Body() data: IVerifySignature,
+    @Body() data: VerifySignatureDto,
     @Res() res: Response
   ): Promise<Response> {
     const agentData = await this.agentService.verifysignature(data, orgId);
@@ -254,12 +253,12 @@ export class AgentController {
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Wallet successfully created', type: ApiResponseDto })
   async createTenant(
     @Param('orgId') orgId: string,
-    @Body() createTenantDto: CreateTenantDto,
+    @Body() createWalletDto: CreateWalletDto,
     @User() user: user,
     @Res() res: Response
   ): Promise<Response> {
-    createTenantDto.orgId = orgId;
-    const tenantDetails = await this.agentService.createTenant(createTenantDto, user);
+    createWalletDto.orgId = orgId;
+    const tenantDetails = await this.agentService.createTenant(createWalletDto, user);
 
     const finalResponse: IResponse = {
       statusCode: HttpStatus.CREATED,
@@ -345,6 +344,41 @@ export class AgentController {
     };
 
     return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
+
+  /**
+   * Generate a did:web DID and DID Document without writing to the platform DB.
+   * The returned DID Document must be hosted at https://<domain>/.well-known/did.json
+   * before calling the create DID endpoint.
+   * @param orgId The ID of the organization
+   * @param createDidDto The DID creation parameters (method, seed, domain, keyType)
+   * @param res The response object
+   * @returns The generated DID and DID Document
+   */
+  @Post('/orgs/:orgId/agents/dids/web/generate')
+  @ApiOperation({
+    summary: 'Generate a did:web DID Document',
+    description:
+      'Generates the DID and DID Document for a did:web without storing it. Host the returned document at https://<domain>/.well-known/did.json then call POST /orgs/:orgId/agents/did to create the DID.'
+  })
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN)
+  @ApiBearerAuth()
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async generateWebDid(
+    @Param('orgId') orgId: string,
+    @Body() createDidDto: CreateNewDidDto,
+    @Res() res: Response
+  ): Promise<Response> {
+    const result = await this.agentService.generateWebDid(createDidDto, orgId);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.agent.success.generateWebDid,
+      data: result
+    };
+
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**

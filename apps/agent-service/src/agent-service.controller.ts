@@ -70,6 +70,11 @@ export class AgentServiceController {
     return this.agentServiceService.createDid(payload.createDidDto, payload.orgId, payload.user);
   }
 
+  @MessagePattern({ cmd: 'generate-web-did' })
+  async generateWebDid(payload: { createDidDto: IDidCreate; orgId: string }): Promise<object> {
+    return this.agentServiceService.generateWebDid(payload.createDidDto, payload.orgId);
+  }
+
   @MessagePattern({ cmd: 'create-wallet' })
   async createWallet(payload: { createWalletDto: IWallet; user: IUserRequestInterface }): Promise<ITenantRecord> {
     return this.agentServiceService.createWallet(payload.createWalletDto);

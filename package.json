@@ -7,7 +7,7 @@
   "scripts": {
     "prebuild": "rimraf dist",
     "build": "nest build",
-    "build:all": "rimraf dist && nest build api-gateway && nest build platform-service && nest build agent-service && nest build connection",
+    "build:all": "rimraf dist && nest build api-gateway && nest build platform-service && nest build agent-service && nest build connection && nest build marketplace",
     "format": "prettier --write \"apps/**/*.ts\" \"libs/**/*.ts\"",
     "start": "npx prisma migrate deploy --schema=./libs/prisma-service/prisma/schema.prisma & nest start",
     "start:dev": "nest start --watch",
@@ -23,10 +23,11 @@
     "prepare": "husky install"
   },
   "prisma": {
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "ts-node libs/prisma-service/prisma/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.997.0",
+    "@azure/storage-blob": "12.26.0",
     "@elastic/ecs-winston-format": "^1.5.3",
     "@nestjs/axios": "catalog:",
     "@nestjs/bull": "catalog:",
@@ -74,14 +75,17 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "cookie-parser": "^1.4.7",
+    "country-state-city": "^3.2.1",
     "crypto-js": "^4.2.0",
     "crypto-random-string": "^5.0.0",
     "dotenv": "^16.6.1",
     "express": "^5.2.1",
     "express-useragent": "^1.0.15",
     "firebase-admin": "^13.6.1",
+    "form-data": "^4.0.5",
     "fs": "0.0.1-security",
-    "generate-password": "^1.7.1", 
+    "generate-password": "^1.7.1",
+    "handlebars": "^4.7.9",
     "helmet": "^8.1.0",
     "html-pdf": "^3.0.1",
     "html-to-image": "^1.11.13",
@@ -109,6 +113,7 @@
     "path": "^0.12.7",
     "pdfkit": "^0.13.0",
     "pg": "^8.18.0",
+    "protobufjs": "^7.5.6",
     "puppeteer": "^21.11.0",
     "qrcode": "^1.5.4",
     "qs": "^6.15.0",
@@ -127,10 +132,7 @@
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0",
     "winston-elasticsearch": "0.16.0",
-    "xml-js": "^1.6.11",
-    "protobufjs": "^7.5.6",
-    "handlebars": "^4.7.9",
-    "form-data": "^4.0.5"
+    "xml-js": "^1.6.11"
   },
   "devDependencies": {
     "@nestjs/cli": "catalog:",
@@ -202,12 +204,36 @@
       "^@credebl/org-roles(|/.*)$": "<rootDir>/libs/org-roles/src/$1",
       "^@credebl/user-org-roles(|/.*)$": "<rootDir>/libs/user-org-roles/src/$1",
       "^y/user-activity(|/.*)$": "<rootDir>/libs/user-activity/src/$1",
+      "^libs/user-activity/repositories$": "<rootDir>/libs/user-activity/repositories",
       "^@app/supabase(|/.*)$": "<rootDir>/libs/supabase/src/$1",
       "^@credebl/aws(|/.*)$": "<rootDir>/libs/aws/src/$1",
+      "^@credebl/azure-storage(|/.*)$": "<rootDir>/libs/azure-storage/src/$1",
       "^credebl/utility(|/.*)$": "<rootDir>/libs/utility/src/$1",
       "^@credebl/config(|/.*)$": "<rootDir>/libs/config/src/$1",
       "^@credebl/context(|/.*)$": "<rootDir>/libs/context/src/$1",
       "^@credebl/logger(|/.*)$": "<rootDir>/libs/logger/src/$1"
+    }
+  },
+  "overrides": {
+    "@azure/core-auth": "1.9.0",
+    "@azure/core-client": "1.9.3",
+    "@azure/core-http-compat": "2.3.0",
+    "@azure/core-rest-pipeline": "1.19.1",
+    "@azure/core-tracing": "1.2.0",
+    "@azure/core-util": "1.11.0",
+    "@azure/core-xml": "1.4.5",
+    "@azure/logger": "1.1.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "@azure/core-auth": "1.9.0",
+      "@azure/core-client": "1.9.3",
+      "@azure/core-http-compat": "2.3.0",
+      "@azure/core-rest-pipeline": "1.19.1",
+      "@azure/core-tracing": "1.2.0",
+      "@azure/core-util": "1.11.0",
+      "@azure/core-xml": "1.4.5",
+      "@azure/logger": "1.1.4"
     }
   },
   "packageManager": "pnpm@9.15.3+sha512.1f79bc245a66eb0b07c5d4d83131240774642caaa86ef7d0434ab47c0d16f66b04e21e0c086eb61e62c77efc4d7f7ec071afad3796af64892fae66509173893a",

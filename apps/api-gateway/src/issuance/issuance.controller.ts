@@ -69,7 +69,7 @@ import {
   IssueCredentialType,
   UploadedFileDetails
 } from './interfaces';
-import { AwsService } from '@credebl/aws';
+import { AzureStorageService } from '@credebl/azure-storage';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { v4 as uuidv4 } from 'uuid';
 import { RpcException } from '@nestjs/microservices';
@@ -82,6 +82,9 @@ import { CommonConstants } from '../../../../libs/common/src/common.constant';
 import { TrimStringParamPipe } from '@credebl/common/cast.helper';
 import { NotFoundErrorDto } from '../dtos/not-found-error.dto';
 import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
+import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
+import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
+import { MarketplaceService } from '../marketplace/marketplace.service';
 @Controller()
 @UseFilters(CustomExceptionFilter)
 @ApiTags('credentials')
@@ -90,9 +93,14 @@ import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 export class IssuanceController {
   constructor(
     private readonly issueCredentialService: IssuanceService,
-    private readonly awsService: AwsService
+    private readonly azureStorageService: AzureStorageService,
+    private readonly marketplaceService: MarketplaceService
   ) {}
   private readonly logger = new Logger('IssuanceController');
+
+  private isIssuedCredentialState(state?: string): boolean {
+    return ['done', 'issued', 'credential_issued'].includes(`${state}`.toLowerCase());
+  }
 
   /**
    * Get all issued credentials for a specific organization
@@ -309,7 +317,8 @@ export class IssuanceController {
    */
   @Post('/orgs/:orgId/bulk/upload')
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER, OrgRoles.VERIFIER)
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('bulkIssuance')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Upload file for bulk issuance',
@@ -373,7 +382,7 @@ export class IssuanceController {
     if (file) {
       const fileKey: string = uuidv4();
       try {
-        await this.awsService.uploadCsvFile(fileKey, file?.buffer);
+        await this.azureStorageService.uploadCsvFile(fileKey, file?.buffer);
       } catch (error) {
         throw new RpcException(error.response ? error.response : error);
       }
@@ -466,7 +475,8 @@ export class IssuanceController {
    */
   @Post('/orgs/:orgId/:requestId/bulk')
   @Roles(OrgRoles.ADMIN, OrgRoles.OWNER, OrgRoles.ISSUER, OrgRoles.VERIFIER)
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('bulkIssuance')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   @ApiBearerAuth()
   @ApiUnauthorizedResponse({
     description: 'Unauthorized',
@@ -526,7 +536,7 @@ export class IssuanceController {
     if (file && clientDetails?.isSelectiveIssuance) {
       const fileKey: string = uuidv4();
       try {
-        await this.awsService.uploadCsvFile(fileKey, file.buffer);
+        await this.azureStorageService.uploadCsvFile(fileKey, file.buffer);
       } catch (error) {
         throw new RpcException(error.response ? error.response : error);
       }
@@ -682,7 +692,8 @@ export class IssuanceController {
    */
   @Post('/orgs/:orgId/:fileId/retry/bulk')
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER, OrgRoles.VERIFIER)
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('bulkIssuance')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   @ApiBearerAuth()
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @ApiUnauthorizedResponse({
@@ -747,7 +758,8 @@ export class IssuanceController {
     name: 'credentialType',
     enum: IssueCredentialType
   })
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('issuance')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER)
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
   async sendCredential(
@@ -828,7 +840,8 @@ export class IssuanceController {
   })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('issuance')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER)
   @ApiQuery({
     name: 'credentialType',
@@ -906,7 +919,8 @@ export class IssuanceController {
     type: Boolean,
     required: false
   })
-  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @RequiresMarketplaceFeature('issuance')
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard, MarketplaceEntitlementGuard)
   @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER)
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Success', type: ApiResponseDto })
   async createOOBCredentialOffer(
@@ -957,6 +971,35 @@ export class IssuanceController {
       .catch((error) => {
         this.logger.debug(`error in saving issuance webhook ::: ${JSON.stringify(error)}`);
       });
+
+    // Best-effort marketplace usage capture on issuance completion. Never blocks the webhook.
+    // issueCredentialDto is already typed as IssuanceDto — no need for a separate cast.
+    // orgId is resolved from getCredentialDetails (the persisted credentials row) because
+    // issueCredentialDto.orgId is only set when contextCorrelationId === 'default'; for
+    // shared/cloud agents the microservice resolves it via tenant lookup and returns it here.
+    const resolvedOrgId = (getCredentialDetails as { response?: { orgId?: string } } | undefined)?.response?.orgId;
+    const issuanceSourceId = issueCredentialDto.id || issueCredentialDto.threadId;
+    if (resolvedOrgId && issuanceSourceId && this.isIssuedCredentialState(issueCredentialDto.state)) {
+      void this.marketplaceService
+        .recordUsageEvent({
+          orgId: resolvedOrgId,
+          eventType: 'issuance_completed',
+          sourceTable: 'credentials',
+          sourceId: issuanceSourceId,
+          occurredAt: issueCredentialDto.createdAt,
+          quantity: 1,
+          metadata: {
+            schemaId: issueCredentialDto.schemaId,
+            credDefId: issueCredentialDto.credDefId,
+            connectionId: issueCredentialDto.connectionId,
+            state: issueCredentialDto.state
+          }
+        })
+        .catch((error) =>
+          this.logger.warn(`error in recording marketplace issuance usage ::: ${JSON.stringify(error)}`)
+        );
+    }
+
     const finalResponse: IResponseType = {
       statusCode: HttpStatus.CREATED,
       message: ResponseMessages.issuance.success.create,
