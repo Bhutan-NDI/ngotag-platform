@@ -483,11 +483,8 @@ export class VerificationService {
       const { isShortenUrl, emailId, type, reuseConnection, ...updateOutOfBandRequestProof } = outOfBandRequestProof;
       let invitationDid: string | undefined;
       if (true === reuseConnection) {
-        const data: agent_invitations[] = await this.verificationRepository.getInvitationDidByOrgId(user.orgId);
-        if (data && 0 < data.length) {
-          const [firstElement] = data;
-          invitationDid = firstElement?.invitationDid ?? undefined;
-        }
+        const invitation: agent_invitations = await this.verificationRepository.getInvitationDidByOrgId(user.orgId);
+        invitationDid = invitation?.invitationDid ?? undefined;
       }
       outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
 
