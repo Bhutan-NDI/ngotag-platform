@@ -309,7 +309,8 @@ export const ResponseMessages = {
     success: {
       fetch: 'Schema retrieved successfully.',
       create: 'Schema created successfully.',
-      update: 'Schema updated successfully'
+      update: 'Schema updated successfully',
+      migrate: 'Schema migrated successfully.'
     },
     error: {
       invalidSchemaId: 'Please provide valid schema Id',
@@ -334,6 +335,7 @@ export const ResponseMessages = {
       schemaUploading: 'Error while uploading schema JSON',
       W3CSchemaNotFOund: 'Error while resolving W3C schema',
       storeW3CSchema: 'Error while storing W3C schema',
+      updateW3CSchema: 'Error while updating W3C schema',
       networkNotFound: 'Error while fetching network',
       orgDidAndSchemaType: 'Organization DID and schema type does not match'
     }
@@ -370,7 +372,8 @@ export const ResponseMessages = {
       create: 'Organization wallet created successfully',
       createWallet: 'Wallet created successfully',
       createDid: 'Did created successfully',
-      generateWebDid: 'did:web DID Document generated successfully. Host the document then call the create DID endpoint.',
+      generateWebDid:
+        'did:web DID Document generated successfully. Host the document then call the create DID endpoint.',
       health: 'Agent health details retrieved successfully.',
       ledgerConfig: 'Ledger config details fetched successfully.',
       sign: 'Payload signed successfully.',
@@ -413,7 +416,8 @@ export const ResponseMessages = {
       invalidTenantIdIdFormat: 'Invalid tenantId format',
       requiredTenantId: 'Tenant Id is required',
       createDid: 'Error while creating DID',
-      webDidDocumentMismatch: 'Hosted DID Document does not match the generated DID Document. Ensure you host the exact document returned by the generate endpoint.',
+      webDidDocumentMismatch:
+        'Hosted DID Document does not match the generated DID Document. Ensure you host the exact document returned by the generate endpoint.',
       webDidDomainAlreadyExists: 'A did:web DID for this domain already exists for this organization.',
       networkMismatch: 'The network is mismatched.',
       didAlreadyExist: 'DID already exist',

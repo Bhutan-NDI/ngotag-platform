@@ -19,13 +19,16 @@ import {
   ISchemaCredDeffSearchInterface,
   ISchemaExist,
   ISchemaSearchCriteria,
-  W3CCreateSchema
+  IUpdateW3CSchemaLedger,
+  W3CCreateSchema,
+  W3CMigrateSchema
 } from './interfaces/schema-payload.interface';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import {
   ICreateSchema,
   ICreateW3CSchema,
   IGenericSchema,
+  IMigrateW3CSchema,
   IUpdateSchema,
   IUserRequestInterface,
   UpdateSchemaResponse
@@ -307,7 +310,10 @@ export class SchemaService extends BaseService {
         });
       }
 
-      const url = `${agentEndPoint}${CommonConstants.CREATE_POLYGON_W3C_SCHEMA}`;
+      const url =
+        JSONSchemaType.ETHEREUM_W3C === schemaPayload.schemaType
+          ? `${agentEndPoint}${CommonConstants.CREATE_ETHEREUM_W3C_SCHEMA}`
+          : `${agentEndPoint}${CommonConstants.CREATE_POLYGON_W3C_SCHEMA}`;
 
       let schemaObject;
       let schemaResourceId: string | undefined;
@@ -338,10 +344,13 @@ export class SchemaService extends BaseService {
         orgId,
         schemaRequestPayload: agentSchemaPayload
       };
-      if (schemaPayload.schemaType === JSONSchemaType.POLYGON_W3C) {
+      if (
+        schemaPayload.schemaType === JSONSchemaType.POLYGON_W3C ||
+        schemaPayload.schemaType === JSONSchemaType.ETHEREUM_W3C
+      ) {
         const createSchemaPayload = await this._createW3CSchema(W3cSchemaPayload);
         createSchema = createSchemaPayload.response;
-        createSchema.type = JSONSchemaType.POLYGON_W3C;
+        createSchema.type = schemaPayload.schemaType;
       } else {
         const createSchemaPayload = await this._createW3CledgerAgnostic(schemaObject, schemaResourceId);
         if (!createSchemaPayload) {
@@ -370,6 +379,119 @@ export class SchemaService extends BaseService {
       this.logger.error(`[createSchema] - outer Error: ${JSON.stringify(error)}`);
       throw error;
     }
+  }
+
+  async migrateW3CSchema(
+    schemaPayload: IMigrateW3CSchema,
+    user: IUserRequestInterface,
+    orgId: string
+  ): Promise<ISchemaData> {
+    try {
+      const { schemaId, targetSchemaType } = schemaPayload;
+      const agentDetails = await this.schemaRepository.getAgentDetailsByOrgId(orgId);
+      if (!agentDetails) {
+        throw new NotFoundException(ResponseMessages.schema.error.agentDetailsNotFound, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.notFound
+        });
+      }
+
+      const schemaUrl = `${process.env.SCHEMA_FILE_SERVER_URL}${schemaId}`;
+      const existingSchema = await this.schemaRepository.getSchemaByOrgSchemaUrl(schemaUrl, orgId);
+      if (!existingSchema) {
+        throw new NotFoundException(ResponseMessages.schema.error.notFound, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.notFound
+        });
+      }
+
+      const { agentEndPoint } = agentDetails;
+
+      const ledgerAndNetworkDetails = await checkDidLedgerAndNetwork(targetSchemaType, agentDetails.orgDid);
+      if (!ledgerAndNetworkDetails) {
+        throw new BadRequestException(ResponseMessages.schema.error.orgDidAndSchemaType, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.badRequest
+        });
+      }
+
+      const url = `${agentEndPoint}${CommonConstants.MIGRATE_ETHEREUM_W3C_SCHEMA}`;
+      const agentSchemaPayload = {
+        did: agentDetails.orgDid,
+        schemaId
+      };
+      const W3cSchemaPayload: W3CMigrateSchema = {
+        url,
+        orgId,
+        schemaRequestPayload: agentSchemaPayload
+      };
+
+      await this._migrateW3CSchema(W3cSchemaPayload);
+
+      const updateSchemaPayload: IUpdateW3CSchemaLedger = {
+        id: existingSchema.id,
+        publisherDid: agentDetails.orgDid,
+        changedBy: user.id
+      };
+      const updatedSchema = await this.updateMigratedW3CSchema(updateSchemaPayload);
+
+      if (!updatedSchema) {
+        throw new BadRequestException(ResponseMessages.schema.error.updateW3CSchema, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      return updatedSchema;
+    } catch (error) {
+      this.logger.error(`[migrateW3CSchema] - outer Error: ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  private async updateMigratedW3CSchema(updateSchema: IUpdateW3CSchemaLedger): Promise<schema> {
+    const ledgerNamespace = networkNamespace(updateSchema.publisherDid);
+    const ledgerDetails = await this.schemaRepository.getLedgerByNamespace(ledgerNamespace);
+
+    if (!ledgerDetails) {
+      throw new NotFoundException(ResponseMessages.schema.error.networkNotFound, {
+        cause: new Error(),
+        description: ResponseMessages.errorMessages.notFound
+      });
+    }
+
+    return this.schemaRepository.updateW3CSchemaLedgerDetails({
+      ...updateSchema,
+      ledgerId: ledgerDetails.id
+    });
+  }
+
+  async _migrateW3CSchema(payload: W3CMigrateSchema): Promise<{
+    response: string;
+  }> {
+    const natsPattern = {
+      cmd: 'agent-migrate-w3c-schema'
+    };
+    const W3CSchemaResponse = await from(this.natsClient.send<string>(this.schemaServiceProxy, natsPattern, payload))
+      .pipe(
+        // TODO: remove nested mapping
+        map((response) => ({
+          response
+        }))
+      )
+      .toPromise()
+      .catch((error) => {
+        this.logger.error(`Error in migrating W3C schema : ${JSON.stringify(error)}`);
+        throw new HttpException(
+          {
+            status: error.error.code,
+            error: error.message,
+            message: error.error.message.error.message
+          },
+          error.error
+        );
+      });
+    return W3CSchemaResponse;
   }
 
   private async storeW3CSchemas(schemaDetails, user, orgId, attributes, alias, schemaVersion: string): Promise<schema> {

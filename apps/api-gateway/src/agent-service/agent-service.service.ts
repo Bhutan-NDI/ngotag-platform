@@ -92,6 +92,13 @@ export class AgentService extends BaseService {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'polygon-create-keys', payload);
   }
 
+  async createEthKeyPair(orgId: string): Promise<object> {
+    const payload = { orgId };
+    // NATS call
+
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'ethereum-create-keys', payload);
+  }
+
   async agentConfigure(agentConfigureDto: AgentConfigureDto, user: user): Promise<object> {
     const payload = { agentConfigureDto, user };
     // NATS call

@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import * as dotenv from 'dotenv';
 import { ResponseMessages } from './response-messages';
 import { CommonConstants } from './common.constant';
+import { JSONSchemaType } from '../../enum/src/enum';
 dotenv.config();
 /* eslint-disable camelcase */
 // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types, @typescript-eslint/explicit-function-return-type
@@ -59,8 +60,11 @@ export const networkNamespace = (did: string): string => {
   // Split the DID into segments using the colon as a delimiter
   const segments = did.split(':');
   const hasPolygon = segments.some((segment) => segment.includes(CommonConstants.POLYGON));
-  const hasTestnet = segments.some((segment) => segment.includes(CommonConstants.TESTNET));
-  if (hasPolygon) {
+  const hasEthereum = segments.some((segment) => segment.includes(JSONSchemaType.ETHEREUM_W3C));
+  const hasTestnet =
+    segments.some((segment) => segment.includes(CommonConstants.TESTNET)) ||
+    segments.some((segment) => segment.includes(CommonConstants.SEPOLIA));
+  if (hasPolygon || hasEthereum) {
     return hasTestnet ? `${segments[1]}:${segments[2]}` : `${segments[1]}:${CommonConstants.MAINNET}`;
   }
 

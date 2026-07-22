@@ -129,6 +129,24 @@
       "indyNamespace": "polygon:mainnet"
     },
     {
+      "name": "Ethereum Sepolia",
+      "networkType": "testnet",
+      "poolConfig": "",
+      "isActive": true,
+      "networkString": "sepolia",
+      "nymTxnEndpoint": "",
+      "indyNamespace": "ethr:sepolia"
+    },
+    {
+      "name": "Ethereum Mainnet",
+      "networkType": "mainnet",
+      "poolConfig": "",
+      "isActive": true,
+      "networkString": "mainnet",
+      "nymTxnEndpoint": "",
+      "indyNamespace": "ethr:mainnet"
+    },
+    {
       "name": "NA",
       "networkType": "NA",
       "poolConfig": "NA",
@@ -156,6 +174,15 @@
         "did:polygon": {
             "mainnet":"did:polygon:mainnet",
             "testnet":"did:polygon:testnet"
+        }
+    }
+    },
+    {
+      "name": "ethereum",
+      "details":  {
+        "did:ethr": {
+            "mainnet":"did:ethr",
+            "testnet":"did:ethr:sepolia"
         }
     }
     },

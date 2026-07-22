@@ -13,6 +13,7 @@ import { NATSClient } from '@credebl/common/NATSClient';
 
 import { UpdateSchemaResponse } from 'apps/ledger/src/schema/interfaces/schema.interface';
 import { UpdateSchemaDto } from './dtos/update-schema-dto';
+import { MigrateW3CSchemaDto } from '../dtos/migrate-schema.dto';
 import { ClientProxy } from '@nestjs/microservices';
 
 @Injectable()
@@ -54,5 +55,14 @@ export class SchemaService extends BaseService {
   updateSchema(schemaDetails: UpdateSchemaDto): Promise<UpdateSchemaResponse> {
     const payload = { schemaDetails };
     return this.natsClient.sendNatsMessage(this.schemaServiceProxy, 'update-schema', payload);
+  }
+
+  migrateSchema(
+    migrateSchemaDetails: MigrateW3CSchemaDto,
+    user: IUserRequestInterface,
+    orgId: string
+  ): Promise<ISchemaData> {
+    const payload = { migrateSchemaDetails, user, orgId };
+    return this.natsClient.sendNatsMessage(this.schemaServiceProxy, 'migrate-w3c-schema', payload);
   }
 }

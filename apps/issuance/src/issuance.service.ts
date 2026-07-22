@@ -155,9 +155,8 @@ export class IssuanceService {
       const { orgId, credentialDefinitionId, comment, credentialData, isValidateSchema } = payload || {};
 
       if (payload.credentialType === IssueCredentialType.INDY) {
-        const schemaResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
-          credentialDefinitionId
-        );
+        const schemaResponse: SchemaDetails =
+          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
         if (schemaResponse?.attributes) {
           const schemaResponseError = [];
           const attributesArray: IAttributes[] = JSON.parse(schemaResponse.attributes);
@@ -234,6 +233,7 @@ export class IssuanceService {
           issueData = {
             protocolVersion: payload.protocolVersion || 'v2',
             connectionId,
+            parentThreadId: payload.parentThreadId ?? undefined,
             credentialFormats: {
               jsonld: {
                 credential,
@@ -348,9 +348,8 @@ export class IssuanceService {
         isValidateSchema
       } = payload;
       if (credentialType === IssueCredentialType.INDY) {
-        const schemadetailsResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
-          credentialDefinitionId
-        );
+        const schemadetailsResponse: SchemaDetails =
+          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
 
         if (schemadetailsResponse?.attributes) {
           const schemadetailsResponseError = [];
@@ -800,9 +799,8 @@ export class IssuanceService {
       }
 
       if (IssueCredentialType.INDY === credentialType) {
-        const schemaResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
-          credentialDefinitionId
-        );
+        const schemaResponse: SchemaDetails =
+          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
 
         this.logger.debug(
           'Schema details for indy based credential received:',

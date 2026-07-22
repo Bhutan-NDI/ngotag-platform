@@ -92,6 +92,11 @@ export class AgentServiceController {
     return this.agentServiceService.createW3CSchema(payload.url, payload.orgId, payload.schemaRequestPayload);
   }
 
+  @MessagePattern({ cmd: 'agent-migrate-w3c-schema' })
+  async migrateW3CSchema(payload: { url; orgId; schemaRequestPayload }): Promise<object> {
+    return this.agentServiceService.migrateW3CSchema(payload.url, payload.orgId, payload.schemaRequestPayload);
+  }
+
   //DONE
   @MessagePattern({ cmd: 'agent-get-schema' })
   async getSchemaById(payload: IGetSchemaAgentRedirection): Promise<object> {
@@ -309,6 +314,11 @@ export class AgentServiceController {
   @MessagePattern({ cmd: 'polygon-create-keys' })
   async createSecp256k1KeyPair(payload: { orgId: string }): Promise<object> {
     return this.agentServiceService.createSecp256k1KeyPair(payload.orgId);
+  }
+
+  @MessagePattern({ cmd: 'ethereum-create-keys' })
+  async createEthKeyPair(payload: { orgId: string }): Promise<object> {
+    return this.agentServiceService.createEthereumKeyPair(payload.orgId);
   }
 
   @MessagePattern({ cmd: 'agent-create-connection-invitation' })

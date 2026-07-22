@@ -868,21 +868,18 @@ export class AgentServiceService {
     try {
       const agentDetails = await this.agentServiceRepository.getOrgAgentDetails(orgId);
 
-      // Look up the ledger for the requested network once and reuse it for both the network
-      // validation here and the primary-DID ledger update below (avoids a duplicate DB read and
-      // keeps validation and the update based on the same ledger row).
+      // Look up the ledger for the requested network once and reuse it for the primary-DID
+      // ledger update below. Organizations are allowed to hold DIDs across multiple networks,
+      // so no mismatch is enforced against the org's existing ledger here.
       let networkLedgerId: string | null = null;
       if (createDidPayload?.network) {
         const getNameSpace = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload?.network);
         networkLedgerId = getNameSpace.id;
-        if (agentDetails.ledgerId !== null && agentDetails.ledgerId !== getNameSpace.id) {
-          throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
-        }
       }
       const getApiKey = await this.getOrgAgentApiKey(orgId);
       const url = this.constructUrl(agentDetails);
 
-      if (createDidPayload.method === DidMethod.POLYGON) {
+      if (createDidPayload.method === DidMethod.POLYGON || createDidPayload.method === DidMethod.ETHEREUM) {
         createDidPayload.endpoint = agentDetails.agentEndPoint;
       }
 
@@ -1079,6 +1076,32 @@ export class AgentServiceService {
       return createKeyPairResponse;
     } catch (error) {
       this.logger.error(`error in createSecp256k1KeyPair : ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  /**
+   * @returns Ethereum key pair for did:ethr
+   */
+  async createEthereumKeyPair(orgId: string): Promise<object> {
+    try {
+      const platformAdminSpinnedUp = await this.agentServiceRepository.platformAdminAgent(
+        CommonConstants.PLATFORM_ADMIN_ORG
+      );
+
+      const getPlatformAgentEndPoint = platformAdminSpinnedUp.org_agents[0].agentEndPoint;
+      const getDcryptedToken = await this.commonService.decryptPassword(platformAdminSpinnedUp?.org_agents[0].apiKey);
+
+      const url = `${getPlatformAgentEndPoint}${CommonConstants.CREATE_ETH_KEY}`;
+      this.logger.log(`Creating Ethereum key pair at URL: ${url}`);
+      const createKeyPairResponse = await this.commonService.httpPost(
+        url,
+        {},
+        { headers: { authorization: getDcryptedToken } }
+      );
+      return createKeyPairResponse;
+    } catch (error) {
+      this.logger.error(`error in createEthereumKeyPair : ${JSON.stringify(error)}`);
       throw new RpcException(error.response ? error.response : error);
     }
   }
@@ -2193,6 +2216,19 @@ export class AgentServiceService {
       return schemaRequest;
     } catch (error) {
       this.logger.error(`Error in createW3CSchema request in agent service : ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  async migrateW3CSchema(url: string, orgId: string, schemaRequestPayload): Promise<object> {
+    try {
+      const getApiKey = await this.getOrgAgentApiKey(orgId);
+      const schemaRequest = await this.commonService
+        .httpPost(url, schemaRequestPayload, { headers: { authorization: getApiKey } })
+        .then(async (response) => response);
+      return schemaRequest;
+    } catch (error) {
+      this.logger.error(`Error in migrateW3CSchema request in agent service : ${JSON.stringify(error)}`);
       throw error;
     }
   }
