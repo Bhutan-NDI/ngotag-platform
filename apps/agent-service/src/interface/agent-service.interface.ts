@@ -340,7 +340,7 @@ export interface IFilter {
 }
 export interface IFields {
   path: string[];
-  filter: IFilter;
+  filter?: IFilter;
 }
 export interface IConstraints {
   fields: IFields[];
