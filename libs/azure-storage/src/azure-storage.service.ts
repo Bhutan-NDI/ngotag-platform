@@ -1,4 +1,4 @@
-import type { IStorageUploadResult, StorageService } from '@credebl/storage/storage.interface';
+import type { IStorageUploadResult, StorageService } from '@credebl/common';
 
 import { BlobServiceClient, ContainerClient } from '@azure/storage-blob';
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';

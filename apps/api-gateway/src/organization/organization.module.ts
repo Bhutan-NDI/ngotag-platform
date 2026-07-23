@@ -7,7 +7,6 @@ import { Module } from '@nestjs/common';
 import { OrganizationController } from './organization.controller';
 import { OrganizationService } from './organization.service';
 import { getNatsOptions } from '@credebl/common/nats.config';
-import { AzureStorageService } from '@credebl/azure-storage';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { NATSClient } from '@credebl/common/NATSClient';
 @Module({
@@ -28,6 +27,6 @@ import { NATSClient } from '@credebl/common/NATSClient';
     ])
   ],
   controllers: [OrganizationController],
-  providers: [OrganizationService, CommonService, AzureStorageService, NATSClient]
+  providers: [OrganizationService, CommonService, NATSClient]
 })
 export class OrganizationModule {}

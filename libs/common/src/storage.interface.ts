@@ -6,8 +6,10 @@ export interface IStorageUploadResult {
 /**
  * Provider-agnostic object/blob storage contract. Both AwsService (S3) and
  * AzureStorageService implement this so consumers depend on the interface
- * (injected via the STORAGE_SERVICE token) rather than a concrete provider.
- * The shape mirrors the existing Azure service so consumer call sites are unchanged.
+ * (injected via the STORAGE_SERVICE token from @credebl/storage) rather than a
+ * concrete provider. Housed in @credebl/common — a neutral lib that imports
+ * neither storage provider — so aws/azure/storage libs can all reference it
+ * without a dependency cycle.
  */
 export interface StorageService {
   uploadUserCertificate(

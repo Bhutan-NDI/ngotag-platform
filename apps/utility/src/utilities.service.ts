@@ -75,7 +75,7 @@ export class UtilitiesService extends BaseService {
     } catch (error) {
       this.logger.error(error);
       throw new Error(
-        `An error occurred while uploading data to Azure storage: ${error instanceof Error ? error?.message : error}`
+        `An error occurred while uploading data to storage: ${error instanceof Error ? error?.message : error}`
       );
     }
   }

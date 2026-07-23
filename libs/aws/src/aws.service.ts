@@ -1,4 +1,4 @@
-import type { IStorageUploadResult, StorageService } from '@credebl/storage/storage.interface';
+import type { IStorageUploadResult, StorageService } from '@credebl/common';
 
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
