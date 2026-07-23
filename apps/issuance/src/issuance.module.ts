@@ -12,7 +12,7 @@ import { EmailDto } from '@credebl/common/dtos/email.dto';
 import { BullModule } from '@nestjs/bull';
 import { CacheModule } from '@nestjs/cache-manager';
 import { BulkIssuanceProcessor } from './issuance.processor';
-import { AzureStorageService } from '@credebl/azure-storage';
+import { StorageModule } from '@credebl/storage';
 import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { CommonConstants, MICRO_SERVICE_NAME } from '@credebl/common/common.constant';
 import { LoggerModule } from '@credebl/logger/logger.module';
@@ -36,6 +36,7 @@ import { NATSClient } from '@credebl/common/NATSClient';
       }
     ]),
     CommonModule,
+    StorageModule,
     GlobalConfigModule,
     LoggerModule,
     PlatformConfig,
@@ -61,7 +62,6 @@ import { NATSClient } from '@credebl/common/NATSClient';
     OutOfBandIssuance,
     EmailDto,
     BulkIssuanceProcessor,
-    AzureStorageService,
     NATSClient,
     {
       provide: MICRO_SERVICE_NAME,

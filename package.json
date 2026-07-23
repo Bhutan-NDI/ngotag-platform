@@ -208,6 +208,7 @@
       "^@app/supabase(|/.*)$": "<rootDir>/libs/supabase/src/$1",
       "^@credebl/aws(|/.*)$": "<rootDir>/libs/aws/src/$1",
       "^@credebl/azure-storage(|/.*)$": "<rootDir>/libs/azure-storage/src/$1",
+      "^@credebl/storage(|/.*)$": "<rootDir>/libs/storage/src/$1",
       "^credebl/utility(|/.*)$": "<rootDir>/libs/utility/src/$1",
       "^@credebl/config(|/.*)$": "<rootDir>/libs/config/src/$1",
       "^@credebl/context(|/.*)$": "<rootDir>/libs/context/src/$1",

@@ -1,14 +1,11 @@
+import type { IStorageUploadResult, StorageService } from '@credebl/storage/storage.interface';
+
 import { BlobServiceClient, ContainerClient } from '@azure/storage-blob';
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 
-export interface IStorageUploadResult {
-  Key: string;
-  Location: string;
-}
-
 @Injectable()
-export class AzureStorageService {
+export class AzureStorageService implements StorageService {
   private readonly logger = new Logger(AzureStorageService.name);
   private blobServiceClient: BlobServiceClient;
   private containerClient: ContainerClient;
