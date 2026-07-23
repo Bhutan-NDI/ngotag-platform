@@ -92,6 +92,9 @@ export enum CommonConstants {
   // POLYGON BASED W3C SCHEMAS
   CREATE_POLYGON_W3C_SCHEMA = '/polygon/create-schema',
 
+  // ETHEREUM BASED W3C SCHEMAS
+  CREATE_ETHEREUM_W3C_SCHEMA = '/ethereum/create-schema',
+
   // SHARED AGENT
   URL_SHAGENT_CREATE_TENANT = '/multi-tenancy/create-tenant',
   URL_SHAGENT_DELETE_SUB_WALLET = '/multi-tenancy/#',
@@ -117,6 +120,7 @@ export enum CommonConstants {
 
   // CREATE KEYS
   CREATE_POLYGON_SECP256k1_KEY = '/polygon/create-keys',
+  CREATE_ETH_KEY = '/ethereum/create-keys',
 
   // OID4VC URLs
   URL_OIDC_ISSUER_CREATE = '/openid4vc/issuer',
@@ -163,6 +167,9 @@ export enum CommonConstants {
 
   // POLYGON KEYWORDS
   POLYGON = 'polygon',
+
+  // ETHEREUM KEYWORDS
+  ETHR = 'ethr',
 
   // DOMAIN EVENTS
   DOMAIN_EVENT_SCHEMA_CREATED = 'Schema Created',

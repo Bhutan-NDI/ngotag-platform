@@ -875,14 +875,15 @@ export class AgentServiceService {
       if (createDidPayload?.network) {
         const getNameSpace = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload?.network);
         networkLedgerId = getNameSpace.id;
-        if (agentDetails.ledgerId !== null && agentDetails.ledgerId !== getNameSpace.id) {
-          throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
-        }
       }
       const getApiKey = await this.getOrgAgentApiKey(orgId);
       const url = this.constructUrl(agentDetails);
 
       if (createDidPayload.method === DidMethod.POLYGON) {
+        createDidPayload.endpoint = agentDetails.agentEndPoint;
+      }
+
+      if (createDidPayload.method === DidMethod.ETHEREUM) {
         createDidPayload.endpoint = agentDetails.agentEndPoint;
       }
 
@@ -1055,6 +1056,32 @@ export class AgentServiceService {
     }
 
     return didDetails;
+  }
+
+  /**
+   * @returns Secp256k1 key pair for did:ethr
+   */
+  async createEthereumKeyPair(orgId: string): Promise<object> {
+    try {
+      const platformAdminSpinnedUp = await this.agentServiceRepository.platformAdminAgent(
+        CommonConstants.PLATFORM_ADMIN_ORG
+      );
+
+      const getPlatformAgentEndPoint = platformAdminSpinnedUp.org_agents[0].agentEndPoint;
+      const getDcryptedToken = await this.commonService.decryptPassword(platformAdminSpinnedUp?.org_agents[0].apiKey);
+
+      const url = `${getPlatformAgentEndPoint}${CommonConstants.CREATE_ETH_KEY}`;
+      this.logger.log(`Creating Ethereum key pair at URL: ${url}`);
+      const createKeyPairResponse = await this.commonService.httpPost(
+        url,
+        {},
+        { headers: { authorization: getDcryptedToken } }
+      );
+      return createKeyPairResponse;
+    } catch (error) {
+      this.logger.error(`error in createEthereumKeyPair : ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
   }
 
   /**
