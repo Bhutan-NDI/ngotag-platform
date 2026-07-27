@@ -5,13 +5,14 @@ import { IssuanceService } from './issuance.service';
 import { CommonService } from '@credebl/common';
 import { HttpModule } from '@nestjs/axios';
 import { getNatsOptions } from '@credebl/common/nats.config';
-import { AzureStorageService } from '@credebl/azure-storage';
+import { StorageModule } from '@credebl/storage';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { NATSClient } from '@credebl/common/NATSClient';
 
 @Module({
   imports: [
     HttpModule,
+    StorageModule,
     ClientsModule.register([
       {
         name: 'NATS_CLIENT',
@@ -25,6 +26,6 @@ import { NATSClient } from '@credebl/common/NATSClient';
     ])
   ],
   controllers: [IssuanceController],
-  providers: [IssuanceService, CommonService, AzureStorageService, NATSClient]
+  providers: [IssuanceService, CommonService, NATSClient]
 })
 export class IssuanceModule {}

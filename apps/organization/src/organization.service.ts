@@ -42,7 +42,7 @@ import { UserActivityService } from '@credebl/user-activity';
 import { ClientRegistrationService } from '@credebl/client-registration/client-registration.service';
 import { map } from 'rxjs/operators';
 import { Cache } from 'cache-manager';
-import { AzureStorageService } from '@credebl/azure-storage';
+import { STORAGE_SERVICE, StorageService } from '@credebl/storage';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {
   IOrgCredentials,
@@ -77,7 +77,7 @@ export class OrganizationService {
     private readonly organizationRepository: OrganizationRepository,
     private readonly orgRoleService: OrgRolesService,
     private readonly userOrgRoleService: UserOrgRolesService,
-    private readonly azureStorageService: AzureStorageService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: StorageService,
     private readonly userActivityService: UserActivityService,
     private readonly logger: Logger,
     // TODO: Remove duplicate, unused variable
@@ -497,11 +497,12 @@ export class OrganizationService {
     try {
       const updatedOrglogo = orgLogo.split(',')[1];
       const imgData = Buffer.from(updatedOrglogo, 'base64');
-      const logoUrl = await this.azureStorageService.uploadUserCertificate(
+      const logoUrl = await this.storageService.uploadUserCertificate(
         imgData,
         'png',
         'orgLogo',
-        process.env.AZURE_STORAGE_CONTAINER_NAME || 'logo',
+        // Provider-agnostic: each provider resolves its own logo container/bucket.
+        undefined,
         'base64',
         'orgLogos'
       );

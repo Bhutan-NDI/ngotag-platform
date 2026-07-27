@@ -5,7 +5,6 @@ import { WebhookService } from './webhook.service';
 import { CommonService } from '@credebl/common';
 import { HttpModule } from '@nestjs/axios';
 import { getNatsOptions } from '@credebl/common/nats.config';
-import { AzureStorageService } from '@credebl/azure-storage';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { NATSClient } from '@credebl/common/NATSClient';
 
@@ -25,6 +24,6 @@ import { NATSClient } from '@credebl/common/NATSClient';
     ])
   ],
   controllers: [WebhookController],
-  providers: [WebhookService, CommonService, AzureStorageService, NATSClient]
+  providers: [WebhookService, CommonService, NATSClient]
 })
 export class WebhookModule {}
