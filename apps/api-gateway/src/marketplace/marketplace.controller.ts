@@ -124,7 +124,12 @@ export class MarketplaceController {
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()
   async getEntitlements(@Param('orgId') orgId: string, @User() reqUser: user, @Res() res: Response): Promise<Response> {
-    if (isPlatformAdmin(reqUser)) {
+    // Grant full entitlements without contacting the marketplace microservice for platform admins,
+    // and whenever marketplace billing is disabled (MARKETPLACE_ENABLED !== 'true'). This mirrors the
+    // MarketplaceEntitlementGuard's own short-circuit so core SSI flows (schema/issuance/verification)
+    // are never gated on the availability of the marketplace service when the feature is off.
+    const marketplaceDisabled = 'true' !== `${process.env.MARKETPLACE_ENABLED}`.toLowerCase();
+    if (isPlatformAdmin(reqUser) || marketplaceDisabled) {
       const data = { orgId, ...PLATFORM_ADMIN_ENTITLEMENTS };
       const finalResponse: IResponse = { statusCode: HttpStatus.OK, message: 'Success', data };
       return res.status(HttpStatus.OK).json(finalResponse);
