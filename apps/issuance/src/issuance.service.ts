@@ -377,11 +377,8 @@ export class IssuanceService {
       const agentDetails = await this.issuanceRepository.getAgentEndPoint(orgId);
       let invitationDid: string | undefined;
       if (true === reuseConnection) {
-        const data: agent_invitations[] = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
-        if (data && 0 < data.length) {
-          const [firstElement] = data;
-          invitationDid = firstElement?.invitationDid ?? undefined;
-        }
+        const invitation: agent_invitations = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
+        invitationDid = invitation?.invitationDid ?? undefined;
       }
       const { agentEndPoint, organisation } = agentDetails;
 
@@ -984,11 +981,8 @@ export class IssuanceService {
       let invitationDid: string | undefined;
       if (true === isReuseConnection) {
         this.logger.debug('This is a reuse connection, fetching invitation did');
-        const data: agent_invitations[] = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
-        if (data && 0 < data.length) {
-          const [firstElement] = data;
-          invitationDid = firstElement?.invitationDid ?? undefined;
-        }
+        const invitation: agent_invitations = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
+        invitationDid = invitation?.invitationDid ?? undefined;
       }
 
       let outOfBandIssuancePayload;

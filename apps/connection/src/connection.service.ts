@@ -500,13 +500,9 @@ export class ConnectionService {
 
       let legacyinvitationDid;
       if (IsReuseConnection) {
-        const data: agent_invitations[] = await this.connectionRepository.getInvitationDidByOrgId(orgId);
-        if (data && 0 < data.length) {
-          const [firstElement] = data;
-          legacyinvitationDid = firstElement?.invitationDid ?? undefined;
-
-          this.logger.log('legacyinvitationDid:', legacyinvitationDid);
-        }
+        const invitation: agent_invitations = await this.connectionRepository.getInvitationDidByOrgId(orgId);
+        legacyinvitationDid = invitation?.invitationDid ?? undefined;
+        this.logger.log('legacyinvitationDid:', legacyinvitationDid);
       }
       const connectionInvitationDid = invitationDid ? invitationDid : legacyinvitationDid;
 
