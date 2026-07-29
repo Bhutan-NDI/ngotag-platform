@@ -50,6 +50,7 @@ export class IssuanceService extends BaseService {
       autoAcceptCredential: issueCredentialDto.autoAcceptCredential,
       credentialType: issueCredentialDto.credentialType,
       isValidateSchema: issueCredentialDto.isValidateSchema,
+      parentThreadId: issueCredentialDto.parentThreadId,
       user
     };
 
