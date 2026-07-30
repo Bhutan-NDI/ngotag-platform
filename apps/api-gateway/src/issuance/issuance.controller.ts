@@ -86,6 +86,7 @@ import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 import { MarketplaceService } from '../marketplace/marketplace.service';
+import { isMarketplaceMeteringEnabled } from '../marketplace/utils/marketplace-config.util';
 @Controller()
 @UseFilters(CustomExceptionFilter)
 @ApiTags('credentials')
@@ -980,7 +981,12 @@ export class IssuanceController {
     // shared/cloud agents the microservice resolves it via tenant lookup and returns it here.
     const resolvedOrgId = (getCredentialDetails as { response?: { orgId?: string } } | undefined)?.response?.orgId;
     const issuanceSourceId = issueCredentialDto.id || issueCredentialDto.threadId;
-    if (resolvedOrgId && issuanceSourceId && this.isIssuedCredentialState(issueCredentialDto.state)) {
+    if (
+      isMarketplaceMeteringEnabled() &&
+      resolvedOrgId &&
+      issuanceSourceId &&
+      this.isIssuedCredentialState(issueCredentialDto.state)
+    ) {
       void this.marketplaceService
         .recordUsageEvent({
           orgId: resolvedOrgId,

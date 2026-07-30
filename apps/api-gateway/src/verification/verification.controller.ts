@@ -56,6 +56,7 @@ import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 import { MarketplaceService } from '../marketplace/marketplace.service';
+import { isMarketplaceMeteringEnabled } from '../marketplace/utils/marketplace-config.util';
 
 @UseFilters(CustomExceptionFilter)
 @Controller()
@@ -475,6 +476,7 @@ export class VerificationController {
     const resolvedOrgId = (webhookProofPresentation as { orgId?: string } | undefined)?.orgId;
     const verificationSourceId = proofPresentationPayload.presentationId || proofPresentationPayload.threadId;
     if (
+      isMarketplaceMeteringEnabled() &&
       resolvedOrgId &&
       verificationSourceId &&
       (proofPresentationPayload.isVerified ||
