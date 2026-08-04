@@ -564,13 +564,22 @@ export class SchemaService extends BaseService {
       .toPromise()
       .catch((error) => {
         this.logger.error(`Error in migrating W3C schema : ${JSON.stringify(error)}`);
+        // agent-controller's migrate-schema endpoint returns errors as { reason } (400) or
+        // { message } (500), a different shape than _createW3CSchema's sibling call assumes -
+        // guard every level so an unexpected shape surfaces a real message instead of throwing
+        // on the nested read itself.
         throw new HttpException(
           {
-            status: error.error.code,
-            error: error.message,
-            message: error.error.message.error.message
+            status: error?.error?.code,
+            error: error?.message,
+            message:
+              error?.error?.message?.error?.message ??
+              error?.error?.reason ??
+              error?.error?.message ??
+              error?.message ??
+              'Failed to migrate W3C schema'
           },
-          error.error
+          error?.error
         );
       });
     return W3CSchemaResponse;
