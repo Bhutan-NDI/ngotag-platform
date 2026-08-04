@@ -60,7 +60,9 @@ export const networkNamespace = (did: string): string => {
   const segments = did.split(':');
   const hasPolygon = segments.some((segment) => segment.includes(CommonConstants.POLYGON));
   const hasEthereum = segments.some((segment) => segment.includes(CommonConstants.ETHR));
-  const hasTestnet = segments.some((segment) => segment.includes(CommonConstants.TESTNET));
+  const hasTestnet = segments.some(
+    (segment) => segment.includes(CommonConstants.TESTNET) || segment.includes(CommonConstants.SEPOLIA)
+  );
   if (hasPolygon || hasEthereum) {
     return hasTestnet ? `${segments[1]}:${segments[2]}` : `${segments[1]}:${CommonConstants.MAINNET}`;
   }

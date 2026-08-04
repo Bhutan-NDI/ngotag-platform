@@ -875,15 +875,21 @@ export class AgentServiceService {
       if (createDidPayload?.network) {
         const getNameSpace = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload?.network);
         networkLedgerId = getNameSpace.id;
+
+        // did:ethr's ledger legitimately differs from the agent's indy/polygon ledger, so it's
+        // exempt from this check; every other method must still write to the agent's own ledger.
+        if (
+          createDidPayload.method !== DidMethod.ETHEREUM &&
+          agentDetails.ledgerId !== null &&
+          agentDetails.ledgerId !== getNameSpace.id
+        ) {
+          throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
+        }
       }
       const getApiKey = await this.getOrgAgentApiKey(orgId);
       const url = this.constructUrl(agentDetails);
 
-      if (createDidPayload.method === DidMethod.POLYGON) {
-        createDidPayload.endpoint = agentDetails.agentEndPoint;
-      }
-
-      if (createDidPayload.method === DidMethod.ETHEREUM) {
+      if (createDidPayload.method === DidMethod.POLYGON || createDidPayload.method === DidMethod.ETHEREUM) {
         createDidPayload.endpoint = agentDetails.agentEndPoint;
       }
 
@@ -904,6 +910,13 @@ export class AgentServiceService {
       const did = didDetails?.['did'] ?? didDetails?.['didState']?.['did'];
       const didDocument =
         didDetails?.['didDocument'] ?? didDetails?.['didDoc'] ?? didDetails?.['didState']?.['didDocument'];
+
+      // Defensive guard: the agent-controller should already reject a failed creation before
+      // responding (e.g. handleEthereum/handlePolygon throw on a non-"finished" didState), but this
+      // stops a malformed/undefined did from ever being persisted regardless of the agent's behavior.
+      if (!did) {
+        throw new InternalServerErrorException(ResponseMessages.agent.error.createDid);
+      }
 
       // A matching row means a prior attempt already stored this DID. Rather than failing the retry
       // with a conflict, reconcile it: persistDidWithUpdates finishes the related org_agents/spin-up

@@ -337,6 +337,7 @@ export enum CommonConstants {
   BUILDERNET = 'buildernet',
   MAINNET = 'mainnet',
   LIVENET = 'livenet',
+  SEPOLIA = 'sepolia',
 
   // Features Id
   // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
