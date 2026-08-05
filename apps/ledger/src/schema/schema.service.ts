@@ -432,7 +432,8 @@ export class SchemaService extends BaseService {
       const updateSchemaDetails: IUpdateSchemaLedgerDetails = {
         id: schema.id,
         publisherDid: agentDetails.orgDid,
-        changedBy: user.id
+        changedBy: user.id,
+        type: targetSchemaType
       };
       const updateW3CSchema = await this.updateW3CSchemas(updateSchemaDetails);
 

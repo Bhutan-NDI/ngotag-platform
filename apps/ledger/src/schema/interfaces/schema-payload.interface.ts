@@ -26,6 +26,7 @@ export interface IUpdateSchemaLedgerDetails {
     changedBy: string;
     publisherDid: string;
     ledgerId?: string;
+    type?: string;
 }
 
 export interface IAttributeValue {

@@ -465,7 +465,8 @@ export class SchemaRepository {
           ledgerId: updateSchema.ledgerId,
           publisherDid: updateSchema.publisherDid,
           issuerId: updateSchema.publisherDid,
-          lastChangedBy: updateSchema.changedBy
+          lastChangedBy: updateSchema.changedBy,
+          type: updateSchema.type
         }
       });
       return updateResult;
