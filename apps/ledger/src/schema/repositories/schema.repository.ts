@@ -2,7 +2,13 @@ import { AgentDetails, ISchemasWithCount, IUpdateSchema, UpdateSchemaResponse } 
 /* eslint-disable camelcase */
 import { ConflictException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ICredDefWithCount, IPlatformSchemasWithOrg } from '@credebl/common/interfaces/schema.interface';
-import { ISaveSchema, ISchema, ISchemaExist, ISchemaSearchCriteria } from '../interfaces/schema-payload.interface';
+import {
+  ISaveSchema,
+  ISchema,
+  ISchemaExist,
+  ISchemaSearchCriteria,
+  IUpdateSchemaLedgerDetails
+} from '../interfaces/schema-payload.interface';
 import { Prisma, ledgers, org_agents, org_agents_type, organisation, schema } from '@prisma/client';
 import { SchemaType, SortValue } from '@credebl/enum/enum';
 
@@ -431,6 +437,41 @@ export class SchemaRepository {
       });
     } catch (error) {
       this.logger.error(`Error in getting get schema by schema ledger id: ${error}`);
+      throw error;
+    }
+  }
+
+  async getSchemaByOrgSchemaUrl(schemaUrl: string, orgId: string): Promise<schema> {
+    try {
+      return this.prisma.schema.findFirst({
+        where: {
+          orgId,
+          schemaLedgerId: schemaUrl
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error in getting get schema by org id and ledger id: ${error}`);
+      throw error;
+    }
+  }
+
+  async updateSchemaLedgerDetails(updateSchema: IUpdateSchemaLedgerDetails): Promise<schema> {
+    try {
+      const updateResult = await this.prisma.schema.update({
+        where: {
+          id: updateSchema.id
+        },
+        data: {
+          ledgerId: updateSchema.ledgerId,
+          publisherDid: updateSchema.publisherDid,
+          issuerId: updateSchema.publisherDid,
+          lastChangedBy: updateSchema.changedBy,
+          type: updateSchema.type
+        }
+      });
+      return updateResult;
+    } catch (error) {
+      this.logger.error(`Error in updating schema repository: ${error.message} `);
       throw error;
     }
   }

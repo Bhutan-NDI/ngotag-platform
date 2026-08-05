@@ -94,6 +94,7 @@ export enum CommonConstants {
 
   // ETHEREUM BASED W3C SCHEMAS
   CREATE_ETHEREUM_W3C_SCHEMA = '/ethereum/create-schema',
+  MIGRATE_ETHEREUM_W3C_SCHEMA = '/ethereum/migrate-schema',
 
   // SHARED AGENT
   URL_SHAGENT_CREATE_TENANT = '/multi-tenancy/create-tenant',

@@ -9,6 +9,7 @@ import {
   ISchemasWithPagination
 } from '@credebl/common/interfaces/schema.interface';
 import { GetCredentialDefinitionBySchemaIdDto } from './dtos/get-all-schema.dto';
+import { MigrateW3CSchemaDto } from '../dtos/migrate-schema.dto';
 import { NATSClient } from '@credebl/common/NATSClient';
 
 import { UpdateSchemaResponse } from 'apps/ledger/src/schema/interfaces/schema.interface';
@@ -27,6 +28,15 @@ export class SchemaService extends BaseService {
   createSchema(schemaDetails: GenericSchemaDTO, user: IUserRequestInterface, orgId: string): Promise<ISchemaData> {
     const payload = { schemaDetails, user, orgId };
     return this.natsClient.sendNatsMessage(this.schemaServiceProxy, 'create-schema', payload);
+  }
+
+  migrateSchema(
+    migrateSchemaDetails: MigrateW3CSchemaDto,
+    user: IUserRequestInterface,
+    orgId: string
+  ): Promise<ISchemaData> {
+    const payload = { migrateSchemaDetails, user, orgId };
+    return this.natsClient.sendNatsMessage(this.schemaServiceProxy, 'migrate-w3c-schema', payload);
   }
 
   getSchemaById(schemaId: string, orgId: string): Promise<ISchemaInfo> {
