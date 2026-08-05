@@ -59,8 +59,11 @@ export const networkNamespace = (did: string): string => {
   // Split the DID into segments using the colon as a delimiter
   const segments = did.split(':');
   const hasPolygon = segments.some((segment) => segment.includes(CommonConstants.POLYGON));
-  const hasTestnet = segments.some((segment) => segment.includes(CommonConstants.TESTNET));
-  if (hasPolygon) {
+  const hasEthereum = segments.some((segment) => segment.includes(CommonConstants.ETHR));
+  const hasTestnet = segments.some(
+    (segment) => segment.includes(CommonConstants.TESTNET) || segment.includes(CommonConstants.SEPOLIA)
+  );
+  if (hasPolygon || hasEthereum) {
     return hasTestnet ? `${segments[1]}:${segments[2]}` : `${segments[1]}:${CommonConstants.MAINNET}`;
   }
 

@@ -307,7 +307,11 @@ export class SchemaService extends BaseService {
         });
       }
 
-      const url = `${agentEndPoint}${CommonConstants.CREATE_POLYGON_W3C_SCHEMA}`;
+      const url = `${agentEndPoint}${
+        schemaPayload.schemaType === JSONSchemaType.ETHEREUM_W3C
+          ? CommonConstants.CREATE_ETHEREUM_W3C_SCHEMA
+          : CommonConstants.CREATE_POLYGON_W3C_SCHEMA
+      }`;
 
       let schemaObject;
       let schemaResourceId: string | undefined;
@@ -318,7 +322,7 @@ export class SchemaService extends BaseService {
         const schemaUrl = `${process.env.SCHEMA_FILE_SERVER_URL}${schemaResourceId}`;
         schemaObject = w3cSchemaBuilder(attributes, schemaName, description, schemaUrl);
       } else {
-        // POLYGON_W3C: URL is assigned by the agent after upload; $id cannot be set in advance
+        // POLYGON_W3C / ETHEREUM_W3C: URL is assigned by the agent after upload; $id cannot be set in advance
         schemaObject = w3cSchemaBuilder(attributes, schemaName, description);
       }
 
@@ -338,10 +342,13 @@ export class SchemaService extends BaseService {
         orgId,
         schemaRequestPayload: agentSchemaPayload
       };
-      if (schemaPayload.schemaType === JSONSchemaType.POLYGON_W3C) {
+      if (
+        schemaPayload.schemaType === JSONSchemaType.POLYGON_W3C ||
+        schemaPayload.schemaType === JSONSchemaType.ETHEREUM_W3C
+      ) {
         const createSchemaPayload = await this._createW3CSchema(W3cSchemaPayload);
         createSchema = createSchemaPayload.response;
-        createSchema.type = JSONSchemaType.POLYGON_W3C;
+        createSchema.type = schemaPayload.schemaType;
       } else {
         const createSchemaPayload = await this._createW3CledgerAgnostic(schemaObject, schemaResourceId);
         if (!createSchemaPayload) {
