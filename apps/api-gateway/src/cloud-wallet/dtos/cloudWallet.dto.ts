@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUrl,
   Matches,
   MaxLength,
   Min,
@@ -306,6 +307,33 @@ export class ExportCloudWalletDto {
   // the body. walletID had no counterpart on the agent side and was never read anywhere on the
   // platform side either — a required field forcing the client to send data the server owns.
   // See the #71 review's "DTO doesn't match agent-controller PR #72's export contract".
+
+  email: string;
+
+  userId: string;
+}
+
+// Matches the WalletPortabilityService's import contract exactly (exportUrl/checksum/passKey,
+// the same three values a prior export job returns) — no exportId/walletID, those were
+// legacy-Python-service concepts with no equivalent in the native design.
+export class ImportCloudWalletDto {
+  @ApiProperty({ example: 'https://example-bucket.s3.amazonaws.com/wallet-exports/...' })
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'exportUrl is required' })
+  @IsUrl()
+  exportUrl: string;
+
+  @ApiProperty({ example: '4c63119399d4c98fb1dbc2b31943374c74e7026d75903828f0a2bae79ca2b4e' })
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'checksum is required' })
+  @IsString({ message: 'checksum must be in string format.' })
+  checksum: string;
+
+  @ApiPropertyOptional({ example: 'XzFjo1RTZ2h9UVFCnPUyaQ' })
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'passKey is required' })
+  @IsString({ message: 'passKey must be in string format.' })
+  passKey: string;
 
   email: string;
 
