@@ -41,7 +41,8 @@ import {
   IProofPresentationDetails,
   IExportCloudWallet,
   IImportCloudWallet,
-  IWalletPortabilityJobStatus
+  IWalletPortabilityJobStatus,
+  ISelfAttestedCredential
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -1097,6 +1098,54 @@ export class CloudWalletService {
     } catch (error) {
       await this.commonService.handleError(error);
       throw error;
+    }
+  }
+
+  /**
+   * Create self-attested W3C credential
+   * @param selfAttestedCredential
+   * @returns Self-attested credential Details
+   */
+  async createSelfAttestedW3cCredential(selfAttestedCredential: ISelfAttestedCredential): Promise<Response> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { email, userId, ...selfAttestedDetails } = selfAttestedCredential;
+
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(email);
+
+      if (!checkUserExist) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
+      }
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const getTenant = await this.cloudWalletRepository.getCloudSubWallet(userId);
+
+      const { tenantId } = getTenant;
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_SELF_ATTESTED_W3C_CREDENTIAL}`;
+
+      const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
+
+      if (!checkCloudWalletAgentHealth) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
+      }
+      const selfAttestedCredentialResponse = await this.commonService.httpPost(url, selfAttestedDetails, {
+        headers: { authorization: decryptedApiKey }
+      });
+
+      if (!selfAttestedCredentialResponse) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.createSelfAttestedW3cCredential, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      selfAttestedCredentialResponse.tenantId = tenantId;
+
+      return selfAttestedCredentialResponse;
+    } catch (error) {
+      this.logger.error(`[createSelfAttestedW3cCredential] - error in create self-attested credential: ${error}`);
+      await this.commonService.handleError(error);
     }
   }
 }

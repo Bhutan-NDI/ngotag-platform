@@ -31,7 +31,8 @@ import {
   IProofPresentationDetails,
   IExportCloudWallet,
   IImportCloudWallet,
-  IWalletPortabilityJobStatus
+  IWalletPortabilityJobStatus,
+  ISelfAttestedCredential
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
 import { cloud_wallet_user_info, user } from '@prisma/client';
@@ -179,5 +180,10 @@ export class CloudWalletController {
   @MessagePattern({ cmd: 'get-import-wallet-status' })
   async getImportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
     return this.cloudWalletService.getImportWalletStatus(jobStatus);
+  }
+
+  @MessagePattern({ cmd: 'create-self-attested-w3c-credential' })
+  async createSelfAttestedW3cCredential(selfAttestedCredential: ISelfAttestedCredential): Promise<Response> {
+    return this.cloudWalletService.createSelfAttestedW3cCredential(selfAttestedCredential);
   }
 }
