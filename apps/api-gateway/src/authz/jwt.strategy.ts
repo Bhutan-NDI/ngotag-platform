@@ -72,6 +72,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
     if (payload?.email) {
       userInfo = await this.usersService.getUserByUserIdInKeycloak(payload?.email);
+    } else if (payload?.preferred_username && !payload.preferred_username.includes('service-account')) {
+      // Cloud-wallet (and other M2M) tokens may not carry an email claim — fall back to
+      // preferred_username, but skip Keycloak's own service-account principals (no real user
+      // behind them, e.g. "service-account-<client-id>").
+      userInfo = await this.usersService.getUserByUserIdInKeycloak(payload?.preferred_username);
     }
 
     if (payload.hasOwnProperty('client_id') && uuidRegex.test(payload['client_id'])) {
