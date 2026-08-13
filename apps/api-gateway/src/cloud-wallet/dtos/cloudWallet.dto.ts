@@ -320,7 +320,14 @@ export class ImportCloudWalletDto {
   @ApiProperty({ example: 'https://example-bucket.s3.amazonaws.com/wallet-exports/...' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'exportUrl is required' })
-  @IsUrl()
+  // require_tld: false so a self-hosted/MinIO export endpoint (http://minio:9000/..., a real
+  // deployment topology) isn't rejected outright; protocols restricted to https since the only
+  // legitimate value is a pre-signed URL for the platform's own export bucket — a bare @IsUrl()
+  // accepted arbitrary http(s) targets, an authenticated SSRF surface into agent-controller's
+  // server-side fetch. agent-controller's own downloadAndChecksum independently restricts to its
+  // S3 hostname (see the #73 review) — this is defense in depth, not a duplicate of that fix.
+  // eslint-disable-next-line camelcase
+  @IsUrl({ require_tld: false, protocols: ['https'] }, { message: 'exportUrl must be a valid https URL' })
   exportUrl: string;
 
   @ApiProperty({ example: '4c63119399d4c98fb1dbc2b31943374c74e7026d75903828f0a2bae79ca2b4e' })
