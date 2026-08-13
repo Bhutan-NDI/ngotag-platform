@@ -404,7 +404,11 @@ export enum CommonConstants {
   CLOUD_WALLET_DELETE_CREDENTIAL = '/multi-tenancy/credential',
   CLOUD_WALLET_DELETE_W3C_CREDENTIAL = '/multi-tenancy/credential/w3c',
   CLOUD_WALLET_BASIC_MESSAGE = '/didcomm/basic-messages/',
-  CLOUD_WALLET_SELF_ATTESTED_W3C_CREDENTIAL = '/multi-tenancy/credentials/w3c/self-attested/',
+  // No trailing tenantId — agent-controller's endpoint moved off /multi-tenancy/:tenantId (only
+  // reachable with a base-wallet token) onto request.agent (POST /agent/credential/self-attested),
+  // resolved from the tenant token's own claims, matching CLOUD_WALLET_GET_PROOF_REQUEST/
+  // URL_CONN_INVITE's existing convention below. See agent-controller PR #75's review.
+  CLOUD_WALLET_SELF_ATTESTED_W3C_CREDENTIAL = '/agent/credential/self-attested',
 
   // Bulk-issuance
   BATCH_SIZE = 100,

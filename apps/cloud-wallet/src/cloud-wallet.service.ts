@@ -1122,6 +1122,9 @@ export class CloudWalletService {
       const { tenantId } = getTenant;
       const { agentEndpoint } = baseWalletDetails;
 
+      // No tenantId appended — the endpoint now resolves the tenant from decryptedApiKey's own
+      // claims (a per-tenant token, not the base wallet's), matching CLOUD_WALLET_GET_PROOF_REQUEST
+      // and URL_CONN_INVITE's existing calling convention above. See the constant's own comment.
       const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_SELF_ATTESTED_W3C_CREDENTIAL}`;
 
       const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
