@@ -12,6 +12,7 @@ import {
   Get,
   Param,
   Query,
+  ParseBoolPipe,
   BadRequestException,
   Delete,
   Patch
@@ -151,7 +152,11 @@ export class CloudWalletController {
   async deleteCloudWallet(
     @Res() res: Response,
     @User() user: user,
-    @Query('deleteHolder') deleteHolder: boolean = false
+    // Query params always arrive as strings. Without ParseBoolPipe, ?deleteHolder=false becomes
+    // the string 'false', which is truthy — a caller explicitly opting OUT of holder deletion had
+    // their user record (and, per this PR's onDelete: Cascade, their org-role/role-mapping rows)
+    // destroyed instead.
+    @Query('deleteHolder', new ParseBoolPipe({ optional: true })) deleteHolder = false
   ): Promise<Response> {
     const { id } = user;
 
@@ -324,12 +329,12 @@ export class CloudWalletController {
   }
 
   /**
-   * Submit proof presentation
+   * Get proof presentation by Id
    * @param proofRecordId
    * @param res
    * @returns success message
    */
-  @Post('/proofs/:proofRecordId')
+  @Get('/proofs/:proofRecordId')
   @ApiOperation({ summary: 'Get proof presentation by Id', description: 'Get proof presentation by Id' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
@@ -590,14 +595,17 @@ export class CloudWalletController {
    * @param res
    * @returns DID list
    */
-  @Get('/did/:isDefault')
+  @Get('/did')
   @ApiOperation({ summary: 'Get DID list from wallet', description: 'Get DID list from wallet' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
   async getDidList(
     @Res() res: Response,
     @User() user: user,
-    @Param('isDefault') isDefault: boolean = false
+    // Path params are mandatory in Express and always strings — @Get('/did/:isDefault') both
+    // 404'd the live GET /did (no default caller could omit the segment) and made isDefault the
+    // string 'false' for GET /did/false, which is truthy. Query param + ParseBoolPipe fixes both.
+    @Query('isDefault', new ParseBoolPipe({ optional: true })) isDefault = false
   ): Promise<Response> {
     const { id, email } = user;
 

@@ -279,11 +279,11 @@ export class ExportCloudWalletDto {
   @IsString({ message: 'passKey must be in string format.' })
   passKey: string;
 
-  @ApiPropertyOptional({ example: 'walletID' })
-  @Transform(({ value }) => trim(value))
-  @IsNotEmpty({ message: 'walletID is required' })
-  @IsString({ message: 'walletID must be in string format.' })
-  walletID: string;
+  // No walletID field — agent-controller's export endpoint (PR #72) takes the tenant id from the
+  // path (server already knows it from cloud_wallet_user_info.tenantId) and only { passKey } in
+  // the body. walletID had no counterpart on the agent side and was never read anywhere on the
+  // platform side either — a required field forcing the client to send data the server owns.
+  // See the #71 review's "DTO doesn't match agent-controller PR #72's export contract".
 
   email: string;
 

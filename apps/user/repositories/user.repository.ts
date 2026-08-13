@@ -130,6 +130,100 @@ export class UserRepository {
 
   /**
    *
+   * @param username
+   * @returns User exist details, looked up by username rather than email — for the
+   *   username-based (no email claim) signup/signin flow.
+   */
+  // eslint-disable-next-line camelcase
+  async checkUserExistByUsername(username: string): Promise<user> {
+    try {
+      return this.prisma.user.findFirst({
+        where: {
+          username
+        }
+      });
+    } catch (error) {
+      this.logger.error(`checkUserExistByUsername: ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a fresh user row for the username-based (no email) signup flow. Unlike
+   * updateUserInfo, which only ever updates a row created earlier by the email flow's
+   * sendVerificationMail/createUser upsert, there is no pre-existing row to update here — username
+   * signup has no email-verification pre-step — so this is a plain insert.
+   * @param userInfo
+   * @param keycloakUserId
+   * @returns created user
+   */
+  async createUserByUsername(
+    userInfo: {
+      username: string;
+      firstName: string;
+      lastName: string;
+      clientId: string;
+      clientSecret: string;
+      isPasskey?: boolean;
+      password?: string;
+    },
+    keycloakUserId: string
+  ): Promise<user> {
+    try {
+      return await this.prisma.user.create({
+        data: {
+          username: userInfo.username,
+          firstName: userInfo.firstName,
+          lastName: userInfo.lastName,
+          clientId: userInfo.clientId,
+          clientSecret: userInfo.clientSecret,
+          keycloakUserId,
+          publicProfile: true,
+          // Only persisted for the passkey path — see login()'s isPasskey branch, which re-derives
+          // this to bridge into Keycloak's password grant on future logins. Non-passkey users are
+          // verified against Keycloak directly at login time; nothing to store here for them.
+          ...(userInfo.isPasskey ? { password: userInfo.password } : {})
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error in createUserByUsername: ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a user and every row that references it. Only user_org_roles and user_role_mapping
+   * cascade automatically at the DB level (onDelete: Cascade) — every other table below defaults
+   * to RESTRICT, so prisma.user.delete alone throws a foreign-key violation for any user that has
+   * ever logged in (a session/account/token row already exists). Wrapped in a single transaction
+   * so a mid-way failure leaves nothing deleted.
+   * @param userId
+   * @returns deleted user record
+   */
+  async deleteUserAndRelatedData(userId: string): Promise<user> {
+    try {
+      const results = await this.prisma.$transaction([
+        this.prisma.token.deleteMany({ where: { userId } }),
+        this.prisma.session.deleteMany({ where: { userId } }),
+        this.prisma.account.deleteMany({ where: { userId } }),
+        this.prisma.user_devices.deleteMany({ where: { userId } }),
+        this.prisma.org_invitations.deleteMany({ where: { userId } }),
+        this.prisma.user_activity.deleteMany({ where: { userId } }),
+        this.prisma.ecosystem_invitations.deleteMany({ where: { userId } }),
+        this.prisma.ecosystem_orgs.deleteMany({ where: { userId } }),
+        this.prisma.cloud_wallet_user_info.deleteMany({ where: { userId } }),
+        this.prisma.marketplace_subscription.deleteMany({ where: { localUserId: userId } }),
+        this.prisma.user.delete({ where: { id: userId } })
+      ]);
+      return results[results.length - 1] as user;
+    } catch (error) {
+      this.logger.error(`Error in deleteUserAndRelatedData: ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  /**
+   *
    * @param email
    * @returns User details
    */

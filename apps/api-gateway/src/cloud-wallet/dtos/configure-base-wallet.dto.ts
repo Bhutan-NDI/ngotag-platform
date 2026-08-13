@@ -1,6 +1,6 @@
-import { IsInt, IsNotEmpty, IsString, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
 
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsHostPortOrDomain } from '@credebl/common/cast.helper';
 
 export class CloudBaseWalletConfigureDto {
@@ -20,13 +20,17 @@ export class CloudBaseWalletConfigureDto {
   @IsHostPortOrDomain({ message: 'Agent Endpoint must be a valid protocol://host:port or domain' })
   agentEndpoint: string;
 
-  @ApiProperty({
+  // Optional — POST /cloud-wallet/configure/base-wallet is a live endpoint on develop and the DB
+  // column already defaults to 5000, so making this required would 400 every existing caller
+  // that omits it. See the #71 review's "required field added to a live endpoint's DTO".
+  @ApiPropertyOptional({
     example: 5,
     description: 'Maximum number of sub wallets allowed'
   })
+  @IsOptional()
   @IsInt()
   @Min(1)
-  maxSubWallets: number;
+  maxSubWallets?: number;
 
   // @ApiProperty({ example: '5edee49e-17f1-4b54-9070-ef00789777d4' })
   // @IsString({ message: 'orgId must be a string' })

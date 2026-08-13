@@ -565,13 +565,13 @@ model cloud_wallet_user_info {
   id                  String          @id @default(uuid()) @db.Uuid
   label               String?
   tenantId            String?
-  email               String?         @db.VarChar(500)
+  email               String?         @unique @db.VarChar(500)
   type                CloudWalletType
   createDateTime      DateTime        @default(now()) @db.Timestamptz(6)
   createdBy           String          @db.Uuid
   lastChangedDateTime DateTime        @default(now()) @db.Timestamptz(6)
   lastChangedBy       String          @db.Uuid
-  userId              String?         @unique() @db.Uuid
+  userId              String?         @db.Uuid
   agentEndpoint       String?
   agentApiKey         String?
   key                 String?
@@ -580,6 +580,13 @@ model cloud_wallet_user_info {
   isActive            Boolean         @default(true) // Active/Deactive flag
   useCount            Int             @default(0) // Current usage count
   maxSubWallets       Int             @default(5000) // Max allowed count
+
+  // A user can hold at most one row per wallet type (one BASE_WALLET config + one SUB_WALLET),
+  // but userId is never globally unique — that would block an admin who configures a base wallet
+  // from also owning a cloud sub-wallet, and would cap the whole system at one base wallet ever
+  // (contradicting getBaseWalletDetails's BaseAgentInfo[] / useCount+maxSubWallets pooling design).
+  // See the #71 review's "userId @unique contradicts this PR's own multi-base-wallet design".
+  @@unique([userId, type])
 }
 
 enum CloudWalletType {

@@ -92,4 +92,9 @@ export class UserService extends BaseService {
     const payload = { email };
     return this.natsClient.sendNatsMessage(this.serviceProxy, 'get-user-info-by-user-email-keycloak', payload);
   }
+
+  async getUserByUsernameInKeycloak(username: string): Promise<object> {
+    const payload = { username };
+    return this.natsClient.sendNatsMessage(this.serviceProxy, 'get-user-info-by-username-keycloak', payload);
+  }
 }

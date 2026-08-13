@@ -53,7 +53,7 @@ export const ResponseMessages = {
       invalidInvitationStatus: 'Invalid invitation status',
       invalidKeycloakId: 'keycloakId is invalid',
       invalidEmail: 'Invalid Email Id!',
-      invalidUsername: 'Invalid Email Id!',
+      invalidUsername: 'Invalid username!',
       adduser: 'Unable to add user details',
       userRoleNotFound: 'User role not found',
       verifyEmail: 'The verification link has already been sent to your email address. please verify',
@@ -677,7 +677,9 @@ export const ResponseMessages = {
       platformAdminRecordNotFound: 'Platform admin reocrd not exist.',
       notFoundBaseWallet: 'The base wallet record is missing.',
       walletRecordNotFound: 'Wallet record not found.',
-      createSelfAttestedW3cCredential: 'Error while creating self-attested credential.'
+      createSelfAttestedW3cCredential: 'Error while creating self-attested credential.',
+      deleteCloudWallet: 'Error while deleting cloud wallet',
+      checkCloudWalletStatus: 'Error while checking cloud wallet status'
     }
   },
   oidcIssuer: {

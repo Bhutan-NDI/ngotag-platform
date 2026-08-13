@@ -27,7 +27,7 @@ import {
 import { client_aliases, user, user_org_roles } from '@prisma/client';
 
 import { AcceptRejectInvitationDto } from '../dtos/accept-reject-invitation.dto';
-import { AddPasskeyDetailsDto } from 'apps/api-gateway/src/user/dto/add-user.dto';
+import { AddPasskeyDetailsDto, AddUserDetailsUsernameBasedDto } from 'apps/api-gateway/src/user/dto/add-user.dto';
 import { Controller } from '@nestjs/common';
 import { IUsersActivity } from 'libs/user-activity/interface';
 import { MessagePattern } from '@nestjs/microservices';
@@ -215,6 +215,35 @@ export class UserController {
     return this.userService.createUserForToken(payload.userInfo);
   }
 
+  /**
+   * @body userInfo
+   * @returns User's registration status (username-based, no email)
+   */
+  @MessagePattern({ cmd: 'add-user-username-based' })
+  async addUserDetailsUsernameBased(payload: {
+    userInfo: AddUserDetailsUsernameBasedDto;
+  }): Promise<ISignUpUserResponse> {
+    return this.userService.createUserForUsernameToken(payload.userInfo);
+  }
+
+  /**
+   * @body loginUserDto
+   * @returns User's access token details (username-based, no email)
+   */
+  @MessagePattern({ cmd: 'username-holder-login' })
+  async usernameLogin(payload: { username: string; password?: string; isPasskey?: boolean }): Promise<ISignInUser> {
+    return this.userService.usernameLogin(payload);
+  }
+
+  /**
+   * @param userId
+   * @returns deleted user record
+   */
+  @MessagePattern({ cmd: 'delete-user' })
+  async deleteUser(userId: string): Promise<user> {
+    return this.userService.deleteUser(userId);
+  }
+
   // Fetch Users recent activities
   @MessagePattern({ cmd: 'get-user-activity' })
   async getUserActivity(payload: { userId: string; limit: number }): Promise<IUsersActivity[]> {
@@ -273,6 +302,11 @@ export class UserController {
   @MessagePattern({ cmd: 'get-user-info-by-user-email-keycloak' })
   async getUserByUserIdInKeycloak(payload: { email }): Promise<string> {
     return this.userService.getUserByUserIdInKeycloak(payload.email);
+  }
+
+  @MessagePattern({ cmd: 'get-user-info-by-username-keycloak' })
+  async getUserByUsernameInKeycloak(payload: { username: string }): Promise<string> {
+    return this.userService.getUserByUsernameInKeycloak(payload.username);
   }
 
   @MessagePattern({ cmd: 'get-user-organizations' })

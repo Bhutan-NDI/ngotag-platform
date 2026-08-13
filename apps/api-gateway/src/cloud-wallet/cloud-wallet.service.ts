@@ -43,6 +43,8 @@ import { SelfAttestedCredentialDto } from './dtos/self-attested-credential.dto';
 export class CloudWalletService extends BaseService {
   constructor(
     @Inject('NATS_CLIENT') private readonly cloudWalletServiceProxy: ClientProxy,
+    // User lifecycle (delete-user) lives on apps/user's queue group, not apps/cloud-wallet's.
+    @Inject('USER_NATS_CLIENT') private readonly userServiceProxy: ClientProxy,
     private readonly natsClient: NATSClient
   ) {
     super('CloudWalletServiceProxy');
@@ -133,7 +135,12 @@ export class CloudWalletService extends BaseService {
       cloudWalletDetails
     );
     if (cloudWalletDetails.deleteHolder) {
-      await this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'delete-user', res.userId);
+      // userId comes from the caller's own payload, not the NATS reply — a handler that returns
+      // null/undefined (nothing found, or a void handler) would otherwise throw here *after* the
+      // wallet delete already committed, leaving the holder user orphaned with no way to retry.
+      // Also dispatched on the user service's own proxy: user lifecycle lives in apps/user, not
+      // apps/cloud-wallet.
+      await this.natsClient.sendNatsMessage(this.userServiceProxy, 'delete-user', cloudWalletDetails.userId);
     }
     return res;
   }

@@ -109,6 +109,58 @@ export class ClientRegistrationService {
     };
   }
 
+  /**
+   * Create a Keycloak user for the username-based (no email) signup flow. A parallel method
+   * rather than a branch inside createUser: that function hardcodes username: user.email and
+   * looks the created user back up by user.email, which a username-only signup has none of.
+   * Kept fully separate so the existing, working email flow is untouched.
+   * @param user
+   * @param realm
+   * @param token
+   */
+  async createUserByUsername(user: CreateUserDto, realm: string, token: string): Promise<{ keycloakUserId: string }> {
+    const payload = {
+      createdTimestamp: Date.parse(Date.now.toString()),
+      username: user.username,
+      enabled: true,
+      totp: false,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      disableableCredentialTypes: [],
+      requiredActions: [],
+      notBefore: 0,
+      access: {
+        manageGroupMembership: true,
+        view: true,
+        mapRoles: true,
+        impersonate: true,
+        manage: true
+      },
+      realmRoles: ['mb-user'],
+      attributes: {
+        ...(user.isHolder ? { userRole: `${CommonConstants.USER_HOLDER_ROLE}` } : {})
+      }
+    };
+
+    await this.commonService.httpPost(
+      await this.keycloakUrlService.createUserURL(realm),
+      payload,
+      this.getAuthHeader(token)
+    );
+
+    const getUserResponse = await this.commonService.httpGet(
+      await this.keycloakUrlService.getUserByUsernameURL(realm, user.username),
+      this.getAuthHeader(token)
+    );
+    const userid = getUserResponse[0].id;
+
+    await this.resetPasswordOfKeycloakUser(realm, user.password, userid, token);
+
+    return {
+      keycloakUserId: getUserResponse[0].id
+    };
+  }
+
   async resetPasswordOfKeycloakUser(realm: string, resetPasswordValue: string, userid: string, token: string) {
     const passwordPayload = {
       type: 'password',

@@ -63,7 +63,7 @@ import {
   ISignUpUserResponse,
   IVerificationEmail
 } from '@credebl/common/interfaces/user.interface';
-import { AddPasskeyDetailsDto } from 'apps/api-gateway/src/user/dto/add-user.dto';
+import { AddPasskeyDetailsDto, AddUserDetailsUsernameBasedDto } from 'apps/api-gateway/src/user/dto/add-user.dto';
 import { URLUserResetPasswordTemplate } from '../templates/reset-password-template';
 import { toNumber } from '@credebl/common/cast.helper';
 import * as jwt from 'jsonwebtoken';
@@ -413,6 +413,120 @@ export class UserService {
     }
   }
 
+  /**
+   * Username-based signup — mirrors createUserForToken, except: there is no email-verification
+   * pre-step (createUserForToken assumes a row already exists, created earlier by
+   * sendVerificationMail, and only ever updates it), so this creates the user row directly, and
+   * the caller supplies clientId/clientSecret in the body instead of them being read off a
+   * pre-existing row.
+   * @param userInfo
+   * @returns created user's id
+   */
+  async createUserForUsernameToken(userInfo: AddUserDetailsUsernameBasedDto): Promise<ISignUpUserResponse> {
+    try {
+      const { username, clientId, clientSecret } = userInfo;
+      if (!username) {
+        throw new UnauthorizedException(ResponseMessages.user.error.invalidUsername);
+      }
+
+      const checkUserDetails = await this.userRepository.checkUserExistByUsername(username);
+      if (checkUserDetails) {
+        throw new ConflictException(ResponseMessages.user.error.exists);
+      }
+
+      const token = await this.clientRegistrationService.getManagementToken(clientId, clientSecret);
+
+      // Keep the encrypted value for DB persistence (passkey path only, see createUserByUsername's
+      // own comment) — userInfo.password is overwritten with the decrypted value below for
+      // Keycloak, same as createUserForToken does for its own two branches.
+      const encryptedPassword = userInfo.password;
+      const decryptedPassword = await this.commonService.decryptPassword(userInfo.password);
+      userInfo.password = decryptedPassword;
+
+      let keycloakDetails;
+      try {
+        keycloakDetails = await this.clientRegistrationService.createUserByUsername(
+          userInfo,
+          process.env.KEYCLOAK_REALM,
+          token
+        );
+      } catch (error) {
+        throw new InternalServerErrorException('Error while registering user on keycloak');
+      }
+
+      const createdUser = await this.userRepository.createUserByUsername(
+        {
+          username,
+          firstName: userInfo.firstName,
+          lastName: userInfo.lastName,
+          clientId,
+          clientSecret,
+          isPasskey: userInfo.isPasskey,
+          password: encryptedPassword
+        },
+        keycloakDetails.keycloakUserId.toString()
+      );
+
+      if (userInfo?.isHolder) {
+        const getUserRole = await this.userRepository.getUserRole(UserRole.HOLDER);
+
+        if (!getUserRole) {
+          throw new NotFoundException(ResponseMessages.user.error.userRoleNotFound);
+        }
+        await this.userRepository.storeUserRole(createdUser.id, getUserRole?.id);
+      }
+
+      const realmRoles = await this.clientRegistrationService.getAllRealmRoles(token);
+
+      const holderRole = realmRoles.filter((role) => role.name === OrgRoles.HOLDER);
+      const holderRoleData = 0 < holderRole.length && holderRole[0];
+
+      const payload = [
+        {
+          id: holderRoleData.id,
+          name: holderRoleData.name
+        }
+      ];
+
+      await this.clientRegistrationService.createUserHolderRole(
+        token,
+        keycloakDetails.keycloakUserId.toString(),
+        payload
+      );
+      const holderOrgRole = await this.orgRoleService.getRole(OrgRoles.HOLDER);
+      await this.userOrgRoleService.createUserOrgRole(createdUser.id, holderOrgRole.id, null, holderRoleData.id);
+      const userAccountDetails = {
+        userId: createdUser?.id,
+        provider: ProviderType.KEYCLOAK,
+        keycloakUserId: keycloakDetails.keycloakUserId,
+        // eslint-disable-next-line camelcase
+        type: TokenType.BEARER_TOKEN
+      };
+
+      await this.userRepository.addAccountDetails(userAccountDetails);
+
+      return { userId: createdUser?.id };
+    } catch (error) {
+      this.logger.error(`Error in createUserForUsernameToken: ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  /**
+   * Delete a user and every row that references it (org roles, tokens, sessions, cloud wallet
+   * info, etc). See UserRepository.deleteUserAndRelatedData for the cascade details.
+   * @param userId
+   * @returns deleted user record
+   */
+  async deleteUser(userId: string): Promise<user> {
+    try {
+      return await this.userRepository.deleteUserAndRelatedData(userId);
+    } catch (error) {
+      this.logger.error(`Error in deleteUser: ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
   async addPasskey(email: string, userInfo: AddPasskeyDetailsDto): Promise<string> {
     try {
       if (!email.toLowerCase()) {
@@ -534,6 +648,90 @@ export class UserService {
       return finalResponse;
     } catch (error) {
       this.logger.error(`In Login User : ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  /**
+   * Username-based login — mirrors login() except: no email-format validation (there is no
+   * email), lookup is by username instead of email, and there is no isEmailVerified gate (there is
+   * no email-verification step for a username-only account, so every username-signup row is
+   * created with isEmailVerified false by default and would otherwise be locked out permanently).
+   * @param loginUserDto
+   * @returns User access token details
+   */
+  async usernameLogin(loginUserDto: {
+    username: string;
+    password?: string;
+    isPasskey?: boolean;
+  }): Promise<ISignInUser> {
+    const { username, password, isPasskey } = loginUserDto;
+
+    try {
+      const userData = await this.userRepository.checkUserExistByUsername(username);
+      if (!userData) {
+        throw new NotFoundException(ResponseMessages.user.error.notFound);
+      }
+
+      if (true === isPasskey && false === userData?.isFidoVerified) {
+        throw new UnauthorizedException(ResponseMessages.user.error.registerFido);
+      }
+
+      this.userRepository.deleteInactiveSessions(userData?.id);
+      const userSessionDetails = await this.userRepository.fetchUserSessions(userData?.id);
+      if (Number(process.env.SESSIONS_LIMIT) <= userSessionDetails?.length) {
+        throw new BadRequestException(ResponseMessages.user.error.sessionLimitReached);
+      }
+      let tokenDetails;
+      if (true === isPasskey && userData?.username && true === userData?.isFidoVerified) {
+        const decryptedPassword = await this.commonService.decryptPassword(userData.password);
+        tokenDetails = await this.generateToken(username, decryptedPassword, userData);
+      } else {
+        const decryptedPassword = await this.commonService.decryptPassword(password);
+        tokenDetails = await this.generateToken(username, decryptedPassword, userData);
+      }
+      const decodedToken = jwt.decode(tokenDetails?.refresh_token);
+      if (!decodedToken || 'object' !== typeof decodedToken || !decodedToken.exp || !decodedToken.sid) {
+        throw new UnauthorizedException(ResponseMessages.user.error.refreshTokenExpired);
+      }
+      const expiresAt = new Date(decodedToken.exp * 1000);
+
+      const sessionData = {
+        id: decodedToken.sid,
+        sessionToken: tokenDetails?.access_token,
+        userId: userData?.id,
+        expires: tokenDetails?.expires_in,
+        refreshToken: tokenDetails?.refresh_token,
+        sessionType: SessionType.USER_SESSION,
+        expiresAt
+      };
+
+      const fetchAccountDetails = await this.userRepository.checkAccountDetails(userData?.id);
+      let addSessionDetails;
+      if (null === fetchAccountDetails) {
+        const accountData = {
+          userId: userData?.id,
+          keycloakUserId: userData?.keycloakUserId,
+          type: TokenType.BEARER_TOKEN
+        };
+
+        await this.userRepository.addAccountDetails(accountData).then(async (response) => {
+          const finalSessionData = { ...sessionData, accountId: response.id };
+          addSessionDetails = await this.userRepository.createSession(finalSessionData);
+        });
+      } else {
+        const finalSessionData = { ...sessionData, accountId: fetchAccountDetails.id };
+        addSessionDetails = await this.userRepository.createSession(finalSessionData);
+      }
+
+      const finalResponse = {
+        ...tokenDetails,
+        sessionId: addSessionDetails.id
+      };
+
+      return finalResponse;
+    } catch (error) {
+      this.logger.error(`In username login: ${JSON.stringify(error)}`);
       throw new RpcException(error.response ? error.response : error);
     }
   }
@@ -1329,6 +1527,26 @@ export class UserService {
       return getClientData;
     } catch (error) {
       this.logger.error(`In getUserByUserIdInKeycloak : ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  // Mirrors getUserByUserIdInKeycloak, but looks up by username rather than email — for tokens
+  // with no email claim (the username-based cloud-wallet signup/signin flow's preferred_username).
+  async getUserByUsernameInKeycloak(username: string): Promise<string> {
+    try {
+      const userData = await this.userRepository.checkUserExistByUsername(username);
+
+      if (!userData) {
+        throw new NotFoundException(ResponseMessages.user.error.notFound);
+      }
+
+      const token = await this.clientRegistrationService.getManagementToken(userData?.clientId, userData?.clientSecret);
+      const getClientData = await this.clientRegistrationService.getUserInfoByUserId(userData?.keycloakUserId, token);
+
+      return getClientData;
+    } catch (error) {
+      this.logger.error(`In getUserByUsernameInKeycloak : ${JSON.stringify(error)}`);
       throw error;
     }
   }

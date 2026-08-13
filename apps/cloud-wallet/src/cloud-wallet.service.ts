@@ -3,6 +3,7 @@ import { CommonService } from '@credebl/common';
 import {
   BadRequestException,
   ConflictException,
+  HttpStatus,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -31,12 +32,20 @@ import {
   IConnectionInvitationResponse,
   GetAllCloudWalletConnections,
   IBasicMessage,
-  IBasicMessageDetails
+  IBasicMessageDetails,
+  ICheckCloudWalletStatus,
+  IDeleteCloudWallet,
+  BaseAgentInfo,
+  IUpdateBaseWallet,
+  IW3cCredentials,
+  IProofPresentationDetails
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { CloudWalletType } from '@credebl/enum/enum';
 import { CommonConstants } from '@credebl/common/common.constant';
+// eslint-disable-next-line camelcase
+import { cloud_wallet_user_info, user } from '@prisma/client';
 
 @Injectable()
 export class CloudWalletService {
@@ -52,7 +61,7 @@ export class CloudWalletService {
    * @returns cloud base wallet
    */
   async configureBaseWallet(configureBaseWalletPayload: ICloudBaseWalletConfigure): Promise<IGetStoredWalletInfo> {
-    const { agentEndpoint, apiKey, email, walletKey, userId } = configureBaseWalletPayload;
+    const { agentEndpoint, apiKey, email, walletKey, userId, maxSubWallets } = configureBaseWalletPayload;
 
     try {
       const existingWalletInfo = await this.cloudWalletRepository.getCloudWalletInfo(email);
@@ -73,7 +82,8 @@ export class CloudWalletService {
         userId,
         key: encryptionWalletKey,
         createdBy: userId,
-        lastChangedBy: userId
+        lastChangedBy: userId,
+        maxSubWallets
       };
 
       const storedWalletInfo = await this.cloudWalletRepository.storeCloudWalletInfo(walletInfoToStore);
@@ -255,7 +265,10 @@ export class CloudWalletService {
         });
       }
 
-      const walletKey = await this.commonService.dataEncryption(createCloudWalletResponse.config.walletConfig.token);
+      // createTenant's response is { token, ...tenantRecord } — Credo 0.6.2's TenantConfig is
+      // just { label: string }, no walletConfig. Matches the agentApiKey assignment below, which
+      // already reads the same top-level field correctly.
+      const walletKey = await this.commonService.dataEncryption(createCloudWalletResponse.token);
 
       if (!walletKey) {
         throw new BadRequestException(ResponseMessages.cloudWallet.error.encryptCloudWalletKey, {
@@ -585,6 +598,219 @@ export class CloudWalletService {
         }
       );
       return basicMessageResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check whether a user's cloud wallet tenant still exists on the agent
+   * @param checkCloudWalletStatusPayload
+   * @returns tenant record if the wallet still exists on the agent
+   */
+  async checkCloudWalletStatus(checkCloudWalletStatusPayload: ICheckCloudWalletStatus): Promise<Response> {
+    try {
+      const { userId } = checkCloudWalletStatusPayload;
+      const baseWalletDetails = await this.cloudWalletRepository.getCloudWalletDetails(CloudWalletType.BASE_WALLET);
+      if (!baseWalletDetails) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
+      }
+
+      const cloudSubWalletDetails = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      if (!cloudSubWalletDetails || !cloudSubWalletDetails.tenantId) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.walletRecordNotFound);
+      }
+
+      // GET /multi-tenancy/:tenantId requires the *base* wallet's own token, not the tenant token
+      // _commonCloudWalletInfo returns — every /multi-tenancy/* route rejects a tenant-scoped
+      // token lacking the Basewallet scope. See the closed #74 PR review.
+      const decryptedApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+      const url = `${baseWalletDetails.agentEndpoint}${CommonConstants.CLOUD_WALLET_DELETE_BY_TENANT_ID}${cloudSubWalletDetails.tenantId}`;
+
+      const tenantStatusResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return tenantStatusResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a user's cloud wallet: removes the tenant on the agent and the platform record
+   * @param deleteCloudWalletPayload
+   * @returns deleted cloud wallet record
+   */
+  // eslint-disable-next-line camelcase
+  async deleteCloudWallet(deleteCloudWalletPayload: IDeleteCloudWallet): Promise<cloud_wallet_user_info> {
+    try {
+      const { userId } = deleteCloudWalletPayload;
+      const baseWalletDetails = await this.cloudWalletRepository.getCloudWalletDetails(CloudWalletType.BASE_WALLET);
+      if (!baseWalletDetails) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
+      }
+
+      const cloudSubWalletDetails = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      if (!cloudSubWalletDetails || !cloudSubWalletDetails.tenantId) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.walletRecordNotFound);
+      }
+
+      // Base-wallet scope required for /multi-tenancy/:tenantId — same reasoning as
+      // checkCloudWalletStatus above.
+      const decryptedApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+      const url = `${baseWalletDetails.agentEndpoint}${CommonConstants.CLOUD_WALLET_DELETE_BY_TENANT_ID}${cloudSubWalletDetails.tenantId}`;
+
+      const deleteTenantResponse = await this.commonService.httpDelete(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+
+      if (
+        !deleteTenantResponse ||
+        (HttpStatus.OK !== deleteTenantResponse.status && HttpStatus.NO_CONTENT !== deleteTenantResponse.status)
+      ) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.deleteCloudWallet, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      return this.cloudWalletRepository.deleteCloudWalletDetails(cloudSubWalletDetails.id);
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all configured base wallets and their current capacity
+   * @returns base wallet info list
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async getBaseWalletDetails(user: user): Promise<BaseAgentInfo[]> {
+    try {
+      const baseWallets = await this.cloudWalletRepository.getAllBaseWallets();
+      return baseWallets.map(({ agentEndpoint, useCount, maxSubWallets }) => ({
+        agentEndpoint,
+        useCount,
+        maxSubWallets
+      }));
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update a base wallet's active flag / sub-wallet capacity
+   * @param updateBaseWalletPayload
+   * @returns updated base wallet info
+   */
+  async updateBaseWalletDetails(updateBaseWalletPayload: IUpdateBaseWallet): Promise<BaseAgentInfo[]> {
+    try {
+      const { walletId, isActive, maxSubWallets } = updateBaseWalletPayload;
+      const updatedWallet = await this.cloudWalletRepository.updateBaseWallet(walletId, isActive, maxSubWallets);
+
+      return [
+        {
+          agentEndpoint: updatedWallet.agentEndpoint,
+          useCount: updatedWallet.useCount,
+          maxSubWallets: updatedWallet.maxSubWallets
+        }
+      ];
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all W3C credentials for a tenant
+   * @param w3cCredentialsDetails
+   * @returns W3C credential list
+   */
+  async getAllW3cCredentials(w3cCredentialsDetails: IW3cCredentials): Promise<Response> {
+    try {
+      const { userId } = w3cCredentialsDetails;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_W3C_CREDENTIAL}`;
+
+      const w3cCredentialsResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return w3cCredentialsResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a W3C credential by its record id
+   * @param w3cCredentialDetails
+   * @returns W3C credential
+   */
+  async getW3cCredentialByCredentialRecordId(w3cCredentialDetails: IW3cCredentials): Promise<Response> {
+    try {
+      const { userId, credentialRecordId } = w3cCredentialDetails;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_W3C_CREDENTIAL}/${credentialRecordId}`;
+
+      const w3cCredentialResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return w3cCredentialResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a credential's format data by its record id
+   * @param credentialDetails
+   * @returns credential format data
+   */
+  async getCredentialFormatDataByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<Response> {
+    try {
+      const { userId, credentialRecordId } = credentialDetails;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_CREDENTIAL}/${credentialRecordId}${CommonConstants.CLOUD_WALLET_CREDENTIAL_FORMAT_DATA}`;
+
+      const credentialFormatDataResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return credentialFormatDataResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a proof presentation's format data by its record id
+   * @param proofPresentationDetails
+   * @returns proof presentation format data
+   */
+  async getProofFormatDataByProofRecordId(proofPresentationDetails: IProofPresentationDetails): Promise<Response> {
+    try {
+      const { userId, proofRecordId } = proofPresentationDetails;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CommonConstants.CLOUD_WALLET_PROOF_FORM_DATA}`;
+
+      const proofFormatDataResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return proofFormatDataResponse;
     } catch (error) {
       await this.commonService.handleError(error);
       throw error;

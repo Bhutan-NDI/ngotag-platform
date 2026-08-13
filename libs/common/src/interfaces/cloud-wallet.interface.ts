@@ -113,10 +113,14 @@ export interface IStoreWalletInfo {
   agentApiKey: string;
   agentEndpoint: string;
   type: CloudWalletType;
-  userId?: string;
+  // Required, not optional — maps to a NOT NULL Uuid column via createdBy: userId. Loosening
+  // this to optional removes the compile-time guarantee and turns an omitted userId into a
+  // runtime Prisma error instead of a type error. See the #71 review.
+  userId: string;
   createdBy: string;
   lastChangedBy: string;
-  maxSubWallets: number;
+  // Optional — the DB column defaults to 5000; see ICloudBaseWalletConfigure's own comment.
+  maxSubWallets?: number;
 }
 
 export interface IGetStoredWalletInfo {
@@ -169,7 +173,10 @@ export interface ICloudBaseWalletConfigure {
   agentEndpoint: string;
   userId: string;
   email: string;
-  maxSubWallets: number;
+  // Optional — the DB column defaults to 5000. Required would 400 every existing caller of the
+  // live POST /cloud-wallet/configure/base-wallet endpoint. See the #71 review's "required field
+  // added to a live endpoint's DTO".
+  maxSubWallets?: number;
   // webhookUrl: string;
   // orgId: string;
 }
@@ -454,6 +461,14 @@ export interface BaseAgentInfo {
   useCount: number;
   maxSubWallets: number;
 }
+
+export interface IUpdateBaseWallet {
+  maxSubWallets: number;
+  isActive: boolean;
+  email?: string;
+  userId?: string;
+  walletId: string;
+}
 interface JsonObject {
   [property: string]: JsonValue;
 }
@@ -480,7 +495,6 @@ export interface IW3cCredentials {
 
 export interface IExportCloudWallet {
   passKey: string;
-  walletID: string;
   userId: string;
   email: string;
 }

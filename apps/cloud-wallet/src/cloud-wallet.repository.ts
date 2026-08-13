@@ -3,8 +3,12 @@ import { PrismaService } from '@credebl/prisma-service';
 import { CloudWalletType } from '@credebl/enum/enum';
 // eslint-disable-next-line camelcase
 import { cloud_wallet_user_info, user } from '@prisma/client';
-import { ICloudWalletDetails, IGetStoredWalletInfo, IStoredWalletDetails, IStoreWalletInfo } from '@credebl/common/interfaces/cloud-wallet.interface';
-
+import {
+  ICloudWalletDetails,
+  IGetStoredWalletInfo,
+  IStoredWalletDetails,
+  IStoreWalletInfo
+} from '@credebl/common/interfaces/cloud-wallet.interface';
 
 @Injectable()
 export class CloudWalletRepository {
@@ -13,7 +17,6 @@ export class CloudWalletRepository {
     private readonly logger: Logger
   ) {}
 
- 
   // eslint-disable-next-line camelcase
   async getCloudWalletDetails(type: CloudWalletType): Promise<cloud_wallet_user_info> {
     try {
@@ -46,7 +49,18 @@ export class CloudWalletRepository {
   // eslint-disable-next-line camelcase
   async storeCloudWalletDetails(cloudWalletDetails: ICloudWalletDetails): Promise<IStoredWalletDetails> {
     try {
-      const {label, lastChangedBy, tenantId, type, userId, agentApiKey, agentEndpoint, email, key, connectionImageUrl} = cloudWalletDetails;
+      const {
+        label,
+        lastChangedBy,
+        tenantId,
+        type,
+        userId,
+        agentApiKey,
+        agentEndpoint,
+        email,
+        key,
+        connectionImageUrl
+      } = cloudWalletDetails;
 
       return await this.prisma.cloud_wallet_user_info.create({
         data: {
@@ -70,7 +84,6 @@ export class CloudWalletRepository {
           tenantId: true,
           label: true,
           lastChangedDateTime: true
-          
         }
       });
     } catch (error) {
@@ -96,7 +109,8 @@ export class CloudWalletRepository {
 
   async storeCloudWalletInfo(cloudWalletInfoPayload: IStoreWalletInfo): Promise<IGetStoredWalletInfo> {
     try {
-      const { agentEndpoint, agentApiKey, email, type, userId, key, createdBy, lastChangedBy } = cloudWalletInfoPayload;
+      const { agentEndpoint, agentApiKey, email, type, userId, key, createdBy, lastChangedBy, maxSubWallets } =
+        cloudWalletInfoPayload;
       const walletInfoData = await this.prisma.cloud_wallet_user_info.create({
         data: {
           type,
@@ -106,11 +120,14 @@ export class CloudWalletRepository {
           userId,
           key,
           createdBy,
-          lastChangedBy
+          lastChangedBy,
+          // undefined (not sent) is omitted by Prisma and falls through to the column's own
+          // @default(5000) — see IStoreWalletInfo's comment.
+          maxSubWallets
         },
         select: {
           id: true,
-          email: true, 
+          email: true,
           type: true,
           userId: true,
           agentEndpoint: true
@@ -126,14 +143,64 @@ export class CloudWalletRepository {
   // eslint-disable-next-line camelcase
   async getCloudSubWallet(userId: string): Promise<cloud_wallet_user_info> {
     try {
+      // Filtered by type too — a user can now legitimately hold both a BASE_WALLET row and a
+      // SUB_WALLET row (see the schema's @@unique([userId, type])), so userId alone is no longer
+      // enough to unambiguously mean "this user's cloud sub-wallet".
       const cloudSubWalletDetails = await this.prisma.cloud_wallet_user_info.findFirstOrThrow({
         where: {
-          userId
+          userId,
+          type: CloudWalletType.SUB_WALLET
         }
       });
       return cloudSubWalletDetails;
     } catch (error) {
       this.logger.error(`Error in getCloudSubWallet: ${error}`);
+      throw error;
+    }
+  }
+
+  // eslint-disable-next-line camelcase
+  async getAllBaseWallets(): Promise<cloud_wallet_user_info[]> {
+    try {
+      return await this.prisma.cloud_wallet_user_info.findMany({
+        where: {
+          type: CloudWalletType.BASE_WALLET
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error in getAllBaseWallets: ${error}`);
+      throw error;
+    }
+  }
+
+  // eslint-disable-next-line camelcase
+  async updateBaseWallet(walletId: string, isActive: boolean, maxSubWallets: number): Promise<cloud_wallet_user_info> {
+    try {
+      return await this.prisma.cloud_wallet_user_info.update({
+        where: {
+          id: walletId
+        },
+        data: {
+          isActive,
+          maxSubWallets
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error in updateBaseWallet: ${error}`);
+      throw error;
+    }
+  }
+
+  // eslint-disable-next-line camelcase
+  async deleteCloudWalletDetails(id: string): Promise<cloud_wallet_user_info> {
+    try {
+      return await this.prisma.cloud_wallet_user_info.delete({
+        where: {
+          id
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error in deleteCloudWalletDetails: ${error}`);
       throw error;
     }
   }
