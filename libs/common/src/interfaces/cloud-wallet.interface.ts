@@ -498,3 +498,12 @@ export interface IExportCloudWallet {
   userId: string;
   email: string;
 }
+
+// Export against agent-controller's native WalletPortabilityService is an async job: the
+// initiating call returns { jobId, status } immediately, and completion is observed by polling
+// the status op with this same payload shape.
+export interface IWalletPortabilityJobStatus {
+  userId: string;
+  email: string;
+  jobId: string;
+}

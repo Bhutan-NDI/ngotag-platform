@@ -28,7 +28,8 @@ import {
   IProofPresentationPayloadWithCred,
   IGetCredentialsForRequest,
   ICredentialForRequestRes,
-  IDeleteCloudWallet
+  IDeleteCloudWallet,
+  IWalletPortabilityJobStatus
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
 import { cloud_wallet_user_info, user } from '@prisma/client';
@@ -175,6 +176,10 @@ export class CloudWalletService extends BaseService {
 
   exportWallet(exportWallet: IExportCloudWallet): Promise<Response> {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'export-cloud-wallet', exportWallet);
+  }
+
+  getExportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
+    return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'get-export-wallet-status', jobStatus);
   }
 
   getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {

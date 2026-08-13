@@ -38,7 +38,9 @@ import {
   BaseAgentInfo,
   IUpdateBaseWallet,
   IW3cCredentials,
-  IProofPresentationDetails
+  IProofPresentationDetails,
+  IExportCloudWallet,
+  IWalletPortabilityJobStatus
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -598,6 +600,84 @@ export class CloudWalletService {
         }
       );
       return basicMessageResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Start a native wallet export job against agent-controller. Async: returns { jobId, status }
+   * immediately — poll getExportWalletStatus for the actual completion result (download URL +
+   * checksum). tenantId comes from the platform's own record, not the caller — the agent-side
+   * export endpoint (agent-controller PR #72) takes it from the path, not the request body.
+   * @param exportWallet
+   * @returns { jobId, status }
+   */
+  async exportCloudWallet(exportWallet: IExportCloudWallet): Promise<Response> {
+    try {
+      const { email, userId, passKey } = exportWallet;
+
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(email);
+      if (!checkUserExist) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
+      }
+
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_EXPORT}${tenantId}`;
+
+      const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
+      if (!checkCloudWalletAgentHealth) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
+      }
+
+      const exportWalletResponse = await this.commonService.httpPost(
+        url,
+        { passKey },
+        {
+          headers: { authorization: decryptedApiKey }
+        }
+      );
+
+      if (!exportWalletResponse) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.exportWallet, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      return exportWalletResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Poll the status of an export job started via exportCloudWallet.
+   * @param jobStatus
+   * @returns the export job's current status
+   */
+  async getExportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
+    try {
+      const { userId, jobId } = jobStatus;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_EXPORT}${tenantId}/status/${jobId}`;
+      const statusResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+
+      if (!statusResponse) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.jobStatusNotFound);
+      }
+
+      return statusResponse;
     } catch (error) {
       await this.commonService.handleError(error);
       throw error;

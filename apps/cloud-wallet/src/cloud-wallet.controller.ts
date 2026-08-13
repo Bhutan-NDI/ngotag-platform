@@ -28,7 +28,9 @@ import {
   BaseAgentInfo,
   IUpdateBaseWallet,
   IW3cCredentials,
-  IProofPresentationDetails
+  IProofPresentationDetails,
+  IExportCloudWallet,
+  IWalletPortabilityJobStatus
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
 import { cloud_wallet_user_info, user } from '@prisma/client';
@@ -115,6 +117,16 @@ export class CloudWalletController {
   @MessagePattern({ cmd: 'send-basic-message' })
   async sendBasicMessage(messageDetails: IBasicMessageDetails): Promise<Response> {
     return this.cloudWalletService.sendBasicMessage(messageDetails);
+  }
+
+  @MessagePattern({ cmd: 'export-cloud-wallet' })
+  async exportCloudWallet(exportWallet: IExportCloudWallet): Promise<Response> {
+    return this.cloudWalletService.exportCloudWallet(exportWallet);
+  }
+
+  @MessagePattern({ cmd: 'get-export-wallet-status' })
+  async getExportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
+    return this.cloudWalletService.getExportWalletStatus(jobStatus);
   }
 
   @MessagePattern({ cmd: 'check-cloud-wallet-status' })

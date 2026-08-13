@@ -64,7 +64,8 @@ import {
   IWalletDetailsForDidList,
   IW3cCredentials,
   ICheckCloudWalletStatus,
-  IDeleteCloudWallet
+  IDeleteCloudWallet,
+  IWalletPortabilityJobStatus
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CreateConnectionDto } from './dtos/create-connection.dto';
 import { ProofWithCredDto } from './dtos/accept-proof-request-with-cred.dto';
@@ -557,9 +558,10 @@ export class CloudWalletController {
   }
 
   /**
-   * Create did
-   * @param orgId
-   * @returns did
+   * Export a cloud wallet. Async: returns { jobId, status } immediately — poll
+   * GET /export-wallet/status/:jobId for the actual completion result (download URL + checksum).
+   * @param exportWallet
+   * @returns { jobId, status }
    */
   @Post('/export-wallet')
   @ApiOperation({
@@ -587,6 +589,36 @@ export class CloudWalletController {
     };
 
     return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
+
+  /**
+   * Poll the status of an export job started via POST /export-wallet. Export against
+   * agent-controller's native WalletPortabilityService is an async job — this is how completion
+   * (the download URL + checksum) is actually observed.
+   * @param jobId
+   * @returns the export job's current status
+   */
+  @Get('/export-wallet/status/:jobId')
+  @ApiOperation({ summary: 'Get export wallet job status', description: 'Get export wallet job status' })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'), UserRoleGuard)
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async getExportWalletStatus(
+    @Param('jobId') jobId: string,
+    @Res() res: Response,
+    @User() user: user
+  ): Promise<Response> {
+    const { id, email } = user;
+    const jobStatusPayload: IWalletPortabilityJobStatus = { userId: id, email, jobId };
+    const jobStatusResponse = await this.cloudWalletService.getExportWalletStatus(jobStatusPayload);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.agent.success.exportWallet,
+      data: jobStatusResponse
+    };
+
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**

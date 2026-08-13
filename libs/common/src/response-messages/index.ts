@@ -375,7 +375,10 @@ export const ResponseMessages = {
       createDid: 'Did created successfully',
       generateWebDid:
         'did:web DID Document generated successfully. Host the document then call the create DID endpoint.',
-      exportWallet: 'Wallet Exported successfully',
+      // Export is an async job against agent-controller's native WalletPortabilityService — this
+      // message fires the moment the job is *started*, not when it's actually done. The real
+      // artifact only exists once the status-poll endpoint reports completion.
+      exportWallet: 'Wallet export started successfully',
       health: 'Agent health details retrieved successfully.',
       ledgerConfig: 'Ledger config details fetched successfully.',
       sign: 'Payload signed successfully.',
@@ -679,7 +682,8 @@ export const ResponseMessages = {
       walletRecordNotFound: 'Wallet record not found.',
       createSelfAttestedW3cCredential: 'Error while creating self-attested credential.',
       deleteCloudWallet: 'Error while deleting cloud wallet',
-      checkCloudWalletStatus: 'Error while checking cloud wallet status'
+      checkCloudWalletStatus: 'Error while checking cloud wallet status',
+      jobStatusNotFound: 'Export/import job status not found'
     }
   },
   oidcIssuer: {
