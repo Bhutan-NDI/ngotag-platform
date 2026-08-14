@@ -884,7 +884,7 @@ export class CloudWalletService {
     try {
       const { userId, exportUrl, checksum, passKey } = importWallet;
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
       }
