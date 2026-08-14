@@ -882,9 +882,9 @@ export class CloudWalletService {
    */
   async importCloudWallet(importWallet: IImportCloudWallet): Promise<Response> {
     try {
-      const { email, userId, exportUrl, checksum, passKey } = importWallet;
+      const { userId, exportUrl, checksum, passKey } = importWallet;
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(email);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
       }
