@@ -203,13 +203,6 @@ export class CloudWalletService {
       throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
     }
 
-    const getAgentDetails = await this.commonService.httpGet(
-      `${baseWalletDetails?.agentEndpoint}${CommonConstants.URL_AGENT_GET_ENDPOINT}`
-    );
-    if (!getAgentDetails?.isInitialized) {
-      throw new BadRequestException(ResponseMessages.cloudWallet.error.notReachable);
-    }
-
     const getTenant = await this.cloudWalletRepository.getCloudSubWallet(userId);
 
     if (!getTenant || !getTenant?.tenantId) {
@@ -217,6 +210,18 @@ export class CloudWalletService {
     }
 
     const decryptedApiKey = await this.commonService.decryptPassword(getTenant?.agentApiKey);
+
+    // Authenticated — agent-controller's GET /agent now requires a JWT (AgentController.getAgentInfo
+    // carries @Security since the #75 port), so an unauthenticated call here always 401s, breaking
+    // every one of this helper's ~28 callers. Decrypt the tenant's own key above and send it, same
+    // as checkAgentHealth already does for the callers that also call that separately.
+    const getAgentDetails = await this.commonService.httpGet(
+      `${baseWalletDetails?.agentEndpoint}${CommonConstants.URL_AGENT_GET_ENDPOINT}`,
+      { headers: { authorization: decryptedApiKey } }
+    );
+    if (!getAgentDetails?.isInitialized) {
+      throw new BadRequestException(ResponseMessages.cloudWallet.error.notReachable);
+    }
 
     return [baseWalletDetails, decryptedApiKey];
   }
