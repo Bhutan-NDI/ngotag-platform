@@ -634,7 +634,9 @@ export class CloudWalletController {
   })
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
-  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  // 202, not 200/201: same reasoning as exportWallet's identical comment -- this starts an async
+  // job, it doesn't create an addressable resource or return a completed result.
+  @ApiResponse({ status: HttpStatus.ACCEPTED, description: 'Import job started', type: ApiResponseDto })
   async importWallet(
     @Body() importWallet: ImportCloudWalletDto,
     @User() user: user,
@@ -647,12 +649,12 @@ export class CloudWalletController {
     const importWalletDetails = await this.cloudWalletService.importWallet(importWallet);
 
     const finalResponse: IResponse = {
-      statusCode: HttpStatus.OK,
+      statusCode: HttpStatus.ACCEPTED,
       message: ResponseMessages.agent.success.importWallet,
       data: importWalletDetails
     };
 
-    return res.status(HttpStatus.CREATED).json(finalResponse);
+    return res.status(HttpStatus.ACCEPTED).json(finalResponse);
   }
 
   /**
@@ -677,7 +679,9 @@ export class CloudWalletController {
 
     const finalResponse: IResponse = {
       statusCode: HttpStatus.OK,
-      message: ResponseMessages.agent.success.importWallet,
+      // Neutral message, not importWallet's "started successfully" -- see
+      // getExportWalletStatus's identical comment above.
+      message: ResponseMessages.agent.success.jobStatusFetched,
       data: jobStatusResponse
     };
 
