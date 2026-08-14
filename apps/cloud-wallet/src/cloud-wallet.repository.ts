@@ -33,12 +33,19 @@ export class CloudWalletRepository {
     }
   }
 
+  // Keyed on userId, not email: the username-based signup flow (createUserByUsername) never
+  // populates user.email at all, so every caller of this method that gets its email from the
+  // platform user row would otherwise pass undefined — Prisma's findUnique throws
+  // PrismaClientValidationError for a where clause missing every unique field, rather than a
+  // clean "not found". userId is always populated regardless of which signup flow created the
+  // account, and every caller here already has it (it's the JWT subject). Not @unique on its own
+  // (only the (userId, type) compound is), so findFirst rather than findUnique.
   // eslint-disable-next-line camelcase
-  async checkUserExist(email: string): Promise<cloud_wallet_user_info> {
+  async checkUserExist(userId: string): Promise<cloud_wallet_user_info> {
     try {
-      const agentDetails = await this.prisma.cloud_wallet_user_info.findUnique({
+      const agentDetails = await this.prisma.cloud_wallet_user_info.findFirst({
         where: {
-          email
+          userId
         }
       });
       return agentDetails;
