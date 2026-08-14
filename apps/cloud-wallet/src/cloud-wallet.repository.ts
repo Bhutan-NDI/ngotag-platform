@@ -18,17 +18,42 @@ export class CloudWalletRepository {
     private readonly logger: Logger
   ) {}
 
+  // isActive filtered in: a deactivated base wallet (PATCH /base-wallet/:walletId
+  // { isActive: false }) must stop being selected for both new sub-wallet creation and existing
+  // sub-wallet operations that route through it -- without this filter, isActive was written but
+  // never actually consulted anywhere. See the #71 review.
   // eslint-disable-next-line camelcase
   async getCloudWalletDetails(type: CloudWalletType): Promise<cloud_wallet_user_info> {
     try {
       const agentDetails = await this.prisma.cloud_wallet_user_info.findFirstOrThrow({
         where: {
-          type
+          type,
+          isActive: true
         }
       });
       return agentDetails;
     } catch (error) {
       this.logger.error(`Error in getCloudWalletBaseAgentDetails: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Best-effort capacity counter, incremented on every successful sub-wallet creation against
+  // this base wallet (see createCloudWallet). NOTE: not decremented on wallet deletion (there is
+  // no baseWalletId FK on cloud_wallet_user_info linking a SUB_WALLET row back to the specific
+  // BASE_WALLET row it was created against, so a correct decrement -- or a fully accurate
+  // multi-base-wallet capacity pool -- needs that FK added first; tracked as follow-up, not
+  // silently pretended to be solved here). In the common single-base-wallet deployment this still
+  // functions as a real (if one-directional) cap; documented as a known limitation rather than
+  // left unexplained.
+  async incrementBaseWalletUseCount(walletId: string): Promise<void> {
+    try {
+      await this.prisma.cloud_wallet_user_info.update({
+        where: { id: walletId },
+        data: { useCount: { increment: 1 } }
+      });
+    } catch (error) {
+      this.logger.error(`Error in incrementBaseWalletUseCount: ${error.message}`);
       throw error;
     }
   }

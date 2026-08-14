@@ -252,6 +252,14 @@ export class CloudWalletService {
 
       const baseWalletDetails = await this.cloudWalletRepository.getCloudWalletDetails(CloudWalletType.BASE_WALLET);
 
+      // Enforce the capacity this base wallet was configured with -- useCount/maxSubWallets were
+      // previously written (configureBaseWallet/updateBaseWalletDetails) and displayed
+      // (getBaseWalletDetails) but never actually consulted here, so sub-wallet creation never
+      // stopped regardless of how full the base wallet already was. See the #71 review.
+      if (baseWalletDetails.useCount >= baseWalletDetails.maxSubWallets) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.BaseWalletLimitExceeded);
+      }
+
       const { agentEndpoint, agentApiKey } = baseWalletDetails;
       if (!agentEndpoint || !agentApiKey) {
         throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
@@ -301,6 +309,14 @@ export class CloudWalletService {
         connectionImageUrl
       };
       const storeCloudWalletDetails = await this.cloudWalletRepository.storeCloudWalletDetails(cloudWalletResponse);
+      // Best-effort: if this fails, the sub-wallet is already created and usable -- log rather
+      // than fail the whole request over a counter update. See incrementBaseWalletUseCount's own
+      // docblock for the known "never decremented on delete" limitation.
+      await this.cloudWalletRepository
+        .incrementBaseWalletUseCount(baseWalletDetails.id)
+        .catch((error) =>
+          this.logger.error(`[createCloudWallet] - failed to increment base wallet useCount: ${error}`)
+        );
       return storeCloudWalletDetails;
     } catch (error) {
       this.logger.error(`[createCloudWallet] - error in create cloud wallet: ${error}`);
