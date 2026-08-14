@@ -858,11 +858,15 @@ model ecosystem_orgs {
   lastChangedDateTime DateTime  @default(now()) @db.Timestamptz(6)
   lastChangedBy       String    @db.Uuid
   deletedAt           DateTime? @db.Timestamp(6)
-  userId              String    @db.Uuid
+  // Nullable, not required: this row is the *organisation's* membership in an ecosystem
+  // (@@unique([orgId, ecosystemId]) below) -- userId only records who added it. Deleting a user
+  // must not delete their orgs' ecosystem memberships (see deleteUserAndRelatedData's docblock);
+  // nulling this field instead is how that stays possible without an orphaned FK reference.
+  userId              String?   @db.Uuid
   ecosystem     ecosystem       @relation(fields: [ecosystemId], references: [id])
   ecosystemRole ecosystem_roles @relation(fields: [ecosystemRoleId], references: [id])
   organisation  organisation    @relation(fields: [orgId], references: [id])
-  user          user            @relation(fields:[userId], references: [id])
+  user          user?           @relation(fields:[userId], references: [id])
 
   @@unique([orgId, ecosystemId])
 }

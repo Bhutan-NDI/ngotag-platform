@@ -193,10 +193,18 @@ export class UserRepository {
 
   /**
    * Delete a user and every row that references it. Only user_org_roles and user_role_mapping
-   * cascade automatically at the DB level (onDelete: Cascade) — every other table below defaults
-   * to RESTRICT, so prisma.user.delete alone throws a foreign-key violation for any user that has
-   * ever logged in (a session/account/token row already exists). Wrapped in a single transaction
-   * so a mid-way failure leaves nothing deleted.
+   * cascade automatically at the DB level (onDelete: Cascade) — every other table in the deleteMany
+   * list below defaults to RESTRICT, so prisma.user.delete alone throws a foreign-key violation for
+   * any user that has ever logged in (a session/account/token row already exists). Wrapped in a
+   * single transaction so a mid-way failure leaves nothing deleted.
+   *
+   * ecosystem_orgs and marketplace_subscription are deliberately NOT in the deleteMany list: unlike
+   * every table above, those rows represent organisation/billing state, not user-profile state
+   * — userId/localUserId there only records who added/purchased them. Both FKs are
+   * ON DELETE SET NULL (ecosystem_orgs as of the migration alongside this fix; marketplace_subscription
+   * already was), so the DB itself nulls the reference when this transaction's user.delete() runs,
+   * rather than the row being destroyed. Deleting a user must never eject their organisations from
+   * an ecosystem or drop billing records — see the #71 review.
    * @param userId
    * @returns deleted user record
    */
@@ -210,9 +218,7 @@ export class UserRepository {
         this.prisma.org_invitations.deleteMany({ where: { userId } }),
         this.prisma.user_activity.deleteMany({ where: { userId } }),
         this.prisma.ecosystem_invitations.deleteMany({ where: { userId } }),
-        this.prisma.ecosystem_orgs.deleteMany({ where: { userId } }),
         this.prisma.cloud_wallet_user_info.deleteMany({ where: { userId } }),
-        this.prisma.marketplace_subscription.deleteMany({ where: { localUserId: userId } }),
         this.prisma.user.delete({ where: { id: userId } })
       ]);
       return results[results.length - 1] as user;
