@@ -9,7 +9,13 @@ export class KeycloakUrlService {
   }
 
   async getUserByUsernameURL(realm: string, username: string): Promise<string> {
-    return `${process.env.KEYCLOAK_DOMAIN}admin/realms/${realm}/users?username=${username}`;
+    // exact=true: Keycloak's admin user search treats a bare ?username= as a case-insensitive
+    // *partial* match by default, with unspecified result ordering. Every caller here takes
+    // result[0].id and resets that user's password / links a new platform row to that Keycloak
+    // account -- without exact=true, a new signup (e.g. 'bob') whose username happens to be a
+    // prefix of an existing user's ('bob123') can silently reset bob123's password and adopt
+    // their Keycloak account instead of its own. See the #71 review.
+    return `${process.env.KEYCLOAK_DOMAIN}admin/realms/${realm}/users?username=${username}&exact=true`;
   }
 
   async GetUserInfoURL(realm: string, userid: string): Promise<string> {
