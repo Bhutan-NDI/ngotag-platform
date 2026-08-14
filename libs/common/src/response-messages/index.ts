@@ -379,6 +379,12 @@ export const ResponseMessages = {
       // message fires the moment the job is *started*, not when it's actually done. The real
       // artifact only exists once the status-poll endpoint reports completion.
       exportWallet: 'Wallet export started successfully',
+      // Neutral, state-agnostic message for the export/import status-poll endpoints -- the actual
+      // state (pending/in_progress/completed/failed) is in the response body's own status field.
+      // Reusing exportWallet/importWallet's "started successfully" wording on a poll response was
+      // wrong for every state except the very first poll, and especially wrong on a failed job.
+      // See the #71/#73 reviews.
+      jobStatusFetched: 'Job status fetched successfully',
       health: 'Agent health details retrieved successfully.',
       ledgerConfig: 'Ledger config details fetched successfully.',
       sign: 'Payload signed successfully.',

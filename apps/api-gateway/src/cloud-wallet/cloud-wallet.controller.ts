@@ -179,7 +179,10 @@ export class CloudWalletController {
    */
   @Get('/check-cloud-wallet-status')
   @ApiOperation({ summary: 'Accept proof request', description: 'Accept proof request' })
-  @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
+  // 200, not 201: this is a GET that reads existing status, it doesn't create anything.
+  // Decorator/body/actual all agreed on 201 before -- now they all agree on 200. See the #71
+  // review.
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
   async checkCloudWalletStatus(@Res() res: Response, @User() user: user): Promise<Response> {
     const { id, email } = user;
@@ -195,7 +198,7 @@ export class CloudWalletController {
         message: ResponseMessages.cloudWallet.success.checkCloudWalletStatus,
         data: checkCloudWalletStatusRes
       };
-      return res.status(HttpStatus.CREATED).json(finalResponse);
+      return res.status(HttpStatus.OK).json(finalResponse);
     } catch (error) {
       if ('P2025' === error?.code) {
         return res.status(HttpStatus.NOT_FOUND).json({ message: 'Not found' });
@@ -206,7 +209,9 @@ export class CloudWalletController {
 
   @Get('get-active-base-wallet')
   @ApiOperation({ summary: 'Create cloud wallet', description: 'Create cloud wallet' })
-  @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
+  // 200, not 201: this is a GET, it doesn't create anything. See checkCloudWalletStatus's
+  // identical comment above.
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
   async getBaseWalletDetails(@Res() res: Response, @User() user: user): Promise<Response> {
@@ -216,12 +221,14 @@ export class CloudWalletController {
       message: ResponseMessages.cloudWallet.success.getBaseWalletInfo,
       data: baseWalletData
     };
-    return res.status(HttpStatus.CREATED).json(finalResponse);
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   @Patch('/base-wallet/:walletId')
   @ApiOperation({ summary: 'Update base wallet', description: 'Update base wallet' })
-  @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
+  // 200, not 201: this is a PATCH updating an existing row, it doesn't create anything. See
+  // checkCloudWalletStatus's identical comment above.
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @ApiBearerAuth()
   // Not UserRoleGuard: that one only asserts 'holder', which every cloud-wallet end user passes
   // -- changing a base wallet's isActive/maxSubWallets is strictly more privileged than any
@@ -251,7 +258,7 @@ export class CloudWalletController {
       message: ResponseMessages.cloudWallet.success.getBaseWalletInfo,
       data: baseWalletData
     };
-    return res.status(HttpStatus.CREATED).json(finalResponse);
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**
@@ -548,7 +555,11 @@ export class CloudWalletController {
   })
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
-  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  // 202, not 200/201: this starts an async job, it doesn't create an addressable resource
+  // (201) or return a completed result (200). Decorator/body/actual all agree on 202 now --
+  // previously the decorator/body said 200 while the actual response was sent as 201. See the
+  // #71 review.
+  @ApiResponse({ status: HttpStatus.ACCEPTED, description: 'Export job started', type: ApiResponseDto })
   async exportWallet(
     @Body() exportWallet: ExportCloudWalletDto,
     @User() user: user,
@@ -561,12 +572,12 @@ export class CloudWalletController {
     const exportWalletDetails = await this.cloudWalletService.exportWallet(exportWallet);
 
     const finalResponse: IResponse = {
-      statusCode: HttpStatus.OK,
+      statusCode: HttpStatus.ACCEPTED,
       message: ResponseMessages.agent.success.exportWallet,
       data: exportWalletDetails
     };
 
-    return res.status(HttpStatus.CREATED).json(finalResponse);
+    return res.status(HttpStatus.ACCEPTED).json(finalResponse);
   }
 
   /**
@@ -592,7 +603,9 @@ export class CloudWalletController {
 
     const finalResponse: IResponse = {
       statusCode: HttpStatus.OK,
-      message: ResponseMessages.agent.success.exportWallet,
+      // Neutral message, not exportWallet's "started successfully" -- this is a poll response,
+      // and the job may be pending/in_progress/completed/failed. Actual state is in data.status.
+      message: ResponseMessages.agent.success.jobStatusFetched,
       data: jobStatusResponse
     };
 
