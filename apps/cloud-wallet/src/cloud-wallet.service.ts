@@ -1108,7 +1108,7 @@ export class CloudWalletService {
    */
   async createSelfAttestedW3cCredential(selfAttestedCredential: ISelfAttestedCredential): Promise<Response> {
     try {
-      const { email, userId } = selfAttestedCredential;
+      const { userId } = selfAttestedCredential;
       // Destructured explicitly rather than rest-spread: agent-controller's tsoa config throws on
       // any body property outside its jsonLdCredentialOptions model (@context/type/
       // credentialSubject/proofType only, additionalProperties: false). ISelfAttestedCredential's
@@ -1117,7 +1117,7 @@ export class CloudWalletService {
       const { '@context': context, type, credentialSubject, proofType } = selfAttestedCredential;
       const selfAttestedDetails = { '@context': context, type, credentialSubject, proofType };
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(email);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
 
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
