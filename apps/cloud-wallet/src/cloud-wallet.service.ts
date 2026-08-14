@@ -1117,7 +1117,7 @@ export class CloudWalletService {
       const { '@context': context, type, credentialSubject, proofType } = selfAttestedCredential;
       const selfAttestedDetails = { '@context': context, type, credentialSubject, proofType };
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
