@@ -224,7 +224,18 @@ export class CloudWalletController {
   @ApiOperation({ summary: 'Update base wallet', description: 'Update base wallet' })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'), UserRoleGuard)
+  // Not UserRoleGuard: that one only asserts 'holder', which every cloud-wallet end user passes
+  // -- changing a base wallet's isActive/maxSubWallets is strictly more privileged than any
+  // holder-facing action on this controller and shouldn't be reachable by ordinary holders at all.
+  // Matched to configureBaseWallet's own guard level (AuthGuard('jwt') only) instead of building
+  // a new "platform admin" check: RolesGuard (this repo's existing permission-based guard,
+  // apps/api-gateway/src/authz/roles.guard.ts) unconditionally `return true`s whenever the
+  // `subscription` reflector key isn't also set on the handler -- and nothing in this codebase
+  // ever sets it (confirmed via a repo-wide grep) -- so wiring RolesGuard up here would be a
+  // silent no-op, wider open than UserRoleGuard, not narrower. That's a pre-existing, unrelated
+  // bug in RolesGuard itself (affects every other endpoint using it the same way), out of scope
+  // to fix from this PR -- flagged separately rather than silently relied on. See the #71 review.
+  @UseGuards(AuthGuard('jwt'))
   async updateBaseWalletDetails(
     @Param('walletId') walletId: string,
     @Body() updateBaseWalletDto: UpdateBaseWalletDto,

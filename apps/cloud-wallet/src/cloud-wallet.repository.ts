@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
 import { CloudWalletType } from '@credebl/enum/enum';
+import { ResponseMessages } from '@credebl/common/response-messages';
 // eslint-disable-next-line camelcase
 import { cloud_wallet_user_info, user } from '@prisma/client';
 import {
@@ -176,6 +177,20 @@ export class CloudWalletRepository {
   // eslint-disable-next-line camelcase
   async updateBaseWallet(walletId: string, isActive: boolean, maxSubWallets: number): Promise<cloud_wallet_user_info> {
     try {
+      // Prisma's update() takes a WhereUniqueInput -- `type` isn't part of any unique constraint
+      // on its own, so it can't be added directly to the update() call below. Verify the row is
+      // actually a BASE_WALLET first: without this, `id` alone lets a caller target *any*
+      // cloud_wallet_user_info row, including another user's CLOUD_SUB_WALLET.
+      const existing = await this.prisma.cloud_wallet_user_info.findFirst({
+        where: {
+          id: walletId,
+          type: CloudWalletType.BASE_WALLET
+        }
+      });
+      if (!existing) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
+      }
+
       return await this.prisma.cloud_wallet_user_info.update({
         where: {
           id: walletId
