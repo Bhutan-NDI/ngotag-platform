@@ -900,11 +900,18 @@ export class CloudWalletService {
         throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
       }
 
+      // POST /multi-tenancy/import/:tenantId requires the *base* wallet's own token, not the
+      // tenant token decryptedApiKey holds (that one's only valid against /agent, which is what
+      // checkAgentHealth just used it for) -- every /multi-tenancy/* route rejects a tenant-scoped
+      // token lacking the Basewallet scope. Same fix as checkCloudWalletStatus/deleteCloudWallet
+      // (and exportCloudWallet, on the stacked feat/cloud-wallet-export branch).
+      const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+
       const importWalletResponse = await this.commonService.httpPost(
         url,
         { exportUrl, checksum, passKey },
         {
-          headers: { authorization: decryptedApiKey }
+          headers: { authorization: baseWalletApiKey }
         }
       );
 
@@ -1069,13 +1076,15 @@ export class CloudWalletService {
   async getImportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
     try {
       const { userId, jobId } = jobStatus;
-      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const [baseWalletDetails] = await this._commonCloudWalletInfo(userId);
       const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
       const { agentEndpoint } = baseWalletDetails;
 
       const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_IMPORT}${tenantId}/status/${jobId}`;
+      // Base wallet token required -- see importCloudWallet's identical comment.
+      const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
       const statusResponse = await this.commonService.httpGet(url, {
-        headers: { authorization: decryptedApiKey }
+        headers: { authorization: baseWalletApiKey }
       });
 
       if (!statusResponse) {
