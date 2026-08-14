@@ -66,7 +66,10 @@ export class CloudWalletService {
     const { agentEndpoint, apiKey, email, walletKey, userId, maxSubWallets } = configureBaseWalletPayload;
 
     try {
-      const existingWalletInfo = await this.cloudWalletRepository.getCloudWalletInfo(email);
+      const existingWalletInfo = await this.cloudWalletRepository.getCloudWalletInfo(
+        email,
+        CloudWalletType.BASE_WALLET
+      );
       if (existingWalletInfo) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.agentAlreadyExist);
       }
@@ -241,7 +244,7 @@ export class CloudWalletService {
         }
       };
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
       if (checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.userExist);
@@ -315,7 +318,7 @@ export class CloudWalletService {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { email, userId, ...invitationDetails } = ReceiveInvitationDetails;
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
@@ -358,7 +361,7 @@ export class CloudWalletService {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { email, userId, ...offerDetails } = acceptOfferDetails;
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
@@ -401,7 +404,7 @@ export class CloudWalletService {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { email, userId, ...didDetails } = createDidDetails;
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
@@ -623,7 +626,7 @@ export class CloudWalletService {
     try {
       const { userId, passKey } = exportWallet;
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
       }

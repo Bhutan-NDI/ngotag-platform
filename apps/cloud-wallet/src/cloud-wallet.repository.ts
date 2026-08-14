@@ -33,19 +33,25 @@ export class CloudWalletRepository {
     }
   }
 
-  // Keyed on userId, not email: the username-based signup flow (createUserByUsername) never
-  // populates user.email at all, so every caller of this method that gets its email from the
-  // platform user row would otherwise pass undefined — Prisma's findUnique throws
-  // PrismaClientValidationError for a where clause missing every unique field, rather than a
-  // clean "not found". userId is always populated regardless of which signup flow created the
-  // account, and every caller here already has it (it's the JWT subject). Not @unique on its own
-  // (only the (userId, type) compound is), so findFirst rather than findUnique.
+  // Keyed on (userId, type), not email: the username-based signup flow (createUserByUsername)
+  // never populates user.email at all, so a lookup keyed on email would throw
+  // PrismaClientValidationError rather than a clean "not found" for those users. userId is always
+  // populated regardless of which signup flow created the account, and every caller here already
+  // has it (it's the JWT subject). type must be explicit too: every real caller of this method
+  // wants "does this user have their own SUB_WALLET" specifically, not "any row of any type" --
+  // without that, createCloudWallet's own duplicate-creation guard would incorrectly reject a
+  // user who already has a BASE_WALLET admin row (see the (userId, type) compound below) from
+  // ever creating their own SUB_WALLET. Uses the (userId, type) compound unique directly.
   // eslint-disable-next-line camelcase
-  async checkUserExist(userId: string): Promise<cloud_wallet_user_info> {
+  async checkUserExist(userId: string, type: CloudWalletType): Promise<cloud_wallet_user_info> {
     try {
-      const agentDetails = await this.prisma.cloud_wallet_user_info.findFirst({
+      const agentDetails = await this.prisma.cloud_wallet_user_info.findUnique({
         where: {
-          userId
+          // eslint-disable-next-line camelcase
+          userId_type: {
+            userId,
+            type
+          }
         }
       });
       return agentDetails;
@@ -100,12 +106,21 @@ export class CloudWalletRepository {
     }
   }
 
+  // Keyed on (email, type), not email alone: email is no longer globally unique on this model
+  // (see the compound-unique schema comment) -- the same person's email legitimately appears on
+  // both their BASE_WALLET row and their own SUB_WALLET row, so a bare email lookup could now
+  // return either one. This method is only ever used by configureBaseWallet's duplicate-creation
+  // guard, so type is always BASE_WALLET there.
   // eslint-disable-next-line camelcase
-  async getCloudWalletInfo(email: string): Promise<cloud_wallet_user_info> {
+  async getCloudWalletInfo(email: string, type: CloudWalletType): Promise<cloud_wallet_user_info> {
     try {
       const walletInfoData = await this.prisma.cloud_wallet_user_info.findUnique({
         where: {
-          email
+          // eslint-disable-next-line camelcase
+          email_type: {
+            email,
+            type
+          }
         }
       });
       return walletInfoData;

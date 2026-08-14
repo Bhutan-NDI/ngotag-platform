@@ -565,7 +565,7 @@ model cloud_wallet_user_info {
   id                  String          @id @default(uuid()) @db.Uuid
   label               String?
   tenantId            String?
-  email               String?         @unique @db.VarChar(500)
+  email               String?         @db.VarChar(500)
   type                CloudWalletType
   createDateTime      DateTime        @default(now()) @db.Timestamptz(6)
   createdBy           String          @db.Uuid
@@ -587,6 +587,14 @@ model cloud_wallet_user_info {
   // (contradicting getBaseWalletDetails's BaseAgentInfo[] / useCount+maxSubWallets pooling design).
   // See the #71 review's "userId @unique contradicts this PR's own multi-base-wallet design".
   @@unique([userId, type])
+  // Same reasoning, same fix, for email: a bare @unique here directly contradicted the userId
+  // compound above -- the same person's email appears on both their BASE_WALLET row (from
+  // configureBaseWallet) and their own SUB_WALLET row (from createCloudWallet), so the two rows
+  // the userId compound was introduced to allow could never actually be inserted; the second
+  // INSERT would fail on this constraint even if every application-level check passed. See the
+  // #71 review's "the (userId, type) fix is only half applied: email @unique still makes the
+  // two-row case unreachable".
+  @@unique([email, type])
 }
 
 enum CloudWalletType {
