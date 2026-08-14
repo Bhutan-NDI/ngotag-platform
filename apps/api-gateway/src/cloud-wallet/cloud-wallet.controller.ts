@@ -72,9 +72,12 @@ import {
   IWalletPortabilityJobStatus
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CreateConnectionDto } from './dtos/create-connection.dto';
-// ProofWithCredDto/DeclineProofRequestDto/SelfAttestedCredentialDto: only used by handlers
-// currently gated with NOT_IMPLEMENTED below (no microservice handler exists yet) -- restore
-// these imports alongside each handler's real body once a handler exists. See the #71 review.
+import { SelfAttestedCredentialDto } from './dtos/self-attested-credential.dto';
+// ProofWithCredDto/DeclineProofRequestDto: only used by handlers currently gated with
+// NOT_IMPLEMENTED below (no microservice handler exists anywhere yet) -- restore these imports
+// alongside each handler's real body once a handler exists. See the #71 review.
+// createSelfAttestedW3cCredential's own handler is real again on this branch -- the microservice
+// handler it needed now exists (see cloud-wallet.service.ts).
 
 @UseFilters(CustomExceptionFilter)
 @Controller()
@@ -829,20 +832,7 @@ export class CloudWalletController {
     description: 'Create self-attested W3C credential for cloud wallet'
   })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Success', type: ApiResponseDto })
-  @ApiExcludeEndpoint()
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
-  // create-self-attested-w3c-credential has no microservice handler on *this* branch -- that
-  // lands on the stacked feat/cloud-wallet-self-attested-microservice branch, which restores this
-  // handler's real body once it has one to call. Gated here too (not just the 5 genuinely
-  // nowhere-implemented ones) since this branch can be merged to develop on its own timeline,
-  // independent of when the microservice-side PR lands. See the #71 review.
-  async createSelfAttestedW3cCredential(@Res() res: Response): Promise<Response> {
-    return res
-      .status(HttpStatus.NOT_IMPLEMENTED)
-      .json({ statusCode: HttpStatus.NOT_IMPLEMENTED, message: ResponseMessages.cloudWallet.error.notImplemented });
-  }
-
-  /* Restored on feat/cloud-wallet-self-attested-microservice, once a real handler exists:
   async createSelfAttestedW3cCredential(
     @Res() res: Response,
     @Body() selfAttestedCredentialDto: SelfAttestedCredentialDto,
@@ -861,7 +851,6 @@ export class CloudWalletController {
     };
     return res.status(HttpStatus.CREATED).json(finalResponse);
   }
-  */
 
   /**
    * Get credential list by tenant id
