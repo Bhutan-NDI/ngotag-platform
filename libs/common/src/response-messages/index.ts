@@ -683,7 +683,12 @@ export const ResponseMessages = {
       createSelfAttestedW3cCredential: 'Error while creating self-attested credential.',
       deleteCloudWallet: 'Error while deleting cloud wallet',
       checkCloudWalletStatus: 'Error while checking cloud wallet status',
-      jobStatusNotFound: 'Export/import job status not found'
+      jobStatusNotFound: 'Export/import job status not found',
+      // Used by gateway routes whose NATS pattern has no handler on this branch yet -- see the
+      // #71 review's "six gateway routes still dispatch NATS patterns that have no handler
+      // anywhere; each hangs until the NATS timeout". Returned immediately, before publishing to
+      // NATS, rather than shipping a route that reads as supported API but always times out.
+      notImplemented: 'This operation is not yet available.'
     }
   },
   oidcIssuer: {
