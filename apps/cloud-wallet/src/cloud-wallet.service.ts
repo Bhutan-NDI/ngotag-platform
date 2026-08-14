@@ -1108,8 +1108,14 @@ export class CloudWalletService {
    */
   async createSelfAttestedW3cCredential(selfAttestedCredential: ISelfAttestedCredential): Promise<Response> {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { email, userId, ...selfAttestedDetails } = selfAttestedCredential;
+      const { email, userId } = selfAttestedCredential;
+      // Destructured explicitly rather than rest-spread: agent-controller's tsoa config throws on
+      // any body property outside its jsonLdCredentialOptions model (@context/type/
+      // credentialSubject/proofType only, additionalProperties: false). ISelfAttestedCredential's
+      // own `[key: string]: unknown` says extras pass through, which they don't past the agent's
+      // validation — matching the model's real contract here instead.
+      const { '@context': context, type, credentialSubject, proofType } = selfAttestedCredential;
+      const selfAttestedDetails = { '@context': context, type, credentialSubject, proofType };
 
       const checkUserExist = await this.cloudWalletRepository.checkUserExist(email);
 
@@ -1117,6 +1123,10 @@ export class CloudWalletService {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
       }
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      // A second, identical query to _commonCloudWalletInfo's own internal getCloudSubWallet
+      // call — deliberate, not an oversight. Widening the helper's 2-tuple return to also hand
+      // back the tenant record would save this round-trip but touches every one of its ~28
+      // other callers; left as its own query here rather than take that on as part of this fix.
       const getTenant = await this.cloudWalletRepository.getCloudSubWallet(userId);
 
       const { tenantId } = getTenant;
