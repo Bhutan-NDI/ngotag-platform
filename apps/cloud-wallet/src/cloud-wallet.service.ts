@@ -1122,15 +1122,20 @@ export class CloudWalletService {
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
       }
-      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      // baseWalletDetails deliberately unused here (not destructured) — its agentEndpoint is an
+      // arbitrary BASE_WALLET row (findFirst, no orderBy), not necessarily the one this tenant was
+      // actually created on. Once more than one base wallet exists, that can send the request to a
+      // different agent instance than the one that minted decryptedApiKey's JWT, which then 401s
+      // there (masked by agentNotRunning firing first from checkAgentHealth below). getTenant's own
+      // agentEndpoint (the value createCloudWallet actually persisted for this tenant) is correct.
+      const [, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       // A second, identical query to _commonCloudWalletInfo's own internal getCloudSubWallet
       // call — deliberate, not an oversight. Widening the helper's 2-tuple return to also hand
       // back the tenant record would save this round-trip but touches every one of its ~28
       // other callers; left as its own query here rather than take that on as part of this fix.
       const getTenant = await this.cloudWalletRepository.getCloudSubWallet(userId);
 
-      const { tenantId } = getTenant;
-      const { agentEndpoint } = baseWalletDetails;
+      const { tenantId, agentEndpoint } = getTenant;
 
       // No tenantId appended — the endpoint now resolves the tenant from decryptedApiKey's own
       // claims (a per-tenant token, not the base wallet's), matching CLOUD_WALLET_GET_PROOF_REQUEST
