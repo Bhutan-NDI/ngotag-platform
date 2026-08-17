@@ -57,7 +57,7 @@ export class ClientRegistrationService {
       await this.keycloakUrlService.getUserByUsernameURL(realm, user.email),
       this.getAuthHeader(token)
     );
-    const userid = getUserResponse[0].id;
+    const userid = this.findMatchingKeycloakUser(getUserResponse, user.email).id;
 
     const passwordResponse = await this.resetPasswordOfKeycloakUser(realm, user.password, userid, token);
 
@@ -100,12 +100,12 @@ export class ClientRegistrationService {
       await this.keycloakUrlService.getUserByUsernameURL(realm, user.email),
       this.getAuthHeader(token)
     );
-    const userid = getUserResponse[0].id;
+    const matchedUser = this.findMatchingKeycloakUser(getUserResponse, user.email);
 
-    await this.resetPasswordOfKeycloakUser(realm, user.password, userid, token);
+    await this.resetPasswordOfKeycloakUser(realm, user.password, matchedUser.id, token);
 
     return {
-      keycloakUserId: getUserResponse[0].id
+      keycloakUserId: matchedUser.id
     };
   }
 
@@ -152,13 +152,31 @@ export class ClientRegistrationService {
       await this.keycloakUrlService.getUserByUsernameURL(realm, user.username),
       this.getAuthHeader(token)
     );
-    const userid = getUserResponse[0].id;
+    const matchedUser = this.findMatchingKeycloakUser(getUserResponse, user.username);
 
-    await this.resetPasswordOfKeycloakUser(realm, user.password, userid, token);
+    await this.resetPasswordOfKeycloakUser(realm, user.password, matchedUser.id, token);
 
     return {
-      keycloakUserId: getUserResponse[0].id
+      keycloakUserId: matchedUser.id
     };
+  }
+
+  /**
+   * getUserByUsernameURL's exact=true narrows the query, but this is the actual safety boundary:
+   * every caller here goes on to reset a password or hand back a keycloakUserId based on whatever
+   * this lookup returns, so blindly trusting position 0 is what turned a URL-encoding bug into an
+   * account-takeover primitive in the first place (see the #71 review). Confirming the returned
+   * record's own username matches what was asked for means a future encoding slip, an
+   * unexpectedly permissive Keycloak query, or a multi-result response can no longer silently
+   * resolve to the wrong account.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private findMatchingKeycloakUser(users: any[], expectedUsername: string): { id: string; username: string } {
+    const match = users?.find((candidate) => candidate.username === expectedUsername);
+    if (!match) {
+      throw new NotFoundException(ResponseMessages.user.error.invalidKeycloakId);
+    }
+    return match;
   }
 
   async resetPasswordOfKeycloakUser(realm: string, resetPasswordValue: string, userid: string, token: string) {
