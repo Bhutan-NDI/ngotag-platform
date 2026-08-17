@@ -7,7 +7,8 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
-  NotFoundException
+  NotFoundException,
+  NotImplementedException
 } from '@nestjs/common';
 import {
   IAcceptOffer,
@@ -417,8 +418,17 @@ export class CloudWalletService {
    */
   async createDid(createDidDetails: ICreateCloudWalletDid): Promise<Response> {
     try {
+      // isDefault stripped here too, not just email/userId: CreateCloudWalletDidDto's
+      // isDefault?: boolean = false property initializer means class-transformer always
+      // materializes the key, even when the caller omits it. agent-controller's develop
+      // (as of this PR) has no isDefault property on its DidCreate tsoa model
+      // (additionalProperties: false), so spreading it through would 400 every POST
+      // /cloud-wallet/did until agent-controller's own isDefault support (a separate,
+      // still-open PR) lands. Not consumed anywhere on this side either yet (see the
+      // GET /cloud-wallet/did?isDefault= finding) -- dropped rather than silently
+      // forwarded to an endpoint that doesn't understand it.
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { email, userId, ...didDetails } = createDidDetails;
+      const { email, userId, isDefault, ...didDetails } = createDidDetails;
 
       const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
@@ -460,7 +470,17 @@ export class CloudWalletService {
    */
   async getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {
     try {
-      const { userId } = walletDetails;
+      const { userId, isDefault } = walletDetails;
+
+      // Not yet wired through: agent-controller's GET /dids (DidController.getDids) returns every
+      // created DID unconditionally -- it takes no filter of any kind, so there is nothing on the
+      // agent side to forward `isDefault` to yet. Answering `?isDefault=true` with the full,
+      // unfiltered list and a 200 would be silently wrong rather than honestly unsupported; fail
+      // loudly instead until agent-controller gains real filtering (a separate, cross-repo change).
+      if (isDefault) {
+        throw new NotImplementedException(ResponseMessages.cloudWallet.error.notImplemented);
+      }
+
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
 
       const { agentEndpoint } = baseWalletDetails;
