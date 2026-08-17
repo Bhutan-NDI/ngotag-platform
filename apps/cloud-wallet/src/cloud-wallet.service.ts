@@ -7,8 +7,7 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
-  NotFoundException,
-  NotImplementedException
+  NotFoundException
 } from '@nestjs/common';
 import {
   IAcceptOffer,
@@ -479,20 +478,17 @@ export class CloudWalletService {
     try {
       const { userId, isDefault } = walletDetails;
 
-      // Not yet wired through: agent-controller's GET /dids (DidController.getDids) returns every
-      // created DID unconditionally -- it takes no filter of any kind, so there is nothing on the
-      // agent side to forward `isDefault` to yet. Answering `?isDefault=true` with the full,
-      // unfiltered list and a 200 would be silently wrong rather than honestly unsupported; fail
-      // loudly instead until agent-controller gains real filtering (a separate, cross-repo change).
-      if (isDefault) {
-        throw new NotImplementedException(ResponseMessages.cloudWallet.error.notImplemented);
-      }
-
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
 
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.URL_AGENT_GET_DID}`;
+      // isDefault forwarded as a query param, not silently dropped: agent-controller's GET /dids
+      // (DidController.getDids) now accepts ?isDefault=true and answers from its own DidRecord tag
+      // query -- see the agent-controller #75 review. Previously this threw NotImplementedException
+      // for any isDefault request since there was nothing on the agent side to forward it to.
+      const url = isDefault
+        ? `${agentEndpoint}${CommonConstants.URL_AGENT_GET_DID}?isDefault=true`
+        : `${agentEndpoint}${CommonConstants.URL_AGENT_GET_DID}`;
 
       const didList = (await this.commonService.httpGet(url, { headers: { authorization: decryptedApiKey } })) ?? [];
       return didList;
