@@ -457,7 +457,14 @@ interface Proof {
 }
 
 export interface BaseAgentInfo {
+  // id and isActive added: GET /cloud-wallet/get-active-base-wallet is the only read endpoint for
+  // base wallets, and PATCH /cloud-wallet/base-wallet/:walletId (added in the same PR) keys off
+  // cloud_wallet_user_info.id -- without id here there was no way to construct that PATCH URL
+  // from this response, and rows sharing an agentEndpoint weren't even distinguishable. isActive
+  // was otherwise unobservable too. See the #71 review.
+  id: string;
   agentEndpoint: string;
+  isActive: boolean;
   useCount: number;
   maxSubWallets: number;
 }

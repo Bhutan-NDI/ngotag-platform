@@ -839,8 +839,10 @@ export class CloudWalletService {
   async getBaseWalletDetails(user: user): Promise<BaseAgentInfo[]> {
     try {
       const baseWallets = await this.cloudWalletRepository.getAllBaseWallets();
-      return baseWallets.map(({ agentEndpoint, useCount, maxSubWallets }) => ({
+      return baseWallets.map(({ id, agentEndpoint, isActive, useCount, maxSubWallets }) => ({
+        id,
         agentEndpoint,
+        isActive,
         useCount,
         maxSubWallets
       }));
@@ -862,7 +864,9 @@ export class CloudWalletService {
 
       return [
         {
+          id: updatedWallet.id,
           agentEndpoint: updatedWallet.agentEndpoint,
+          isActive: updatedWallet.isActive,
           useCount: updatedWallet.useCount,
           maxSubWallets: updatedWallet.maxSubWallets
         }

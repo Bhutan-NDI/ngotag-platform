@@ -208,12 +208,17 @@ export class CloudWalletController {
   }
 
   @Get('get-active-base-wallet')
-  @ApiOperation({ summary: 'Create cloud wallet', description: 'Create cloud wallet' })
+  @ApiOperation({ summary: 'Get active base wallets', description: 'Get active base wallets' })
   // 200, not 201: this is a GET, it doesn't create anything. See checkCloudWalletStatus's
   // identical comment above.
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @ApiBearerAuth()
-  @UseGuards(AuthGuard('jwt'), UserRoleGuard)
+  // Not UserRoleGuard: that one only asserts 'holder', which every cloud-wallet end user passes,
+  // and this response includes every configured base wallet's internal agentEndpoint plus its
+  // capacity -- operator information, by the same reasoning updateBaseWalletDetails immediately
+  // below already applies to writing this data. Matched to that endpoint's guard level rather
+  // than leaving the read half of the same admin pair holder-readable. See the #71 review.
+  @UseGuards(AuthGuard('jwt'))
   async getBaseWalletDetails(@Res() res: Response, @User() user: user): Promise<Response> {
     const baseWalletData = await this.cloudWalletService.getBaseWalletDetails(user);
     const finalResponse: IResponse = {
