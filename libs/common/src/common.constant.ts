@@ -374,7 +374,6 @@ export enum CommonConstants {
   CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED = '/multi-tenancy/proofs/accept-request-with-cred',
   CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST = '/multi-tenancy/credentialsForRequest',
   CLOUD_WALLET_DELETE_BY_TENANT_ID = '/multi-tenancy/',
-  CLOUD_WALLET_CHECK_CLOUD_WALLET_EXISTS = '/multi-tenancy/checkCloudWalletExists',
   // No trailing slash: acceptProofRequest builds
   // `${CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CLOUD_WALLET_ACCEPT_PROOF_REQUEST}` --
   // a trailing slash here only happened to still work because agent-controller's Express app
