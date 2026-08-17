@@ -77,7 +77,6 @@ export const getAgentUrl = (agentEndPoint: string, urlFlag: string, paramId?: st
   }
   const agentUrlMap: Map<string, string> = new Map<string, string>([
     [String(CommonConstants.CONNECTION_INVITATION), String(CommonConstants.URL_CONN_INVITE)],
-    [String(CommonConstants.LEGACY_INVITATION), String(CommonConstants.URL_CONN_LEGACY_INVITE)],
     [String(CommonConstants.SIGN_DATA_FROM_AGENT), String(CommonConstants.URL_AGENT_SIGN_DATA)],
     [String(CommonConstants.VERIFY_SIGNED_DATA_FROM_AGENT), String(CommonConstants.URL_AGENT_VERIFY_SIGNED_DATA)],
     [String(CommonConstants.CREATE_OFFER), String(CommonConstants.URL_ISSUANCE_CREATE_OFFER)],

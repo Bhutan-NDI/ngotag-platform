@@ -23,7 +23,6 @@ export enum CommonConstants {
   URL_CONN_ACCEPT_CONNECTION_REQUEST = '/connections/#/accept-request',
   URL_CONN_REMOVE_CONNECTION_BY_ID = '/connections/#/remove',
   URL_CONN_METADATA = '/connections/#/metadata',
-  URL_CONN_LEGACY_INVITE = '/didcomm/oob/create-legacy-invitation',
   URL_CONN_INVITE = '/didcomm/oob/create-invitation',
   URL_RECEIVE_INVITATION_URL = '/didcomm/oob/receive-invitation-url',
   URL_RECEIVE_INVITATION = '/didcomm/oob/receive-invitation',
@@ -461,7 +460,6 @@ export enum CommonConstants {
 
   //Agent URL flags
   CONNECTION_INVITATION = 'connection-invitation',
-  LEGACY_INVITATION = 'legacy-invitation',
   SIGN_DATA_FROM_AGENT = 'sign-data-from-agent',
   VERIFY_SIGNED_DATA_FROM_AGENT = 'verify-signed-data-from-agent',
   CREATE_OFFER = 'create-offer',
