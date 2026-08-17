@@ -38,6 +38,32 @@ export class CloudWalletRepository {
     }
   }
 
+  // Resolves the SPECIFIC base wallet a tenant actually lives on, not an arbitrary active one.
+  // There is no baseWalletId FK linking a SUB_WALLET row back to the BASE_WALLET row it was
+  // created against (see the capacity-counter comment above), so agentEndpoint -- the value
+  // createCloudWallet copied onto the tenant's own row from whichever base wallet it used -- is
+  // the only thing that ties the two together. Returns null rather than throwing so callers can
+  // produce their own not-found error (matching how getCloudWalletDetails's caller already does).
+  // See the #71 review's "_commonCloudWalletInfo picks an arbitrary base wallet" finding.
+  // eslint-disable-next-line camelcase
+  async getBaseWalletByAgentEndpoint(agentEndpoint: string | null): Promise<cloud_wallet_user_info | null> {
+    if (!agentEndpoint) {
+      return null;
+    }
+    try {
+      return await this.prisma.cloud_wallet_user_info.findFirst({
+        where: {
+          type: CloudWalletType.BASE_WALLET,
+          isActive: true,
+          agentEndpoint
+        }
+      });
+    } catch (error) {
+      this.logger.error(`Error in getBaseWalletByAgentEndpoint: ${error.message}`);
+      throw error;
+    }
+  }
+
   // Best-effort capacity counter, incremented on every successful sub-wallet creation against
   // this base wallet (see createCloudWallet). NOTE: not decremented on wallet deletion (there is
   // no baseWalletId FK on cloud_wallet_user_info linking a SUB_WALLET row back to the specific

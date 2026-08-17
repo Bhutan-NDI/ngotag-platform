@@ -201,16 +201,22 @@ export class CloudWalletService {
    * @returns cloud wallet info
    */
   async _commonCloudWalletInfo(userId: string): Promise<[CloudWallet, string]> {
-    const baseWalletDetails = await this.cloudWalletRepository.getCloudWalletDetails(CloudWalletType.BASE_WALLET);
-
-    if (!baseWalletDetails) {
-      throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
-    }
-
     const getTenant = await this.cloudWalletRepository.getCloudSubWallet(userId);
 
     if (!getTenant || !getTenant?.tenantId) {
       throw new NotFoundException(ResponseMessages.cloudWallet.error.walletRecordNotFound);
+    }
+
+    // Resolved by the tenant's OWN agentEndpoint, not an arbitrary active BASE_WALLET row.
+    // getCloudWalletDetails's plain findFirstOrThrow picks whichever base wallet Postgres returns
+    // first -- once more than one base wallet exists (this PR's own configureBaseWallet/
+    // getAllBaseWallets/PATCH base-wallet/:walletId make that a real, supported topology), that
+    // can be a different agent than the one this tenant actually lives on: the request would go
+    // out to the wrong endpoint carrying a token that agent doesn't recognize. See the #71 review.
+    const baseWalletDetails = await this.cloudWalletRepository.getBaseWalletByAgentEndpoint(getTenant.agentEndpoint);
+
+    if (!baseWalletDetails) {
+      throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
     }
 
     const decryptedApiKey = await this.commonService.decryptPassword(getTenant?.agentApiKey);
@@ -744,14 +750,19 @@ export class CloudWalletService {
   async checkCloudWalletStatus(checkCloudWalletStatusPayload: ICheckCloudWalletStatus): Promise<Response> {
     try {
       const { userId } = checkCloudWalletStatusPayload;
-      const baseWalletDetails = await this.cloudWalletRepository.getCloudWalletDetails(CloudWalletType.BASE_WALLET);
-      if (!baseWalletDetails) {
-        throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
-      }
-
       const cloudSubWalletDetails = await this.cloudWalletRepository.getCloudSubWallet(userId);
       if (!cloudSubWalletDetails || !cloudSubWalletDetails.tenantId) {
         throw new NotFoundException(ResponseMessages.cloudWallet.error.walletRecordNotFound);
+      }
+
+      // Resolved by the tenant's OWN agentEndpoint, not an arbitrary active BASE_WALLET row --
+      // same fix, same reasoning as _commonCloudWalletInfo. This method can't use that helper
+      // directly since it needs the *base* wallet's own token below, not the tenant's.
+      const baseWalletDetails = await this.cloudWalletRepository.getBaseWalletByAgentEndpoint(
+        cloudSubWalletDetails.agentEndpoint
+      );
+      if (!baseWalletDetails) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
       }
 
       // GET /multi-tenancy/:tenantId requires the *base* wallet's own token, not the tenant token
@@ -779,14 +790,18 @@ export class CloudWalletService {
   async deleteCloudWallet(deleteCloudWalletPayload: IDeleteCloudWallet): Promise<cloud_wallet_user_info> {
     try {
       const { userId } = deleteCloudWalletPayload;
-      const baseWalletDetails = await this.cloudWalletRepository.getCloudWalletDetails(CloudWalletType.BASE_WALLET);
-      if (!baseWalletDetails) {
-        throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
-      }
-
       const cloudSubWalletDetails = await this.cloudWalletRepository.getCloudSubWallet(userId);
       if (!cloudSubWalletDetails || !cloudSubWalletDetails.tenantId) {
         throw new NotFoundException(ResponseMessages.cloudWallet.error.walletRecordNotFound);
+      }
+
+      // Resolved by the tenant's OWN agentEndpoint, not an arbitrary active BASE_WALLET row --
+      // same fix, same reasoning as _commonCloudWalletInfo/checkCloudWalletStatus.
+      const baseWalletDetails = await this.cloudWalletRepository.getBaseWalletByAgentEndpoint(
+        cloudSubWalletDetails.agentEndpoint
+      );
+      if (!baseWalletDetails) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
       }
 
       // Base-wallet scope required for /multi-tenancy/:tenantId — same reasoning as
