@@ -272,8 +272,12 @@ export class CloudWalletRepository {
     }
   }
 
-  // eslint-disable-next-line camelcase
-  async updateBaseWallet(walletId: string, isActive: boolean, maxSubWallets: number): Promise<cloud_wallet_user_info> {
+  async updateBaseWallet(
+    walletId: string,
+    isActive?: boolean,
+    maxSubWallets?: number
+    // eslint-disable-next-line camelcase
+  ): Promise<cloud_wallet_user_info> {
     try {
       // Prisma's update() takes a WhereUniqueInput -- `type` isn't part of any unique constraint
       // on its own, so it can't be added directly to the update() call below. Verify the row is
@@ -289,14 +293,24 @@ export class CloudWalletRepository {
         throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
       }
 
+      // Built from only the keys actually supplied -- both isActive and maxSubWallets must be
+      // independently omittable (see UpdateBaseWalletDto), so an unconditional `{isActive,
+      // maxSubWallets}` here would silently write undefined -> Prisma column default (isActive:
+      // true) whenever only the other field was sent. See the #71 review.
+      // eslint-disable-next-line camelcase
+      const data: Partial<Pick<cloud_wallet_user_info, 'isActive' | 'maxSubWallets'>> = {};
+      if (undefined !== isActive) {
+        data.isActive = isActive;
+      }
+      if (undefined !== maxSubWallets) {
+        data.maxSubWallets = maxSubWallets;
+      }
+
       return await this.prisma.cloud_wallet_user_info.update({
         where: {
           id: walletId
         },
-        data: {
-          isActive,
-          maxSubWallets
-        }
+        data
       });
     } catch (error) {
       this.logger.error(`Error in updateBaseWallet: ${error}`);

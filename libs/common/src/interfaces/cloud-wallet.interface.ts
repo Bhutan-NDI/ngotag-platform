@@ -463,8 +463,8 @@ export interface BaseAgentInfo {
 }
 
 export interface IUpdateBaseWallet {
-  maxSubWallets: number;
-  isActive: boolean;
+  maxSubWallets?: number;
+  isActive?: boolean;
   email?: string;
   userId?: string;
   walletId: string;

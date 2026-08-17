@@ -291,18 +291,25 @@ export class ExportCloudWalletDto {
 }
 
 export class UpdateBaseWalletDto {
-  @ApiProperty({
+  // Optional, no default: this DTO is a partial update, and both fields being independently
+  // omittable is the whole point -- {"isActive":false} alone must deactivate a wallet without
+  // also being forced to resend its cap, and {"maxSubWallets":10000} alone must raise the cap
+  // without silently reactivating a deactivated wallet (a plain property-initializer default
+  // gets materialized by class-transformer even when the caller omits the key, since
+  // @IsOptional() only skips validation, not construction). See the #71 review.
+  @ApiPropertyOptional({
     example: 5,
     description: 'Maximum number of sub wallets allowed'
   })
+  @IsOptional()
   @IsInt()
   @Min(1)
-  maxSubWallets: number;
+  maxSubWallets?: number;
 
-  @ApiPropertyOptional({ default: true })
-  @IsBoolean({ message: 'isActive must be a boolean' })
+  @ApiPropertyOptional()
   @IsOptional()
-  isActive: boolean = true;
+  @IsBoolean({ message: 'isActive must be a boolean' })
+  isActive?: boolean;
 
   email?: string;
   userId?: string;
