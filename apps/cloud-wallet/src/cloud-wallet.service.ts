@@ -1122,12 +1122,11 @@ export class CloudWalletService {
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
       }
-      // baseWalletDetails deliberately unused here (not destructured) — its agentEndpoint is an
-      // arbitrary BASE_WALLET row (findFirst, no orderBy), not necessarily the one this tenant was
-      // actually created on. Once more than one base wallet exists, that can send the request to a
-      // different agent instance than the one that minted decryptedApiKey's JWT, which then 401s
-      // there (masked by agentNotRunning firing first from checkAgentHealth below). getTenant's own
-      // agentEndpoint (the value createCloudWallet actually persisted for this tenant) is correct.
+      // baseWalletDetails deliberately unused here (not destructured) — not because it's wrong
+      // (_commonCloudWalletInfo already resolves the tenant's own base wallet via
+      // getBaseWalletByAgentEndpoint, fixed at the root on the base branch), just not needed: this
+      // handler wants decryptedApiKey plus getTenant's own agentEndpoint below, not
+      // baseWalletDetails.agentEndpoint (which would be the same value regardless).
       const [, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       // A second, identical query to _commonCloudWalletInfo's own internal getCloudSubWallet
       // call — deliberate, not an oversight. Widening the helper's 2-tuple return to also hand
