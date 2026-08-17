@@ -273,7 +273,12 @@ export class BasicMessageDTO {
 }
 
 export class ExportCloudWalletDto {
-  @ApiPropertyOptional({ example: 'XzFjo1RTZ2h9UVFCnPUyaQ' })
+  // @ApiProperty, not @ApiPropertyOptional: @IsNotEmpty makes this required at runtime (a 400
+  // from the global ValidationPipe if omitted), but @ApiPropertyOptional advertised it as
+  // optional in Swagger and excluded it from the generated model's `required` list -- a client
+  // generated from this spec would treat POST /cloud-wallet/export-wallet as callable with an
+  // empty body and get a 400 at runtime. See the #71 review.
+  @ApiProperty({ example: 'XzFjo1RTZ2h9UVFCnPUyaQ' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'passKey is required' })
   @IsString({ message: 'passKey must be in string format.' })
