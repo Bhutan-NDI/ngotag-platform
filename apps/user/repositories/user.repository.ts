@@ -36,7 +36,7 @@ import {
   user,
   user_org_roles
 } from '@prisma/client';
-import { ProviderType, UserRole } from '@credebl/enum/enum';
+import { CloudWalletType, ProviderType, UserRole } from '@credebl/enum/enum';
 
 import { PrismaService } from '@credebl/prisma-service';
 import { RpcException } from '@nestjs/microservices';
@@ -205,6 +205,13 @@ export class UserRepository {
    * already was), so the DB itself nulls the reference when this transaction's user.delete() runs,
    * rather than the row being destroyed. Deleting a user must never eject their organisations from
    * an ecosystem or drop billing records — see the #71 review.
+   *
+   * cloud_wallet_user_info's deleteMany is scoped to type: SUB_WALLET for the identical reason —
+   * this table holds both a user's own cloud sub-wallet AND, for whoever configured it, a
+   * BASE_WALLET row (@@unique([userId, type]) exists precisely so one person can hold both). An
+   * unscoped deleteMany({where:{userId}}) would delete that admin's BASE_WALLET configuration too,
+   * taking the whole cloud-wallet service down for every other user until it's reconfigured. See
+   * the #71 review.
    * @param userId
    * @returns deleted user record
    */
@@ -218,7 +225,7 @@ export class UserRepository {
         this.prisma.org_invitations.deleteMany({ where: { userId } }),
         this.prisma.user_activity.deleteMany({ where: { userId } }),
         this.prisma.ecosystem_invitations.deleteMany({ where: { userId } }),
-        this.prisma.cloud_wallet_user_info.deleteMany({ where: { userId } }),
+        this.prisma.cloud_wallet_user_info.deleteMany({ where: { userId, type: CloudWalletType.SUB_WALLET } }),
         this.prisma.user.delete({ where: { id: userId } })
       ]);
       return results[results.length - 1] as user;
