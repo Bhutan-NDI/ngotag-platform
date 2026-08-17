@@ -331,8 +331,8 @@ export class ImportCloudWalletDto {
   // validation entirely, surfacing only as an opaque failure later in the poll response instead
   // of a clean 400 at the edge. This is defense in depth, not a duplicate of agent-controller's
   // own fix.
-  // eslint-disable-next-line camelcase
   @IsUrl(
+    // eslint-disable-next-line camelcase -- class-validator's own IsUrlOptions field names
     { require_tld: false, require_protocol: true, protocols: ['https'] },
     { message: 'exportUrl must be a valid https URL' }
   )
@@ -344,7 +344,12 @@ export class ImportCloudWalletDto {
   @IsString({ message: 'checksum must be in string format.' })
   checksum: string;
 
-  @ApiPropertyOptional({ example: 'XzFjo1RTZ2h9UVFCnPUyaQ' })
+  // @ApiProperty, not @ApiPropertyOptional: @IsNotEmpty makes this required at runtime (a 400
+  // from the global ValidationPipe if omitted, and agent-controller's importTenantWallet 400s
+  // without it too: `if (!exportUrl || !passKey || !checksum)`), but @ApiPropertyOptional
+  // advertised it as optional in Swagger and excluded it from the generated model's `required`
+  // list. Same mismatch as ExportCloudWalletDto.passKey on the stacked #71. See the #73 review.
+  @ApiProperty({ example: 'XzFjo1RTZ2h9UVFCnPUyaQ' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'passKey is required' })
   @IsString({ message: 'passKey must be in string format.' })
