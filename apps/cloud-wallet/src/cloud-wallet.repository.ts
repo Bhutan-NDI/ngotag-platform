@@ -247,6 +247,31 @@ export class CloudWalletRepository {
     }
   }
 
+  // Selects an active base wallet that still has capacity, deterministically (oldest-configured
+  // first), for sub-wallet creation. Prisma has no built-in way to compare two columns of the
+  // same row (useCount < maxSubWallets) in a WHERE filter without a raw query; the set of base
+  // wallets is expected to be small (an operational/admin config, not per-tenant data), so
+  // filtering the active rows in application code is simpler and safer here than raw SQL. See
+  // the #71 review: the previous plain findFirstOrThrow (no capacity predicate, no ordering)
+  // could reject creation with a full wallet A while an empty wallet B sat idle, and which of the
+  // two was picked wasn't even reproducible between calls.
+  // eslint-disable-next-line camelcase
+  async getAvailableBaseWallet(): Promise<cloud_wallet_user_info | null> {
+    try {
+      const activeBaseWallets = await this.prisma.cloud_wallet_user_info.findMany({
+        where: {
+          type: CloudWalletType.BASE_WALLET,
+          isActive: true
+        },
+        orderBy: { createDateTime: 'asc' }
+      });
+      return activeBaseWallets.find((wallet) => wallet.useCount < wallet.maxSubWallets) ?? null;
+    } catch (error) {
+      this.logger.error(`Error in getAvailableBaseWallet: ${error.message}`);
+      throw error;
+    }
+  }
+
   // eslint-disable-next-line camelcase
   async updateBaseWallet(walletId: string, isActive: boolean, maxSubWallets: number): Promise<cloud_wallet_user_info> {
     try {

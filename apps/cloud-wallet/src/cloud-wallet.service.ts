@@ -257,13 +257,14 @@ export class CloudWalletService {
         throw new ConflictException(ResponseMessages.cloudWallet.error.userExist);
       }
 
-      const baseWalletDetails = await this.cloudWalletRepository.getCloudWalletDetails(CloudWalletType.BASE_WALLET);
+      // Picks an active base wallet that still has capacity, deterministically -- not just
+      // whichever active row Postgres returns first. The previous plain findFirstOrThrow (no
+      // capacity predicate, no ordering) could reject creation with a full wallet A while an
+      // empty wallet B sat idle, and which of the two got picked wasn't even reproducible between
+      // calls. See the #71 review.
+      const baseWalletDetails = await this.cloudWalletRepository.getAvailableBaseWallet();
 
-      // Enforce the capacity this base wallet was configured with -- useCount/maxSubWallets were
-      // previously written (configureBaseWallet/updateBaseWalletDetails) and displayed
-      // (getBaseWalletDetails) but never actually consulted here, so sub-wallet creation never
-      // stopped regardless of how full the base wallet already was. See the #71 review.
-      if (baseWalletDetails.useCount >= baseWalletDetails.maxSubWallets) {
+      if (!baseWalletDetails) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.BaseWalletLimitExceeded);
       }
 
