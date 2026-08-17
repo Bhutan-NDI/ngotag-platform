@@ -375,7 +375,12 @@ export enum CommonConstants {
   CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST = '/multi-tenancy/credentialsForRequest',
   CLOUD_WALLET_DELETE_BY_TENANT_ID = '/multi-tenancy/',
   CLOUD_WALLET_CHECK_CLOUD_WALLET_EXISTS = '/multi-tenancy/checkCloudWalletExists',
-  CLOUD_WALLET_ACCEPT_PROOF_REQUEST = '/accept-request/',
+  // No trailing slash: acceptProofRequest builds
+  // `${CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CLOUD_WALLET_ACCEPT_PROOF_REQUEST}` --
+  // a trailing slash here only happened to still work because agent-controller's Express app
+  // (src/server.ts) uses the framework's default (strict routing off); an implicit dependency on
+  // that default, for no benefit, on a route this PR doesn't otherwise touch. See the #71 review.
+  CLOUD_WALLET_ACCEPT_PROOF_REQUEST = '/accept-request',
   CLOUD_WALLET_DECLINE_PROOF_REQUEST = '/decline-request/',
   CLOUD_WALLET_DID_LIST = '/multi-tenancy/dids/',
   // These three are consumed today by cloud-wallet.service.ts (unchanged by this PR) and were
