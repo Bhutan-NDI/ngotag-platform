@@ -581,20 +581,24 @@ model cloud_wallet_user_info {
   useCount            Int             @default(0) // Current usage count
   maxSubWallets       Int             @default(5000) // Max allowed count
 
-  // A user can hold at most one row per wallet type (one BASE_WALLET config + one SUB_WALLET),
-  // but userId is never globally unique — that would block an admin who configures a base wallet
-  // from also owning a cloud sub-wallet, and would cap the whole system at one base wallet ever
-  // (contradicting getBaseWalletDetails's BaseAgentInfo[] / useCount+maxSubWallets pooling design).
-  // See the #71 review's "userId @unique contradicts this PR's own multi-base-wallet design".
-  @@unique([userId, type])
-  // Same reasoning, same fix, for email: a bare @unique here directly contradicted the userId
-  // compound above -- the same person's email appears on both their BASE_WALLET row (from
-  // configureBaseWallet) and their own SUB_WALLET row (from createCloudWallet), so the two rows
-  // the userId compound was introduced to allow could never actually be inserted; the second
-  // INSERT would fail on this constraint even if every application-level check passed. See the
-  // #71 review's "the (userId, type) fix is only half applied: email @unique still makes the
-  // two-row case unreachable".
-  @@unique([email, type])
+  // A user can hold at most one SUB_WALLET (their own cloud wallet), but this is *not* declared
+  // as @@unique([userId, type])/@@unique([email, type]) here — an unfiltered compound unique
+  // applies to BASE_WALLET rows too, and caps a deployment at exactly one BASE_WALLET row per
+  // admin account, ever: directly contradicting this PR's own capacity-pool design
+  // (getAvailableBaseWallet, getAllBaseWallets -> BaseAgentInfo[], per-wallet
+  // useCount/maxSubWallets). See the #71 review's "this constraint caps the deployment at one
+  // base wallet per admin, which makes the capacity-pool this PR builds unreachable".
+  //
+  // Prisma's schema DSL has no syntax for a value-filtered (partial) unique constraint, so the
+  // actual SUB_WALLET-only uniqueness lives in two partial unique indexes created by a raw
+  // migration (20260817000000_cloud_wallet_subwallet_only_unique) instead of an @@unique here —
+  // WHERE "type" = 'CLOUD_SUB_WALLET' on (email, type) and (userId, type). @@index below makes
+  // Prisma aware of the column shape (for query planning) without claiming a uniqueness guarantee
+  // it can't express. Base-wallet duplicate-prevention stays an application-level check in
+  // configureBaseWallet (keyed on agentEndpoint, the only thing that actually identifies "the same
+  // base wallet"), not a DB-level constraint, until agentEndpoint uniqueness is itself decided.
+  @@index([userId, type])
+  @@index([email, type])
 }
 
 enum CloudWalletType {

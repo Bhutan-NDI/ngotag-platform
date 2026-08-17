@@ -18,33 +18,33 @@ export class CloudWalletRepository {
     private readonly logger: Logger
   ) {}
 
-  // isActive filtered in: a deactivated base wallet (PATCH /base-wallet/:walletId
-  // { isActive: false }) must stop being selected for both new sub-wallet creation and existing
-  // sub-wallet operations that route through it -- without this filter, isActive was written but
-  // never actually consulted anywhere. See the #71 review.
-  // eslint-disable-next-line camelcase
-  async getCloudWalletDetails(type: CloudWalletType): Promise<cloud_wallet_user_info> {
-    try {
-      const agentDetails = await this.prisma.cloud_wallet_user_info.findFirstOrThrow({
-        where: {
-          type,
-          isActive: true
-        }
-      });
-      return agentDetails;
-    } catch (error) {
-      this.logger.error(`Error in getCloudWalletBaseAgentDetails: ${error.message}`);
-      throw error;
-    }
-  }
-
   // Resolves the SPECIFIC base wallet a tenant actually lives on, not an arbitrary active one.
   // There is no baseWalletId FK linking a SUB_WALLET row back to the BASE_WALLET row it was
   // created against (see the capacity-counter comment above), so agentEndpoint -- the value
   // createCloudWallet copied onto the tenant's own row from whichever base wallet it used -- is
   // the only thing that ties the two together. Returns null rather than throwing so callers can
-  // produce their own not-found error (matching how getCloudWalletDetails's caller already does).
-  // See the #71 review's "_commonCloudWalletInfo picks an arbitrary base wallet" finding.
+  // produce their own not-found error. See the #71 review's "_commonCloudWalletInfo picks an
+  // arbitrary base wallet" finding.
+  //
+  // Also doubles as configureBaseWallet's duplicate-registration guard (query by agentEndpoint
+  // alone, no isActive/type-of-caller filter needed there either -- see below).
+  //
+  // No isActive filter: this resolves a SPECIFIC, already-known base wallet (either "the one this
+  // tenant lives on" or "the one this agentEndpoint already belongs to"), not a candidate for NEW
+  // placement -- that distinction is getAvailableBaseWallet's job, and its own isActive filter
+  // stays. Filtering isActive here meant deactivating a base wallet (PATCH /base-wallet/:walletId
+  // { isActive: false }, intended as "stop placing new tenants here") immediately 404'd every
+  // existing tenant's whole wallet API instead: export/import/status/delete/credentials/proofs/
+  // connections all resolve their base wallet through this method. See the #71 review's
+  // "deactivating a base wallet takes every existing wallet on it offline, not just new
+  // placements" finding.
+  //
+  // orderBy added for determinism: agentEndpoint has no DB-level uniqueness of its own (see the
+  // schema comment on cloud_wallet_user_info), so more than one BASE_WALLET row can legitimately
+  // share one (e.g. after an admin API key rotation re-registers the same endpoint under a second
+  // row) -- without an explicit order, findFirst's choice isn't reproducible between calls.
+  // Newest-registration-wins picks the freshest credentials deterministically. See the #71
+  // review's "findFirst with no orderBy" finding.
   // eslint-disable-next-line camelcase
   async getBaseWalletByAgentEndpoint(agentEndpoint: string | null): Promise<cloud_wallet_user_info | null> {
     if (!agentEndpoint) {
@@ -54,8 +54,10 @@ export class CloudWalletRepository {
       return await this.prisma.cloud_wallet_user_info.findFirst({
         where: {
           type: CloudWalletType.BASE_WALLET,
-          isActive: true,
           agentEndpoint
+        },
+        orderBy: {
+          createDateTime: 'desc'
         }
       });
     } catch (error) {
@@ -91,18 +93,20 @@ export class CloudWalletRepository {
   // has it (it's the JWT subject). type must be explicit too: every real caller of this method
   // wants "does this user have their own SUB_WALLET" specifically, not "any row of any type" --
   // without that, createCloudWallet's own duplicate-creation guard would incorrectly reject a
-  // user who already has a BASE_WALLET admin row (see the (userId, type) compound below) from
-  // ever creating their own SUB_WALLET. Uses the (userId, type) compound unique directly.
+  // user who already has a BASE_WALLET admin row from ever creating their own SUB_WALLET.
+  //
+  // findFirst, not findUnique: (userId, type) is only DB-enforced-unique for SUB_WALLET rows (a
+  // partial index, added by the subwallet-only-unique migration) -- a BASE_WALLET row has no such
+  // guarantee, and findUnique requires its where clause to match a constraint Prisma Client
+  // recognizes as unique. findFirst behaves identically for the SUB_WALLET case this method is
+  // actually used for.
   // eslint-disable-next-line camelcase
   async checkUserExist(userId: string, type: CloudWalletType): Promise<cloud_wallet_user_info> {
     try {
-      const agentDetails = await this.prisma.cloud_wallet_user_info.findUnique({
+      const agentDetails = await this.prisma.cloud_wallet_user_info.findFirst({
         where: {
-          // eslint-disable-next-line camelcase
-          userId_type: {
-            userId,
-            type
-          }
+          userId,
+          type
         }
       });
       return agentDetails;
@@ -153,30 +157,6 @@ export class CloudWalletRepository {
       });
     } catch (error) {
       this.logger.error(`Error in storeCloudWalletDetails: ${error.message}`);
-      throw error;
-    }
-  }
-
-  // Keyed on (email, type), not email alone: email is no longer globally unique on this model
-  // (see the compound-unique schema comment) -- the same person's email legitimately appears on
-  // both their BASE_WALLET row and their own SUB_WALLET row, so a bare email lookup could now
-  // return either one. This method is only ever used by configureBaseWallet's duplicate-creation
-  // guard, so type is always BASE_WALLET there.
-  // eslint-disable-next-line camelcase
-  async getCloudWalletInfo(email: string, type: CloudWalletType): Promise<cloud_wallet_user_info> {
-    try {
-      const walletInfoData = await this.prisma.cloud_wallet_user_info.findUnique({
-        where: {
-          // eslint-disable-next-line camelcase
-          email_type: {
-            email,
-            type
-          }
-        }
-      });
-      return walletInfoData;
-    } catch (error) {
-      this.logger.error(`Error in getCloudWalletInfo: ${error}`);
       throw error;
     }
   }

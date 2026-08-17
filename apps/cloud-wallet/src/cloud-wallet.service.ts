@@ -66,10 +66,13 @@ export class CloudWalletService {
     const { agentEndpoint, apiKey, email, walletKey, userId, maxSubWallets } = configureBaseWalletPayload;
 
     try {
-      const existingWalletInfo = await this.cloudWalletRepository.getCloudWalletInfo(
-        email,
-        CloudWalletType.BASE_WALLET
-      );
+      // Keyed on agentEndpoint, not (email, type)/(userId, type): agentEndpoint is the only thing
+      // that actually identifies "the same base wallet" -- a duplicate-registration guard keyed on
+      // the *caller's* identity instead would (a) throw for username-based admin accounts, whose
+      // email is null, and (b) cap a deployment at one base wallet per admin, contradicting this
+      // PR's own capacity-pool design (see the #71 review's two findings on this guard). This
+      // reuses getBaseWalletByAgentEndpoint rather than a dedicated lookup -- same query either way.
+      const existingWalletInfo = await this.cloudWalletRepository.getBaseWalletByAgentEndpoint(agentEndpoint);
       if (existingWalletInfo) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.agentAlreadyExist);
       }
@@ -424,17 +427,13 @@ export class CloudWalletService {
    */
   async createDid(createDidDetails: ICreateCloudWalletDid): Promise<Response> {
     try {
-      // isDefault stripped here too, not just email/userId: CreateCloudWalletDidDto's
-      // isDefault?: boolean = false property initializer means class-transformer always
-      // materializes the key, even when the caller omits it. agent-controller's develop
-      // (as of this PR) has no isDefault property on its DidCreate tsoa model
-      // (additionalProperties: false), so spreading it through would 400 every POST
-      // /cloud-wallet/did until agent-controller's own isDefault support (a separate,
-      // still-open PR) lands. Not consumed anywhere on this side either yet (see the
-      // GET /cloud-wallet/did?isDefault= finding) -- dropped rather than silently
-      // forwarded to an endpoint that doesn't understand it.
+      // isDefault forwarded through, not stripped: agent-controller's DidController.writeDid
+      // (#75) now accepts isDefault and tags the created DID's own DidRecord when set, and
+      // getDidList (below) reads that same tag via GET /dids?isDefault=true. Stripping it here
+      // would make the read side permanently return an empty list -- no cloud wallet could ever
+      // have a default DID. See the #71 review.
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { email, userId, isDefault, ...didDetails } = createDidDetails;
+      const { email, userId, ...didDetails } = createDidDetails;
 
       const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 

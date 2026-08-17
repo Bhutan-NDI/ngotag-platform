@@ -13,6 +13,7 @@ import {
   Param,
   Query,
   ParseBoolPipe,
+  ParseUUIDPipe,
   BadRequestException,
   Delete,
   Patch
@@ -248,7 +249,11 @@ export class CloudWalletController {
   // to fix from this PR -- flagged separately rather than silently relied on. See the #71 review.
   @UseGuards(AuthGuard('jwt'))
   async updateBaseWalletDetails(
-    @Param('walletId') walletId: string,
+    // ParseUUIDPipe, not a bare string: cloud_wallet_user_info.id is @db.Uuid, and Prisma rejects
+    // a malformed UUID at the query layer (PrismaClientKnownRequestError) rather than returning no
+    // rows -- without this, a typo'd id 500s with an internal Prisma message instead of the clean
+    // 404 the not-found guard below was written to produce. See the #71 review.
+    @Param('walletId', new ParseUUIDPipe()) walletId: string,
     @Body() updateBaseWalletDto: UpdateBaseWalletDto,
     @User() user: user,
     @Res() res: Response
