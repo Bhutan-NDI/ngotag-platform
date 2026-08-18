@@ -603,7 +603,12 @@ export class CloudWalletController {
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   async getExportWalletStatus(
-    @Param('jobId') jobId: string,
+    // ParseUUIDPipe, not a bare string: agent-controller's WalletPortabilityService mints jobId
+    // via uuid() (see project_phase_c_cloud_wallet memory), and this value is interpolated
+    // straight into a URL called with the base-wallet's own credential -- without validating the
+    // expected opaque format first, encoded traversal/query/fragment characters could redirect
+    // that privileged call to an unintended route on the same agent. See the #71 review.
+    @Param('jobId', new ParseUUIDPipe()) jobId: string,
     @Res() res: Response,
     @User() user: user
   ): Promise<Response> {

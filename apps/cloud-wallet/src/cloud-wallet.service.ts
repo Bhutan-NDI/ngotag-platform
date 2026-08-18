@@ -720,7 +720,10 @@ export class CloudWalletService {
       const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_EXPORT}${tenantId}/status/${jobId}`;
+      // encodeURIComponent as defense in depth -- the controller's ParseUUIDPipe already rejects
+      // a malformed jobId before this is ever reached, but this keeps the call safe even if that
+      // validation is ever loosened or bypassed. See the #71 review.
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_EXPORT}${tenantId}/status/${encodeURIComponent(jobId)}`;
       // Base wallet token required -- see exportCloudWallet's identical comment.
       const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
       const statusResponse = await this.commonService.httpGet(url, {
