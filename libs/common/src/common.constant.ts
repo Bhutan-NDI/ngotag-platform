@@ -269,8 +269,6 @@ export enum CommonConstants {
 
   // delete wallet
   URL_DELETE_WALLET = '/agent/wallet',
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
-  URL_DELETE_SHARED_WALLET = '/multi-tenancy/#',
 
   // agent status
   // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
