@@ -322,23 +322,34 @@ export class ImportCloudWalletDto {
   @IsNotEmpty({ message: 'exportUrl is required' })
   // This validates a well-formed https URL, not a MinIO/self-hosted endpoint -- the only
   // legitimate value is a pre-signed URL for agent-controller's own S3-only export bucket
-  // (agent-controller's downloadAndChecksum independently restricts to its S3 hostname, see the
-  // #73 review; MinIO isn't a supported target on either side). require_tld: false so an
-  // AWS-region-qualified S3 hostname isn't spuriously rejected as TLD-less; require_protocol:
-  // true is what actually closes the gap this review found -- class-validator's @IsUrl defaults
-  // require_protocol to false, so protocols: ['https'] was only consulted when a scheme was
-  // present, and a scheme-less payload like '169.254.169.254/latest/meta-data/' passed gateway
-  // validation entirely, surfacing only as an opaque failure later in the poll response instead
-  // of a clean 400 at the edge. This is defense in depth, not a duplicate of agent-controller's
-  // own fix.
+  // (agent-controller's downloadAndChecksum independently restricts to its S3 hostname; MinIO
+  // isn't a supported target on either side). require_protocol: true is what actually closes the
+  // gap this review found -- class-validator's @IsUrl defaults require_protocol to false, so
+  // protocols: ['https'] was only consulted when a scheme was present, and a scheme-less payload
+  // like '169.254.169.254/latest/meta-data/' passed gateway validation entirely, surfacing only
+  // as an opaque failure later in the poll response instead of a clean 400 at the edge. This is
+  // defense in depth, not a duplicate of agent-controller's own fix -- notably it does NOT stop
+  // an https URL pointing at a bare IP (e.g. a metadata endpoint, `https://169.254.169.254/...`);
+  // the agent-side bucket hostname allowlist is what rules that out.
+  //
+  // require_tld deliberately NOT set to false: every legitimate S3 hostname shape (virtual-hosted,
+  // region-qualified, path-style, dotted bucket name) already ends in `.com`/`.cn` and passes with
+  // the default require_tld: true -- verified empirically against this repo's installed validator
+  // version. Setting it false buys nothing for S3, but does let bare/internal hostnames like
+  // `https://minio-internal/...` or `https://localhost:9000/...` pass this check, reopening the
+  // exact SSRF surface this validator exists to narrow. See the #73 review.
   @IsUrl(
     // eslint-disable-next-line camelcase -- class-validator's own IsUrlOptions field names
-    { require_tld: false, require_protocol: true, protocols: ['https'] },
+    { require_protocol: true, protocols: ['https'] },
     { message: 'exportUrl must be a valid https URL' }
   )
   exportUrl: string;
 
-  @ApiProperty({ example: '4c63119399d4c98fb1dbc2b31943374c74e7026d75903828f0a2bae79ca2b4e' })
+  // Example is a genuine 64-char SHA-256 hex digest (matches VALID_BODY in this DTO's own
+  // checksum.spec.ts) -- the previous example was 63 characters, one short of what the @Matches
+  // validator below requires, so Swagger UI's "Try it out" prefilled body 400'd on this field
+  // with nothing hinting the example itself was malformed. See the #73 review.
+  @ApiProperty({ example: 'b06a1534375273fdd838693e45ce17aded75b0e73524768a92078d8c621419c9' })
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'checksum is required' })
   @IsString({ message: 'checksum must be in string format.' })
