@@ -670,7 +670,11 @@ export class CloudWalletController {
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   async getImportWalletStatus(
-    @Param('jobId') jobId: string,
+    // ParseUUIDPipe -- same reasoning as getExportWalletStatus's identical fix above: jobId is
+    // interpolated into a URL called with the base-wallet's own credential, and without
+    // validating the expected opaque format first, encoded traversal/query/fragment characters
+    // could redirect that privileged call to an unintended route. See the #73 review.
+    @Param('jobId', new ParseUUIDPipe()) jobId: string,
     @Res() res: Response,
     @User() user: user
   ): Promise<Response> {

@@ -342,6 +342,12 @@ export class ImportCloudWalletDto {
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'checksum is required' })
   @IsString({ message: 'checksum must be in string format.' })
+  // A bare non-empty-string check let any malformed value through to start real import work
+  // before agent-controller's own checksum comparison ever ran. Validating the exact expected
+  // SHA-256 hex representation here rejects a malformed request at the edge instead of relying
+  // on the agent to reject attacker-controlled integrity data after a job has already started.
+  // See the #73 review.
+  @Matches(/^[a-f0-9]{64}$/i, { message: 'checksum must be a 64-character hexadecimal SHA-256 digest' })
   checksum: string;
 
   // @ApiProperty, not @ApiPropertyOptional: @IsNotEmpty makes this required at runtime (a 400

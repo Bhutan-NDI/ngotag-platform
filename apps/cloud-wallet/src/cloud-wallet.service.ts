@@ -1080,7 +1080,11 @@ export class CloudWalletService {
       const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_IMPORT}${tenantId}/status/${jobId}`;
+      // encodeURIComponent as defense in depth -- the controller's ParseUUIDPipe already rejects
+      // a malformed jobId before this is reached for a gateway-routed request, but this keeps the
+      // call safe even if that validation is ever loosened, bypassed, or reached via an internal
+      // NATS caller directly. See the #73 review.
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_IMPORT}${tenantId}/status/${encodeURIComponent(jobId)}`;
       // Base wallet token required -- see importCloudWallet's identical comment.
       const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
       const statusResponse = await this.commonService.httpGet(url, {
