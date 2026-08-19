@@ -99,6 +99,24 @@ describe('ClientRegistrationService — Keycloak lookup response is not trusted 
         service.createUser({ email: 'alice@example.com', password: 'x' } as never, REALM, TOKEN)
       ).rejects.toThrow(NotFoundException);
     });
+
+    it("matches a mixed-case email against Keycloak's own lowercased username -- #73 review: signup used to 404 here, after the Keycloak account already existed", async () => {
+      // Keycloak lowercases usernames on create (KeycloakModelUtils.toLowerCaseSafe), but the
+      // request body's raw email/username is passed through unchanged -- an exact `===` match
+      // against a mixed-case expectedUsername never matched the lowercased record, so this threw
+      // invalidKeycloakId for every mixed-case signup, after the Keycloak user had already been
+      // created and before its password was ever set.
+      const { service, keycloakUrlService } = makeService([{ id: 'correct-id', username: 'alice@example.com' }]);
+
+      const result = await service.createUser(
+        { email: 'Alice@Example.com', password: 'attacker-chosen-password' } as never,
+        REALM,
+        TOKEN
+      );
+
+      expect(result.keycloakUserId).toBe('correct-id');
+      expect(keycloakUrlService.ResetPasswordURL).toHaveBeenCalledWith(REALM, 'correct-id');
+    });
   });
 
   describe('resetPasswordOfUser', () => {

@@ -1,4 +1,14 @@
-import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+  MinLength
+} from 'class-validator';
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotSQLInjection, trim } from '@credebl/common/cast.helper';
@@ -282,6 +292,13 @@ export class ExportCloudWalletDto {
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'passKey is required' })
   @IsString({ message: 'passKey must be in string format.' })
+  // Mirrors agent-controller's own MIN_PASSKEY_LENGTH (16) so a too-short passKey is a 400 with
+  // a field-level message here, not an opaque failure after the NATS + agent round-trip. Without
+  // this, an under-length passKey passed gateway validation, crossed NATS, ran checkUserExist +
+  // _commonCloudWalletInfo + checkAgentHealth, and only then failed at the agent -- surfacing as
+  // an opaque RpcException rather than a validation error, for a value that protects the exported
+  // wallet artifact (a security property, not just ergonomics). See the #73 review.
+  @MinLength(16, { message: 'passKey must be at least 16 characters' })
   passKey: string;
 
   // No walletID field — agent-controller's export endpoint (PR #72) takes the tenant id from the

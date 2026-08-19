@@ -822,7 +822,20 @@ export class CloudWalletService {
         });
       }
 
-      return this.cloudWalletRepository.deleteCloudWalletDetails(cloudSubWalletDetails.id);
+      const deletedCloudWalletDetails = await this.cloudWalletRepository.deleteCloudWalletDetails(
+        cloudSubWalletDetails.id
+      );
+      // Best-effort, mirroring createCloudWallet's own increment: the tenant is already deleted
+      // on the agent and the row is already gone here -- log rather than fail an already-
+      // successful delete over a counter update. Without this, useCount only ever goes up (see
+      // incrementBaseWalletUseCount's own docblock), permanently leaking capacity that a real
+      // deletion should have freed. See the #73 review.
+      await this.cloudWalletRepository
+        .decrementBaseWalletUseCount(baseWalletDetails.id)
+        .catch((error) =>
+          this.logger.error(`[deleteCloudWallet] - failed to decrement base wallet useCount: ${error}`)
+        );
+      return deletedCloudWalletDetails;
     } catch (error) {
       await this.commonService.handleError(error);
       throw error;

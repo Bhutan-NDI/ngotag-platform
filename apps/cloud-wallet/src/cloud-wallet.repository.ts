@@ -86,6 +86,25 @@ export class CloudWalletRepository {
     }
   }
 
+  // Mirror of incrementBaseWalletUseCount above, called from deleteCloudWallet -- without this,
+  // useCount only ever goes up, so after maxSubWallets cumulative creations the base wallet
+  // permanently reads "full" via getAvailableBaseWallet's useCount < maxSubWallets filter even if
+  // every one of those sub-wallets has since been deleted. This does not by itself close the
+  // capacity read-then-write race flagged elsewhere (that needs an atomic claim, tracked as its
+  // own follow-up) -- it only fixes the one-directional leak: capacity that was freed by a real
+  // deletion now actually comes back. See the #73 review.
+  async decrementBaseWalletUseCount(walletId: string): Promise<void> {
+    try {
+      await this.prisma.cloud_wallet_user_info.update({
+        where: { id: walletId },
+        data: { useCount: { decrement: 1 } }
+      });
+    } catch (error) {
+      this.logger.error(`Error in decrementBaseWalletUseCount: ${error.message}`);
+      throw error;
+    }
+  }
+
   // Keyed on (userId, type), not email: the username-based signup flow (createUserByUsername)
   // never populates user.email at all, so a lookup keyed on email would throw
   // PrismaClientValidationError rather than a clean "not found" for those users. userId is always
@@ -195,12 +214,21 @@ export class CloudWalletRepository {
   }
 
   // eslint-disable-next-line camelcase
-  async getCloudSubWallet(userId: string): Promise<cloud_wallet_user_info> {
+  async getCloudSubWallet(userId: string): Promise<cloud_wallet_user_info | null> {
     try {
       // Filtered by type too — a user can now legitimately hold both a BASE_WALLET row and a
       // SUB_WALLET row (see the schema's @@unique([userId, type])), so userId alone is no longer
       // enough to unambiguously mean "this user's cloud sub-wallet".
-      const cloudSubWalletDetails = await this.prisma.cloud_wallet_user_info.findFirstOrThrow({
+      //
+      // findFirst, not findFirstOrThrow: a holder with no cloud wallet (never created one, or
+      // just deleted one) is a normal, expected case, not an exceptional one -- findFirstOrThrow
+      // raised a raw PrismaClientKnownRequestError (P2025) that commonService.handleError does
+      // not map (it only special-cases error.status.message.error, and PrismaClientKnownRequestError
+      // has neither that shape nor a .response), so it reached the gateway as an opaque 500. That
+      // also made every caller's own explicit `if (!cloudSubWalletDetails) throw NotFoundException`
+      // guard unreachable for the exact case it exists to handle -- returning null here lets those
+      // guards do their job. See the #73 review.
+      const cloudSubWalletDetails = await this.prisma.cloud_wallet_user_info.findFirst({
         where: {
           userId,
           type: CloudWalletType.SUB_WALLET

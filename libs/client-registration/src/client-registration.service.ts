@@ -169,10 +169,18 @@ export class ClientRegistrationService {
    * record's own username matches what was asked for means a future encoding slip, an
    * unexpectedly permissive Keycloak query, or a multi-result response can no longer silently
    * resolve to the wrong account.
+   *
+   * Case-insensitive: Keycloak lowercases usernames on create (KeycloakModelUtils.toLowerCaseSafe
+   * in UserAdapter.setUsername), but every caller here passes the raw request-body email/username
+   * through unchanged, uppercase letters and all. An exact `===` match against a mixed-case
+   * expectedUsername genuinely never matches the lowercased Keycloak record, so this method was
+   * throwing invalidKeycloakId for any mixed-case signup -- after the Keycloak user had already
+   * been created, before its password was ever set. See the #73 review.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private findMatchingKeycloakUser(users: any[], expectedUsername: string): { id: string; username: string } {
-    const match = users?.find((candidate) => candidate.username === expectedUsername);
+    const expected = expectedUsername?.toLowerCase();
+    const match = users?.find((candidate) => candidate.username?.toLowerCase() === expected);
     if (!match) {
       throw new NotFoundException(ResponseMessages.user.error.invalidKeycloakId);
     }
