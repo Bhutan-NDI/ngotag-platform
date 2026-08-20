@@ -350,7 +350,15 @@ export class ImportCloudWalletDto {
   // validator below requires, so Swagger UI's "Try it out" prefilled body 400'd on this field
   // with nothing hinting the example itself was malformed. See the #73 review.
   @ApiProperty({ example: 'b06a1534375273fdd838693e45ce17aded75b0e73524768a92078d8c621419c9' })
-  @Transform(({ value }) => trim(value))
+  // Lowercased, not just trimmed -- the @Matches validator below is case-insensitive (/i) and
+  // this DTO's own test suite deliberately accepts an uppercase digest as a convenience, but
+  // agent-controller's own comparison (WalletPortabilityService.gzipAndChecksum returns
+  // hash.digest('hex'), always lowercase, compared with !==) is case-sensitive. Without
+  // normalizing here, a correct-but-uppercased checksum passed gateway validation, crossed NATS,
+  // consumed the tenant's only portability slot, and streamed the whole artifact down from S3 --
+  // only to fail "Checksum mismatch" at the agent for a digest that was arithmetically right.
+  // See the #73 review.
+  @Transform(({ value }) => trim(value)?.toLowerCase())
   @IsNotEmpty({ message: 'checksum is required' })
   @IsString({ message: 'checksum must be in string format.' })
   // A bare non-empty-string check let any malformed value through to start real import work
@@ -370,6 +378,13 @@ export class ImportCloudWalletDto {
   @Transform(({ value }) => trim(value))
   @IsNotEmpty({ message: 'passKey is required' })
   @IsString({ message: 'passKey must be in string format.' })
+  // Mirrors agent-controller's own MIN_PASSKEY_LENGTH (16), same as ExportCloudWalletDto.passKey
+  // -- without it an under-length passKey passes gateway validation, crosses NATS, runs
+  // checkUserExist + _commonCloudWalletInfo + checkAgentHealth, and only then fails at the agent
+  // as an opaque RpcException instead of a field-level 400. This is the same passKey the caller
+  // supplied at export time, so a weak one accepted here just means the export-side floor was
+  // bypassable via import's own endpoint. See the #73 review.
+  @MinLength(16, { message: 'passKey must be at least 16 characters' })
   passKey: string;
 
   email: string;
