@@ -95,8 +95,16 @@ export class CloudWalletRepository {
   // deletion now actually comes back. See the #73 review.
   async decrementBaseWalletUseCount(walletId: string): Promise<void> {
     try {
-      await this.prisma.cloud_wallet_user_info.update({
-        where: { id: walletId },
+      // Guarded by useCount > 0, not a plain update -- a bare { decrement: 1 } has no floor, and
+      // any base wallet configured before this migration already had real tenants at useCount = 0
+      // (the column's default); deleting those drove useCount negative, which then made the
+      // `useCount < maxSubWallets` capacity filter accept far more placements than the cap
+      // allows -- the opposite of what it's for. This does not fix which row gets decremented
+      // when more than one BASE_WALLET row shares an agentEndpoint (that needs the same
+      // baseWalletId FK already tracked as a follow-up), only that this row's own counter can no
+      // longer go below zero. See the #71 review.
+      await this.prisma.cloud_wallet_user_info.updateMany({
+        where: { id: walletId, useCount: { gt: 0 } },
         data: { useCount: { decrement: 1 } }
       });
     } catch (error) {

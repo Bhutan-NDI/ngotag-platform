@@ -137,9 +137,17 @@ export class UserRepository {
   // eslint-disable-next-line camelcase
   async checkUserExistByUsername(username: string): Promise<user> {
     try {
+      // Lowercased, matching createUserByUsername's own normalization below and the email flow's
+      // existing userInfo.email.toLowerCase() pattern -- Keycloak lowercases usernames on create
+      // (KeycloakModelUtils.toLowerCaseSafe), so a token's preferred_username claim is always
+      // lowercase. Without normalizing here too, a user who signed up with a mixed-case username
+      // (now accepted by findMatchingKeycloakUser's own case-insensitive fix) could log in, but
+      // every subsequent lookup by the token's lowercased preferred_username (jwt.strategy ->
+      // getUserByUsernameInKeycloak) would find no row and silently 403 with "not a holder" --
+      // permanently, since the mismatch never resolves on its own. See the #71 review.
       return this.prisma.user.findFirst({
         where: {
-          username
+          username: username?.toLowerCase()
         }
       });
     } catch (error) {
@@ -172,7 +180,10 @@ export class UserRepository {
     try {
       return await this.prisma.user.create({
         data: {
-          username: userInfo.username,
+          // Lowercased so this row matches what checkUserExistByUsername looks up and what
+          // Keycloak's own preferred_username claim will always be, regardless of the case the
+          // caller originally signed up with. See the #71 review.
+          username: userInfo.username?.toLowerCase(),
           firstName: userInfo.firstName,
           lastName: userInfo.lastName,
           clientId: userInfo.clientId,
