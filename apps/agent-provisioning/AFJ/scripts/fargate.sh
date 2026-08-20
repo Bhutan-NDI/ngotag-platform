@@ -318,7 +318,7 @@ if [ $? -eq 0 ]; then
   until [ "$n" -ge 20 ]; do
     if netstat -tln | grep ${ADMIN_PORT} >/dev/null; then
 
-      AGENTURL="http://${EXTERNAL_IP}:${ADMIN_PORT}/agent"
+      AGENTURL="http://${EXTERNAL_IP}:${ADMIN_PORT}/health"
       agentResponse=$(curl -s -o /dev/null -w "%{http_code}" $AGENTURL)
 
       if [ "$agentResponse" = "200" ]; then
