@@ -204,14 +204,17 @@ if [ $? -eq 0 ]; then
   if [ $? -eq 0 ]; then
 
     n=0
+    agent_ready=false
     until [ "$n" -ge 6 ]; do
-      if netstat -tln | grep ${ADMIN_PORT} >/dev/null; then
+      if netstat -tln | grep -E ":${ADMIN_PORT}[[:space:]]" >/dev/null; then
 
         AGENTURL="http://${EXTERNAL_IP}:${ADMIN_PORT}/health"
-        agentResponse=$(curl -s -o /dev/null -w "%{http_code}" $AGENTURL)
+        agentResponse=$(curl -s -o /dev/null -w "%{http_code}" "$AGENTURL")
 
         if [ "$agentResponse" = "200" ]; then
-          echo "Agent is running" && break
+          echo "Agent is running"
+          agent_ready=true
+          break
         else
           echo "Agent is not running"
           n=$((n + 1))
@@ -223,6 +226,11 @@ if [ $? -eq 0 ]; then
         sleep 10
       fi
     done
+
+    if [ "$agent_ready" != "true" ]; then
+      echo "ERROR: Agent did not become ready within the retry budget"
+      exit 1
+    fi
 
     echo "Creating agent config"
  
