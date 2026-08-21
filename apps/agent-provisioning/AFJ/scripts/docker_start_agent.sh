@@ -205,7 +205,10 @@ if [ $? -eq 0 ]; then
 
     n=0
     agent_ready=false
-    until [ "$n" -ge 6 ]; do
+    AGENT_READINESS_MAX_ATTEMPTS="${AGENT_READINESS_MAX_ATTEMPTS:-20}"
+    AGENT_READINESS_RETRY_INTERVAL_SECONDS="${AGENT_READINESS_RETRY_INTERVAL_SECONDS:-10}"
+    until [ "$n" -ge "$AGENT_READINESS_MAX_ATTEMPTS" ]; do
+      # Linux-only: this provisioning path runs in Linux Docker/ECS environments.
       if netstat -tln | grep -E ":${ADMIN_PORT}[[:space:]]" >/dev/null; then
 
         AGENTURL="http://${EXTERNAL_IP}:${ADMIN_PORT}/health"
@@ -218,12 +221,12 @@ if [ $? -eq 0 ]; then
         else
           echo "Agent is not running"
           n=$((n + 1))
-          sleep 10
+          sleep "$AGENT_READINESS_RETRY_INTERVAL_SECONDS"
         fi
       else
         echo "No response from agent"
         n=$((n + 1))
-        sleep 10
+        sleep "$AGENT_READINESS_RETRY_INTERVAL_SECONDS"
       fi
     done
 
