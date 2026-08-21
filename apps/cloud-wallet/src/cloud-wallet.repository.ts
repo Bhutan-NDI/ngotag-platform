@@ -66,33 +66,49 @@ export class CloudWalletRepository {
     }
   }
 
-  // Best-effort capacity counter, incremented on every successful sub-wallet creation against
-  // this base wallet (see createCloudWallet). NOTE: not decremented on wallet deletion (there is
-  // no baseWalletId FK on cloud_wallet_user_info linking a SUB_WALLET row back to the specific
-  // BASE_WALLET row it was created against, so a correct decrement -- or a fully accurate
-  // multi-base-wallet capacity pool -- needs that FK added first; tracked as follow-up, not
-  // silently pretended to be solved here). In the common single-base-wallet deployment this still
-  // functions as a real (if one-directional) cap; documented as a known limitation rather than
-  // left unexplained.
-  async incrementBaseWalletUseCount(walletId: string): Promise<void> {
+  // The actual atomic capacity claim createCloudWallet needs -- getAvailableBaseWallet's own read
+  // (a separate, earlier findMany) only reflects capacity as of a moment ago, so two concurrent
+  // requests can both read the same base wallet with room for exactly one more tenant and both
+  // proceed to create a remote tenant against it, over-provisioning it past maxSubWallets. A plain
+  // incrementBaseWalletUseCount call afterward (the previous approach) does not close that: it
+  // always succeeds regardless of what useCount already is, so it records the over-provisioning
+  // rather than preventing it.
+  //
+  // This is instead a single UPDATE with the capacity check IN the WHERE clause -- Postgres holds
+  // the row lock for the statement's duration, so of two callers racing the same row, whichever
+  // UPDATE actually commits first is the only one that can still see useCount below the cap; the
+  // second re-evaluates the WHERE against the now-committed row and finds it no longer matches.
+  // That makes "check capacity" and "claim it" one atomic operation instead of the two separate
+  // round trips (a read, then an unconditional write) that left the race open.
+  //
+  // maxSubWallets is passed in from the caller's own earlier getAvailableBaseWallet() read rather
+  // than re-read here: it's an admin-configured cap that changes far less often than useCount, and
+  // using a Prisma column-to-column comparison in a WHERE filter isn't supported without raw SQL
+  // (see getAvailableBaseWallet's own comment on the same limitation) -- a literal value from a
+  // moment-old read is a reasonable, already-established tradeoff in this file, not a new one.
+  //
+  // Returns whether the claim actually landed (count === 1) so the caller can tell "I got the
+  // slot" apart from "someone else already took it" and fail the request instead of proceeding
+  // to create a tenant it has no claimed capacity for. See the #71 review.
+  // eslint-disable-next-line camelcase
+  async claimBaseWalletCapacity(walletId: string, maxSubWallets: number): Promise<boolean> {
     try {
-      await this.prisma.cloud_wallet_user_info.update({
-        where: { id: walletId },
+      const result = await this.prisma.cloud_wallet_user_info.updateMany({
+        where: { id: walletId, useCount: { lt: maxSubWallets } },
         data: { useCount: { increment: 1 } }
       });
+      return 1 === result.count;
     } catch (error) {
-      this.logger.error(`Error in incrementBaseWalletUseCount: ${error.message}`);
+      this.logger.error(`Error in claimBaseWalletCapacity: ${error.message}`);
       throw error;
     }
   }
 
-  // Mirror of incrementBaseWalletUseCount above, called from deleteCloudWallet -- without this,
+  // Mirror of claimBaseWalletCapacity above, called from deleteCloudWallet (release on failure)
+  // and createCloudWallet's own catch (release on a claimed-but-unused slot) -- without this,
   // useCount only ever goes up, so after maxSubWallets cumulative creations the base wallet
   // permanently reads "full" via getAvailableBaseWallet's useCount < maxSubWallets filter even if
-  // every one of those sub-wallets has since been deleted. This does not by itself close the
-  // capacity read-then-write race flagged elsewhere (that needs an atomic claim, tracked as its
-  // own follow-up) -- it only fixes the one-directional leak: capacity that was freed by a real
-  // deletion now actually comes back. See the #73 review.
+  // every one of those sub-wallets has since been deleted. See the #73 review.
   async decrementBaseWalletUseCount(walletId: string): Promise<void> {
     try {
       // Guarded by useCount > 0, not a plain update -- a bare { decrement: 1 } has no floor, and

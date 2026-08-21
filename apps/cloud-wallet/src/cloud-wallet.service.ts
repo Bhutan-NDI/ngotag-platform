@@ -244,6 +244,11 @@ export class CloudWalletService {
    * @returns cloud wallet details
    */
   async createCloudWallet(cloudWalletDetails: ICreateCloudWallet): Promise<IStoredWalletDetails> {
+    // Tracks whether this call is the one holding a claimed capacity slot, so the catch block
+    // below knows whether there is anything to release. Declared outside the try so it's visible
+    // there regardless of which line inside the try throws.
+    let capacityClaimed = false;
+    let claimedBaseWalletId: string | undefined;
     try {
       const { label, connectionImageUrl, email, userId } = cloudWalletDetails;
       const agentPayload = {
@@ -269,6 +274,25 @@ export class CloudWalletService {
       if (!baseWalletDetails) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.BaseWalletLimitExceeded);
       }
+
+      // The read above only reflects capacity as of a moment ago -- two concurrent requests can
+      // both read the same base wallet with room for exactly one more tenant and both proceed past
+      // this point, over-provisioning it past maxSubWallets. claimBaseWalletCapacity is the actual
+      // claim: an atomic conditional UPDATE that succeeds only if the row still has room at the
+      // instant it runs, so at most one of two racing callers wins it. Done before the remote
+      // agent call (not after, where the old incrementBaseWalletUseCount ran) so nothing remote
+      // happens on a slot this request didn't actually secure. Released in the catch below if
+      // anything past this point fails, so a failed creation doesn't permanently burn capacity it
+      // never used. See the #71 review.
+      const claimed = await this.cloudWalletRepository.claimBaseWalletCapacity(
+        baseWalletDetails.id,
+        baseWalletDetails.maxSubWallets
+      );
+      if (!claimed) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.BaseWalletLimitExceeded);
+      }
+      capacityClaimed = true;
+      claimedBaseWalletId = baseWalletDetails.id;
 
       const { agentEndpoint, agentApiKey } = baseWalletDetails;
       if (!agentEndpoint || !agentApiKey) {
@@ -318,17 +342,22 @@ export class CloudWalletService {
         key: walletKey,
         connectionImageUrl
       };
+      // The capacity claim above already incremented useCount -- this call no longer does, it
+      // only persists the sub-wallet's own row. See claimBaseWalletCapacity's docblock.
       const storeCloudWalletDetails = await this.cloudWalletRepository.storeCloudWalletDetails(cloudWalletResponse);
-      // Best-effort: if this fails, the sub-wallet is already created and usable -- log rather
-      // than fail the whole request over a counter update. See incrementBaseWalletUseCount's own
-      // docblock for the known "never decremented on delete" limitation.
-      await this.cloudWalletRepository
-        .incrementBaseWalletUseCount(baseWalletDetails.id)
-        .catch((error) =>
-          this.logger.error(`[createCloudWallet] - failed to increment base wallet useCount: ${error}`)
-        );
       return storeCloudWalletDetails;
     } catch (error) {
+      // Release a claimed slot on any failure past that point -- the tenant was never actually
+      // created (or its record never actually persisted), so the capacity this request claimed
+      // must go back to the pool rather than being burned on a request that didn't use it. A
+      // second, unrelated failure here (the DB write itself failing) is logged and swallowed
+      // rather than replacing the real error below -- best-effort, same as the old post-hoc
+      // increment's own failure handling.
+      if (capacityClaimed && claimedBaseWalletId) {
+        await this.cloudWalletRepository.decrementBaseWalletUseCount(claimedBaseWalletId).catch((releaseError) => {
+          this.logger.error(`[createCloudWallet] - failed to release claimed base wallet capacity: ${releaseError}`);
+        });
+      }
       this.logger.error(`[createCloudWallet] - error in create cloud wallet: ${error}`);
       await this.commonService.handleError(error);
     }
@@ -825,10 +854,10 @@ export class CloudWalletService {
       const deletedCloudWalletDetails = await this.cloudWalletRepository.deleteCloudWalletDetails(
         cloudSubWalletDetails.id
       );
-      // Best-effort, mirroring createCloudWallet's own increment: the tenant is already deleted
+      // Best-effort, mirroring createCloudWallet's own claim: the tenant is already deleted
       // on the agent and the row is already gone here -- log rather than fail an already-
       // successful delete over a counter update. Without this, useCount only ever goes up (see
-      // incrementBaseWalletUseCount's own docblock), permanently leaking capacity that a real
+      // claimBaseWalletCapacity's own docblock), permanently leaking capacity that a real
       // deletion should have freed. See the #73 review.
       await this.cloudWalletRepository
         .decrementBaseWalletUseCount(baseWalletDetails.id)
