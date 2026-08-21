@@ -58,6 +58,7 @@ import { ClientCredentialTokenPayloadDto } from '@credebl/client-registration/dt
 import { IAccessTokenData } from '@credebl/common/interfaces/interface';
 import { IClientRoles } from '@credebl/client-registration/interfaces/client.interface';
 import { toNumber } from '@credebl/common/cast.helper';
+import { networkNamespace } from '@credebl/common/common.utils';
 import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { DeleteOrgInvitationsEmail } from '../templates/delete-organization-invitations.template';
 import { IOrgRoles } from 'libs/org-roles/interfaces/org-roles.interface';
@@ -263,6 +264,17 @@ export class OrganizationService {
         nameSpace = `${didParts[2]}:${didParts[3]}`;
       } else if (DidMethod.POLYGON === didParts[1]) {
         nameSpace = `${didParts[1]}:${didParts[2]}`;
+      } else if (DidMethod.ETHEREUM === didParts[1]) {
+        // Same helper schema.service.ts's updateW3CSchemas already uses to resolve a did:ethr
+        // publisherDid to its ledger row -- without this branch, every did:ethr DID fell through
+        // to the `else` below, forcing org_agents.ledgerId to the Not_Applicable placeholder
+        // regardless of the DID's real network. That silently diverges from the schema's own
+        // ledgerId (resolved the same way, via networkNamespace), which the pre-existing
+        // ledger-mismatch guard in issuance.service.ts then rejects on the next issuance attempt.
+        // Confirmed in production: switching an org's primary DID between did:ethr and did:polygon
+        // and back (e.g. following the v2.2.0 runbook's DAT-1 multi-primary-DID remediation step)
+        // deterministically corrupts org_agents.ledgerId every time the ethr DID is set primary.
+        nameSpace = networkNamespace(did);
       } else {
         nameSpace = null;
       }

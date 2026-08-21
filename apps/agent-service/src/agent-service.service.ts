@@ -77,7 +77,7 @@ import { from } from 'rxjs';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { SignDataDto } from '../../api-gateway/src/agent-service/dto/agent-service.dto';
 import { IVerificationMethod } from 'apps/organization/interfaces/organization.interface';
-import { getAgentUrl } from '@credebl/common/common.utils';
+import { getAgentUrl, networkNamespace } from '@credebl/common/common.utils';
 import {
   IX509ImportCertificateOptionsDto,
   x509CertificateDecodeDto,
@@ -939,6 +939,17 @@ export class AgentServiceService {
       if (isPrimaryDid) {
         if (createDidPayload.network) {
           ledgerId = networkLedgerId;
+        } else if (createDidPayload.method === DidMethod.ETHEREUM) {
+          // `network` is optional on CreateDidDto for every method, not just ethr -- without this
+          // branch, a did:ethr primary DID created without it fell through to the Not_Applicable
+          // case below, same as setPrimaryDid's now-fixed sibling bug. That diverges from
+          // schema.ledgerId, which updateW3CSchemas resolves from this same DID string via
+          // networkNamespace(), and trips the pre-existing ledger-mismatch guard on the next
+          // issuance. Resolved off the agent's actual returned `did`, not the request's optional
+          // `network` field, for the same reason the mismatch check above exempts did:ethr: its
+          // ledger legitimately differs from the agent's own indy/polygon ledger.
+          const ethrLedger = await this.agentServiceRepository.getLedgerByNameSpace(networkNamespace(did));
+          ledgerId = ethrLedger.id;
         } else {
           const noLedgerData = await this.agentServiceRepository.getLedger(Ledgers.Not_Applicable);
           if (!noLedgerData) {
