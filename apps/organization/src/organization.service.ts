@@ -244,18 +244,6 @@ export class OrganizationService {
       const dids = await this.organizationRepository.getDids(orgId);
       const noPrimaryDid = dids.every((orgDids) => false === orgDids.isPrimaryDid);
 
-      let existingPrimaryDid;
-      let priviousDidFalse;
-      if (!noPrimaryDid) {
-        existingPrimaryDid = await this.organizationRepository.getPerviousPrimaryDid(orgId);
-
-        if (!existingPrimaryDid) {
-          throw new NotFoundException(ResponseMessages.organisation.error.didNotFound);
-        }
-
-        priviousDidFalse = await this.organizationRepository.setPreviousDidFlase(existingPrimaryDid.id);
-      }
-
       const didParts = did.split(':');
       let nameSpace: string | null = null;
 
@@ -279,6 +267,15 @@ export class OrganizationService {
         nameSpace = null;
       }
 
+      // Resolved (and, for a namespaced DID, validated via getNetworkByNameSpace's own
+      // findFirstOrThrow) BEFORE the previous primary DID is demoted below -- getNetworkByNameSpace
+      // throws outright if the resolved namespace has no seeded ledger row (e.g. a did:ethr DID
+      // whose network segment doesn't match one of the seeded ethr:* rows). Resolving it first
+      // means that throw aborts the whole call before any destructive write happens, leaving the
+      // org's existing primary DID untouched. Doing this after setPreviousDidFlase (the original
+      // order) would instead have already demoted the current primary DID by the time the throw
+      // happened, and setOrgsPrimaryDid below would never run to replace it -- leaving the org with
+      // no primary DID at all. See the #76 review.
       let network;
       if (null !== nameSpace) {
         network = await this.organizationRepository.getNetworkByNameSpace(nameSpace);
@@ -287,6 +284,18 @@ export class OrganizationService {
         if (!network) {
           throw new NotFoundException(ResponseMessages.agent.error.noLedgerFound);
         }
+      }
+
+      let existingPrimaryDid;
+      let priviousDidFalse;
+      if (!noPrimaryDid) {
+        existingPrimaryDid = await this.organizationRepository.getPerviousPrimaryDid(orgId);
+
+        if (!existingPrimaryDid) {
+          throw new NotFoundException(ResponseMessages.organisation.error.didNotFound);
+        }
+
+        priviousDidFalse = await this.organizationRepository.setPreviousDidFlase(existingPrimaryDid.id);
       }
 
       const primaryDidDetails: IPrimaryDidDetails = {

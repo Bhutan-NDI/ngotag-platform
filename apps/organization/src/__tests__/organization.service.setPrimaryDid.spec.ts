@@ -1,7 +1,6 @@
 /**
- * Regression test for a production ledger-mismatch bug (Trigger A of the two confirmed causes;
- * see LEDGER-MISMATCH-BUG-CONTEXT.md and the sibling fix on agent-service.service.ts's createDid,
- * Trigger B).
+ * Regression test for a production ledger-mismatch bug (this is the "Trigger A" half of two
+ * confirmed causes; see the sibling fix on agent-service.service.ts's createDid, "Trigger B").
  *
  * setPrimaryDid's ledger-namespace resolution only had an INDY branch and a POLYGON branch;
  * DidMethod.ETHEREUM ('ethr') fell through to the `else` and forced org_agents.ledgerId to the
@@ -16,8 +15,8 @@
  *
  * Constructed directly (not via Nest's TestingModule/DI container) — apps/organization has no
  * existing spec files to follow a local convention from, so this mirrors the pattern already
- * established in apps/agent-service/src/agent-service.service.spec.ts and this session's
- * cloud-wallet specs: only the dependencies setPrimaryDid actually calls are mocked.
+ * established in apps/agent-service/src/agent-service.service.spec.ts: only the dependencies
+ * setPrimaryDid actually calls are mocked.
  */
 import { OrganizationService } from '../organization.service';
 
@@ -126,5 +125,27 @@ describe('OrganizationService.setPrimaryDid — ledger resolution for a did:ethr
     await service.setPrimaryDid(ORG_ID, did, USER_ID);
 
     expect(organizationRepository.getNetworkByNameSpace).toHaveBeenCalledWith('polygon:testnet');
+  });
+
+  it("does not demote the existing primary DID when the new one's ledger cannot be resolved -- the org must not end up with no primary DID at all", async () => {
+    // #76 review (P1): getNetworkByNameSpace uses findFirstOrThrow, so it throws outright if the
+    // resolved namespace has no matching row (e.g. the ethr:* seed migration hasn't run in this
+    // environment, or the row was otherwise removed) -- reproduced here by forcing the same
+    // namespace this DID would normally resolve to (ethr:sepolia) to reject instead of resolve.
+    // Resolving the ledger BEFORE demoting the existing primary DID (setPreviousDidFlase) means
+    // that throw aborts the whole call before any destructive write happens -- the org keeps its
+    // current primary DID. The original ordering ran setPreviousDidFlase first, so this same
+    // throw would have already demoted the old primary DID with no replacement ever written,
+    // leaving the org with no primary DID at all.
+    const did = 'did:ethr:sepolia:0x1234567890abcdef1234567890abcdef12345678';
+    const { service, organizationRepository } = buildService(did);
+    organizationRepository.getNetworkByNameSpace.mockRejectedValue(
+      new Error('no ledger seeded for namespace ethr:sepolia')
+    );
+
+    await expect(service.setPrimaryDid(ORG_ID, did, USER_ID)).rejects.toThrow();
+
+    expect(organizationRepository.setPreviousDidFlase).not.toHaveBeenCalled();
+    expect(organizationRepository.setOrgsPrimaryDid).not.toHaveBeenCalled();
   });
 });

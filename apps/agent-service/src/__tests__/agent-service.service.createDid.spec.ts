@@ -1,7 +1,6 @@
 /**
- * Regression test for a production ledger-mismatch bug (Trigger B of the two confirmed causes;
- * see LEDGER-MISMATCH-BUG-CONTEXT.md and the sibling fix on organization.service.ts's
- * setPrimaryDid, Trigger A).
+ * Regression test for a production ledger-mismatch bug (this is the "Trigger B" half of two
+ * confirmed causes; see the sibling fix on organization.service.ts's setPrimaryDid, "Trigger A").
  *
  * `network` is optional on CreateDidDto for every method, not just did:ethr. createDid's own
  * ledgerId-resolution block only had two cases: "network was supplied" (resolve normally) and
