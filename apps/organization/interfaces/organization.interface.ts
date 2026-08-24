@@ -178,6 +178,10 @@ export interface IPrimaryDidDetails extends IPrimaryDid {
   id: string;
   networkId: string;
   didDocument: Prisma.JsonValue;
+  // The org_dids.id of the org's *previous* primary DID, if it had one. Passed through so
+  // setOrgsPrimaryDid can demote it in the SAME transaction as promoting the new one -- omitted
+  // (undefined) when the org has no existing primary DID to demote. See the #76 review.
+  previousDidId?: string;
 }
 
 export interface OrgInvitation {

@@ -132,6 +132,7 @@ export const ResponseMessages = {
       invalidClient: 'Invalid client credentials',
       primaryDid: 'This DID is already set to primary DID',
       didNotFound: 'DID does not exist in organiation',
+      didIdMismatch: 'The provided id does not match the DID record for this did/orgId',
       organizationNotFound: 'Organization not found',
       MaximumOrgsLimit: 'Limit reached: You can be associated with or create maximum 10 organizations.',
       adminTokenDetails: 'Error in generating admin token details',
@@ -372,7 +373,8 @@ export const ResponseMessages = {
       create: 'Organization wallet created successfully',
       createWallet: 'Wallet created successfully',
       createDid: 'Did created successfully',
-      generateWebDid: 'did:web DID Document generated successfully. Host the document then call the create DID endpoint.',
+      generateWebDid:
+        'did:web DID Document generated successfully. Host the document then call the create DID endpoint.',
       health: 'Agent health details retrieved successfully.',
       ledgerConfig: 'Ledger config details fetched successfully.',
       sign: 'Payload signed successfully.',
@@ -415,7 +417,8 @@ export const ResponseMessages = {
       invalidTenantIdIdFormat: 'Invalid tenantId format',
       requiredTenantId: 'Tenant Id is required',
       createDid: 'Error while creating DID',
-      webDidDocumentMismatch: 'Hosted DID Document does not match the generated DID Document. Ensure you host the exact document returned by the generate endpoint.',
+      webDidDocumentMismatch:
+        'Hosted DID Document does not match the generated DID Document. Ensure you host the exact document returned by the generate endpoint.',
       webDidDomainAlreadyExists: 'A did:web DID for this domain already exists for this organization.',
       networkMismatch: 'The network is mismatched.',
       didAlreadyExist: 'DID already exist',
