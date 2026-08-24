@@ -207,26 +207,31 @@ if [ $? -eq 0 ]; then
     agent_ready=false
     AGENT_READINESS_MAX_ATTEMPTS="${AGENT_READINESS_MAX_ATTEMPTS:-20}"
     AGENT_READINESS_RETRY_INTERVAL_SECONDS="${AGENT_READINESS_RETRY_INTERVAL_SECONDS:-10}"
+    case "$AGENT_READINESS_MAX_ATTEMPTS" in
+      ''|*[!0-9]*|0) echo "ERROR: AGENT_READINESS_MAX_ATTEMPTS must be a positive integer"; exit 1 ;;
+    esac
+    case "$AGENT_READINESS_RETRY_INTERVAL_SECONDS" in
+      ''|*[!0-9]*|0) echo "ERROR: AGENT_READINESS_RETRY_INTERVAL_SECONDS must be a positive integer"; exit 1 ;;
+    esac
+    AGENTURL="http://${EXTERNAL_IP}:${ADMIN_PORT}/health"
     until [ "$n" -ge "$AGENT_READINESS_MAX_ATTEMPTS" ]; do
-      # Linux-only: this provisioning path runs in Linux Docker/ECS environments.
-      if netstat -tln | grep -E ":${ADMIN_PORT}[[:space:]]" >/dev/null; then
+      attempt_started_at=$(date +%s)
+      agentResponse=$(curl -s -o /dev/null -w "%{http_code}" \
+        --max-time "$AGENT_READINESS_RETRY_INTERVAL_SECONDS" "$AGENTURL" || true)
 
-        AGENTURL="http://${EXTERNAL_IP}:${ADMIN_PORT}/health"
-        agentResponse=$(curl -s -o /dev/null -w "%{http_code}" "$AGENTURL")
-
-        if [ "$agentResponse" = "200" ]; then
-          echo "Agent is running"
-          agent_ready=true
-          break
-        else
-          echo "Agent is not running"
-          n=$((n + 1))
-          sleep "$AGENT_READINESS_RETRY_INTERVAL_SECONDS"
-        fi
+      if [ "$agentResponse" = "200" ]; then
+        echo "Agent is running"
+        agent_ready=true
+        break
       else
-        echo "No response from agent"
+        echo "Agent is not ready (HTTP ${agentResponse:-unavailable})"
         n=$((n + 1))
-        sleep "$AGENT_READINESS_RETRY_INTERVAL_SECONDS"
+        if [ "$n" -lt "$AGENT_READINESS_MAX_ATTEMPTS" ]; then
+          attempt_elapsed=$(( $(date +%s) - attempt_started_at ))
+          if [ "$attempt_elapsed" -lt "$AGENT_READINESS_RETRY_INTERVAL_SECONDS" ]; then
+            sleep $((AGENT_READINESS_RETRY_INTERVAL_SECONDS - attempt_elapsed))
+          fi
+        fi
       fi
     done
 
