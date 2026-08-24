@@ -948,8 +948,30 @@ export class AgentServiceService {
           // issuance. Resolved off the agent's actual returned `did`, not the request's optional
           // `network` field, for the same reason the mismatch check above exempts did:ethr: its
           // ledger legitimately differs from the agent's own indy/polygon ledger.
-          const ethrLedger = await this.agentServiceRepository.getLedgerByNameSpace(networkNamespace(did));
-          ledgerId = ethrLedger.id;
+          try {
+            const ethrLedger = await this.agentServiceRepository.getLedgerByNameSpace(networkNamespace(did));
+            ledgerId = ethrLedger.id;
+          } catch (error) {
+            // getLedgerByNameSpace uses findFirstOrThrow, unlike the Not_Applicable lookup below
+            // (whose target row is a fixed, always-seeded constant) -- it can genuinely fail for a
+            // legitimate ethr DID (e.g. an unseeded/unexpected network segment). By this point
+            // getDidDetails has ALREADY created the DID on-chain/in the agent; letting this throw
+            // propagate would skip persistDidWithUpdates entirely, leaving that DID with no
+            // org_dids/org_agents row at all -- and unlike the existingDid reconciliation path
+            // used elsewhere in this function for retries, there's no guarantee a retry
+            // regenerates the same address to detect and repair it. Falling back to
+            // Not_Applicable (loudly logged, so it's discoverable and correctable via the same
+            // remediation path #76 itself required) loses less than dropping the row entirely.
+            // See the #76 review.
+            this.logger.error(
+              `[createDid] could not resolve the ethr ledger for did ${did}, falling back to Not_Applicable: ${JSON.stringify(error)}`
+            );
+            const fallbackLedger = await this.agentServiceRepository.getLedger(Ledgers.Not_Applicable);
+            if (!fallbackLedger) {
+              throw new NotFoundException(ResponseMessages.agent.error.noLedgerFound);
+            }
+            ledgerId = fallbackLedger.id;
+          }
         } else {
           const noLedgerData = await this.agentServiceRepository.getLedger(Ledgers.Not_Applicable);
           if (!noLedgerData) {

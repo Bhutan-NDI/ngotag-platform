@@ -198,4 +198,39 @@ describe('OrganizationService.setPrimaryDid — id/did/orgId validation and atom
       expect.objectContaining({ previousDidId: undefined })
     );
   });
+
+  it('excludes the row being promoted from the previous-primary-DID lookup, by id', async () => {
+    // getPerviousPrimaryDid must be called with the target id so the repository can exclude it --
+    // see the #76 review's self-demote finding below for what goes wrong if it isn't.
+    const did = 'did:ethr:sepolia:0x1234567890abcdef1234567890abcdef12345678';
+    const { service, organizationRepository } = buildService(did);
+
+    await service.setPrimaryDid(ORG_ID, did, ORG_DID_ID);
+
+    expect(organizationRepository.getPerviousPrimaryDid).toHaveBeenCalledWith(ORG_ID, ORG_DID_ID);
+  });
+
+  it('does not demote the row it just promoted, when that row is already (incorrectly) flagged primary', async () => {
+    // #76 review (P1): a pre-existing "multi-primary-DID" corruption state (more than one
+    // org_dids row flagged isPrimaryDid: true for the org -- exactly what the v2.2.0 runbook's
+    // DAT-1 step remediates via this same endpoint) can mean the row being promoted (id) is
+    // ALREADY flagged primary. Without excluding it, getPerviousPrimaryDid would return that same
+    // row as "the previous primary DID", making previousDidId === id -- setOrgsPrimaryDid's
+    // transaction would then run two org_dids.update({ where: { id } }) operations (promote, then
+    // demote), and since Prisma's array $transaction runs them sequentially, the demote wins,
+    // leaving the row org_agents now points at flagged NOT primary.
+    //
+    // With the id-excluding lookup, the repository correctly reports "no OTHER primary row"
+    // (null) in this scenario, so previousDidId must come through undefined -- nothing else to
+    // demote.
+    const did = 'did:ethr:sepolia:0x1234567890abcdef1234567890abcdef12345678';
+    const { service, organizationRepository } = buildService(did);
+    organizationRepository.getPerviousPrimaryDid.mockResolvedValue(null);
+
+    await service.setPrimaryDid(ORG_ID, did, ORG_DID_ID);
+
+    expect(organizationRepository.setOrgsPrimaryDid).toHaveBeenCalledWith(
+      expect.objectContaining({ previousDidId: undefined })
+    );
+  });
 });

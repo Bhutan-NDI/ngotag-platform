@@ -135,4 +135,28 @@ describe('AgentServiceService.createDid — ledger resolution for a did:ethr pri
     expect(repository.getLedger).not.toHaveBeenCalled();
     expect(repository.persistDidWithUpdates).toHaveBeenCalledWith(expect.objectContaining({ ledgerId: null }));
   });
+
+  it('falls back to Not_Applicable, and still persists the DID, when the ethr namespace has no seeded ledger row', async () => {
+    // #76 review (P2): getLedgerByNameSpace uses findFirstOrThrow, so it can genuinely throw for a
+    // legitimate ethr DID (e.g. an unseeded/unexpected network segment) -- unlike the fixed
+    // Not_Applicable lookup, whose target row always exists. By this point in createDid, the DID
+    // has ALREADY been created on-chain/in the agent (mockAgentDidResponse stands in for that
+    // call having already succeeded). If this throw were allowed to propagate, persistDidWithUpdates
+    // would never run, leaving that on-chain DID with no corresponding org_dids/org_agents row and
+    // no reconciliation path. It must fall back to Not_Applicable and still persist instead.
+    const { service, repository } = buildService({
+      getLedgerByNameSpaceImpl: jest.fn().mockRejectedValue(new Error('no ledger seeded for namespace ethr:sepolia'))
+    });
+    const did = 'did:ethr:sepolia:0x1234567890abcdef1234567890abcdef12345678';
+    mockAgentDidResponse(service, did);
+
+    await service.createDid({ method: 'ethr', keyType: 'secp256k1', isPrimaryDid: true } as never, ORG_ID, {
+      id: 'user-1'
+    } as never);
+
+    expect(repository.getLedger).toHaveBeenCalled();
+    expect(repository.persistDidWithUpdates).toHaveBeenCalledWith(
+      expect.objectContaining({ ledgerId: NOT_APPLICABLE_LEDGER.id })
+    );
+  });
 });

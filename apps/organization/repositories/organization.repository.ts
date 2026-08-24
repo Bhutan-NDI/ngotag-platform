@@ -1128,12 +1128,22 @@ export class OrganizationRepository {
     }
   }
 
-  async getPerviousPrimaryDid(orgId: string): Promise<IDidDetails> {
+  // excludeId is the row about to be promoted -- without excluding it, a pre-existing
+  // "multi-primary-DID" corruption state (more than one org_dids row already flagged
+  // isPrimaryDid: true for the org, e.g. the exact state the v2.2.0 runbook's DAT-1 step
+  // remediates via this same endpoint) can return the TARGET row itself whenever it's already
+  // flagged primary. setOrgsPrimaryDid would then run two org_dids.update({ where: { id } })
+  // operations in the same $transaction -- one setting isPrimaryDid: true (the promotion), one
+  // setting it false (the "demotion") -- and since Prisma's array $transaction runs sequentially,
+  // the demotion wins, leaving the row org_agents now points at flagged NOT primary. See the #76
+  // review.
+  async getPerviousPrimaryDid(orgId: string, excludeId: string): Promise<IDidDetails | null> {
     try {
-      return this.prisma.org_dids.findFirstOrThrow({
+      return this.prisma.org_dids.findFirst({
         where: {
           orgId,
-          isPrimaryDid: true
+          isPrimaryDid: true,
+          id: { not: excludeId }
         }
       });
     } catch (error) {

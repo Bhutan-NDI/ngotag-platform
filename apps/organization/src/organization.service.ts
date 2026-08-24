@@ -299,11 +299,11 @@ export class OrganizationService {
 
       let existingPrimaryDid;
       if (!noPrimaryDid) {
-        existingPrimaryDid = await this.organizationRepository.getPerviousPrimaryDid(orgId);
-
-        if (!existingPrimaryDid) {
-          throw new NotFoundException(ResponseMessages.organisation.error.didNotFound);
-        }
+        // excludeId (id) prevents this from ever returning the row being promoted -- see
+        // getPerviousPrimaryDid's own comment. A null result here is a legitimate outcome, not an
+        // error: it means the only org_dids row currently flagged primary IS the target row (a
+        // pre-existing multi-primary-DID corruption state), so there is nothing else to demote.
+        existingPrimaryDid = await this.organizationRepository.getPerviousPrimaryDid(orgId, id);
       }
 
       // previousDidId is threaded through so setOrgsPrimaryDid can demote the old primary DID in
