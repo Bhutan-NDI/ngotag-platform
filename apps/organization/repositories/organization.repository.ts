@@ -1058,9 +1058,15 @@ export class OrganizationRepository {
     }
   }
 
+  // Demotes the org's previous primary DID (previousDidId) in the SAME transaction as promoting
+  // the new one and updating org_agents -- previously, the demotion ran as its own separate write
+  // (setPreviousDidFlase, now removed) BEFORE this transaction even started. If this transaction
+  // then failed for any reason (an invalid row id, a uniqueness conflict, a transient DB error),
+  // the org was left with the old DID already demoted and no replacement -- no primary DID at
+  // all. All three writes now either all commit together or none do. See the #76 review.
   async setOrgsPrimaryDid(primaryDidDetails: IPrimaryDidDetails): Promise<string> {
     try {
-      const { did, didDocument, id, orgId, networkId } = primaryDidDetails;
+      const { did, didDocument, id, orgId, networkId, previousDidId } = primaryDidDetails;
       await this.prisma.$transaction([
         this.prisma.org_dids.update({
           where: {
@@ -1079,7 +1085,20 @@ export class OrganizationRepository {
             didDocument,
             ledgerId: networkId
           }
-        })
+        }),
+        // Conditional: an org setting its very first primary DID has nothing to demote.
+        ...(previousDidId
+          ? [
+              this.prisma.org_dids.update({
+                where: {
+                  id: previousDidId
+                },
+                data: {
+                  isPrimaryDid: false
+                }
+              })
+            ]
+          : [])
       ]);
       return ResponseMessages.organisation.success.didDetails;
     } catch (error) {
@@ -1088,10 +1107,18 @@ export class OrganizationRepository {
     }
   }
 
-  async getDidDetailsByDid(did: string): Promise<IDidDetails> {
+  // Scoped by orgId, not just did: setPrimaryDid's own caller-supplied `id` is validated against
+  // this row's real id before it's ever used to update org_dids, so a did that genuinely belongs
+  // to this org but an id that (by mistake or by a malicious caller) references a DIFFERENT org's
+  // row is rejected instead of silently corrupting that other org's DID/ledger data. Scoping the
+  // query itself by orgId (not relying solely on the separate ensureDidBelongsToOrg check) is the
+  // same defense-in-depth this file already applies elsewhere. See the #76 review.
+  // eslint-disable-next-line camelcase
+  async getDidDetailsByDid(orgId: string, did: string): Promise<IDidDetails> {
     try {
       return this.prisma.org_dids.findFirstOrThrow({
         where: {
+          orgId,
           did
         }
       });
@@ -1124,22 +1151,6 @@ export class OrganizationRepository {
       });
     } catch (error) {
       this.logger.error(`[getDids] - get all DIDs: ${JSON.stringify(error)}`);
-      throw error;
-    }
-  }
-
-  async setPreviousDidFlase(id: string): Promise<IDidDetails> {
-    try {
-      return this.prisma.org_dids.update({
-        where: {
-          id
-        },
-        data: {
-          isPrimaryDid: false
-        }
-      });
-    } catch (error) {
-      this.logger.error(`[setPreviousDidFlase] - Update DID details: ${JSON.stringify(error)}`);
       throw error;
     }
   }

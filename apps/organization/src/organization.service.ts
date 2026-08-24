@@ -235,10 +235,21 @@ export class OrganizationService {
 
       //check user DID exist in the organization's did list
       await this.ensureDidBelongsToOrg(orgId, did);
-      const didDetails = await this.organizationRepository.getDidDetailsByDid(did);
+      const didDetails = await this.organizationRepository.getDidDetailsByDid(orgId, did);
 
       if (!didDetails) {
         throw new NotFoundException(ResponseMessages.organisation.error.didNotFound);
+      }
+
+      // The `id` parameter is caller-supplied and, before this check, was trusted blindly:
+      // getDidDetailsByDid resolves the row from (orgId, did) alone, but the row actually updated
+      // below is looked up by `id`, not `did`. A caller who knows (or guesses) another org's
+      // org_dids.id -- while passing a did/orgId pair that legitimately belongs to THEIR own org --
+      // could otherwise flip isPrimaryDid on a row belonging to a completely different
+      // organization. Validating that the supplied id matches the row this did/orgId pair actually
+      // resolves to closes that gap without changing the API's shape. See the #76 review.
+      if (didDetails.id !== id) {
+        throw new BadRequestException(ResponseMessages.organisation.error.didIdMismatch);
       }
 
       const dids = await this.organizationRepository.getDids(orgId);
@@ -287,28 +298,29 @@ export class OrganizationService {
       }
 
       let existingPrimaryDid;
-      let priviousDidFalse;
       if (!noPrimaryDid) {
         existingPrimaryDid = await this.organizationRepository.getPerviousPrimaryDid(orgId);
 
         if (!existingPrimaryDid) {
           throw new NotFoundException(ResponseMessages.organisation.error.didNotFound);
         }
-
-        priviousDidFalse = await this.organizationRepository.setPreviousDidFlase(existingPrimaryDid.id);
       }
 
+      // previousDidId is threaded through so setOrgsPrimaryDid can demote the old primary DID in
+      // the SAME transaction as promoting the new one and syncing org_agents -- the old,
+      // separate setPreviousDidFlase call ran BEFORE this point, outside any transaction with the
+      // writes below, so a failure in setOrgsPrimaryDid could leave the org with its previous DID
+      // already demoted and no primary DID at all. See the #76 review.
       const primaryDidDetails: IPrimaryDidDetails = {
         did,
         orgId,
         id,
         didDocument: didDetails.didDocument,
-        networkId: network?.id ?? null
+        networkId: network?.id ?? null,
+        previousDidId: existingPrimaryDid?.id
       };
 
-      const setPrimaryDid = await this.organizationRepository.setOrgsPrimaryDid(primaryDidDetails);
-
-      await Promise.all([setPrimaryDid, existingPrimaryDid, priviousDidFalse]);
+      await this.organizationRepository.setOrgsPrimaryDid(primaryDidDetails);
 
       return ResponseMessages.organisation.success.primaryDid;
     } catch (error) {
