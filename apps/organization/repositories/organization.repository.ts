@@ -1065,15 +1065,9 @@ export class OrganizationRepository {
   // the org was left with the old DID already demoted and no replacement -- no primary DID at
   // all. All three writes now either all commit together or none do. See the #76 review.
   //
-  // The demote statement runs BEFORE the promote statement. org_dids has a partial unique index,
-  // org_dids_one_primary_per_org_unique ON org_dids (orgId) WHERE isPrimaryDid, which Postgres
-  // checks immediately after each statement (it's not deferrable -- partial indexes can't be).
-  // Promoting the new DID while the old one is still flagged isPrimaryDid: true would momentarily
-  // put two primary rows under the same orgId and trip that index with a P2002, aborting the
-  // whole transaction. Demoting first avoids ever being in that state. Confirmed against a real
-  // Postgres instance with this index: promote-then-demote reproduces the production
-  // "Organization ledger mismatch" 500 (P2002 on org_dids_one_primary_per_org_unique) when
-  // switching an org's primary DID; demote-then-promote does not.
+  // Demote must run before promote: org_dids_one_primary_per_org_unique (partial unique index on
+  // orgId WHERE isPrimaryDid) is checked per-statement, so promoting first would briefly flag two
+  // rows primary for the same org and throw P2002.
   async setOrgsPrimaryDid(primaryDidDetails: IPrimaryDidDetails): Promise<string> {
     try {
       const { did, didDocument, id, orgId, networkId, previousDidId } = primaryDidDetails;

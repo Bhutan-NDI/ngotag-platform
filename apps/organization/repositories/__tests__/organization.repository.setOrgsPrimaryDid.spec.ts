@@ -13,14 +13,9 @@ import { OrganizationRepository } from '../organization.repository';
  * call carrying all the writes that must succeed or fail together, and no `org_dids.update` call
  * made outside of it.
  *
- * The demotion must be the FIRST operation in that array, ahead of the promotion. org_dids has a
- * partial unique index, org_dids_one_primary_per_org_unique ON org_dids (orgId) WHERE
- * isPrimaryDid, which Postgres checks immediately per-statement (it's not deferrable -- partial
- * indexes can't be). Promoting before demoting would momentarily flag two rows isPrimaryDid: true
- * for the same orgId and trip that index with a P2002 -- reproduced against a real Postgres
- * instance with this index while diagnosing the production "Organization ledger mismatch" 500 hit
- * when switching an org's primary DID (e.g. to a did:polygon DID). This mock can't exercise the
- * real constraint, so it only pins the operation order the fix depends on.
+ * The demotion must be the FIRST operation, ahead of the promotion, to satisfy the
+ * org_dids_one_primary_per_org_unique partial unique index (mocked here, so this only pins the
+ * order -- see organization.repository.ts for why it matters).
  */
 describe('OrganizationRepository.setOrgsPrimaryDid', () => {
   const primaryDidDetails = {
