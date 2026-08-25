@@ -53,6 +53,9 @@ import { user } from '@prisma/client';
 import { Validator } from '@credebl/common/validator';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { UserRoleGuard } from '../authz/guards/user-role.guard';
+import { OrgRolesGuard } from '../authz/guards/org-roles.guard';
+import { OrgRoles } from 'libs/org-roles/enums';
+import { Roles } from '../authz/decorators/roles.decorator';
 import { AcceptProofRequestDto } from './dtos/accept-proof-request.dto';
 import {
   IBasicMessage,
@@ -214,12 +217,9 @@ export class CloudWalletController {
   // identical comment above.
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @ApiBearerAuth()
-  // Not UserRoleGuard: that one only asserts 'holder', which every cloud-wallet end user passes,
-  // and this response includes every configured base wallet's internal agentEndpoint plus its
-  // capacity -- operator information, by the same reasoning updateBaseWalletDetails immediately
-  // below already applies to writing this data. Matched to that endpoint's guard level rather
-  // than leaving the read half of the same admin pair holder-readable. See the #71 review.
-  @UseGuards(AuthGuard('jwt'))
+  // Platform-admin only: exposes every base wallet's internal agentEndpoint + capacity. See the #71 review.
+  @Roles(OrgRoles.PLATFORM_ADMIN)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
   async getBaseWalletDetails(@Res() res: Response, @User() user: user): Promise<Response> {
     const baseWalletData = await this.cloudWalletService.getBaseWalletDetails(user);
     const finalResponse: IResponse = {
@@ -236,18 +236,10 @@ export class CloudWalletController {
   // checkCloudWalletStatus's identical comment above.
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @ApiBearerAuth()
-  // Not UserRoleGuard: that one only asserts 'holder', which every cloud-wallet end user passes
-  // -- changing a base wallet's isActive/maxSubWallets is strictly more privileged than any
-  // holder-facing action on this controller and shouldn't be reachable by ordinary holders at all.
-  // Matched to configureBaseWallet's own guard level (AuthGuard('jwt') only) instead of building
-  // a new "platform admin" check: RolesGuard (this repo's existing permission-based guard,
-  // apps/api-gateway/src/authz/roles.guard.ts) unconditionally `return true`s whenever the
-  // `subscription` reflector key isn't also set on the handler -- and nothing in this codebase
-  // ever sets it (confirmed via a repo-wide grep) -- so wiring RolesGuard up here would be a
-  // silent no-op, wider open than UserRoleGuard, not narrower. That's a pre-existing, unrelated
-  // bug in RolesGuard itself (affects every other endpoint using it the same way), out of scope
-  // to fix from this PR -- flagged separately rather than silently relied on. See the #71 review.
-  @UseGuards(AuthGuard('jwt'))
+  // Platform-admin only: changing isActive/maxSubWallets on every base wallet is a DoS primitive
+  // otherwise. See the #71 review. (RolesGuard is a separate, pre-existing no-op -- not used here.)
+  @Roles(OrgRoles.PLATFORM_ADMIN)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
   async updateBaseWalletDetails(
     // ParseUUIDPipe, not a bare string: cloud_wallet_user_info.id is @db.Uuid, and Prisma rejects
     // a malformed UUID at the query layer (PrismaClientKnownRequestError) rather than returning no
