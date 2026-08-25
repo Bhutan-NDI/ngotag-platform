@@ -6,6 +6,12 @@ import * as Elasticsearch from 'winston-elasticsearch';
 import * as ecsFormat from '@elastic/ecs-winston-format';
 
 export const WinstonLoggerTransportsKey = Symbol();
+
+// Falls back to Debug so behaviour is unchanged unless LOG_LEVEL is set; deployed
+// environments should set it to 'info'.
+const configuredLogLevel = process.env.LOG_LEVEL as LogLevel;
+const consoleLogLevel = Object.values(LogLevel).includes(configuredLogLevel) ? configuredLogLevel : LogLevel.Debug;
+
 let esTransport;
 if ('true' === process.env.ELK_LOG?.toLowerCase()) {
   const requiredVars = ['LOG_LEVEL', 'ELK_LOG_PATH', 'ELK_USERNAME', 'ELK_PASSWORD'];
@@ -56,7 +62,7 @@ export default class WinstonLogger implements Logger {
     });
 
     return {
-      level: LogLevel.Debug,
+      level: consoleLogLevel,
       levels,
       // format: ecsFormat.ecsFormat({ convertReqRes: true }),
       format: winston.format.combine(

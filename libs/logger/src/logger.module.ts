@@ -45,7 +45,9 @@ import { MICRO_SERVICE_NAME } from '@credebl/common/common.constant';
       useFactory: (configService: ConfigService) => {
         const transports = [];
 
-        transports.push(ConsoleTransport.createColorize());
+        transports.push(
+          'json' === process.env.LOG_FORMAT ? ConsoleTransport.createJson() : ConsoleTransport.createColorize()
+        );
         return transports;
       },
       inject: [ConfigService, MICRO_SERVICE_NAME]
