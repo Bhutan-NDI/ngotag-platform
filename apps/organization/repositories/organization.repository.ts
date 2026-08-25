@@ -1064,10 +1064,33 @@ export class OrganizationRepository {
   // then failed for any reason (an invalid row id, a uniqueness conflict, a transient DB error),
   // the org was left with the old DID already demoted and no replacement -- no primary DID at
   // all. All three writes now either all commit together or none do. See the #76 review.
+  //
+  // The demote statement runs BEFORE the promote statement. org_dids has a partial unique index,
+  // org_dids_one_primary_per_org_unique ON org_dids (orgId) WHERE isPrimaryDid, which Postgres
+  // checks immediately after each statement (it's not deferrable -- partial indexes can't be).
+  // Promoting the new DID while the old one is still flagged isPrimaryDid: true would momentarily
+  // put two primary rows under the same orgId and trip that index with a P2002, aborting the
+  // whole transaction. Demoting first avoids ever being in that state. Confirmed against a real
+  // Postgres instance with this index: promote-then-demote reproduces the production
+  // "Organization ledger mismatch" 500 (P2002 on org_dids_one_primary_per_org_unique) when
+  // switching an org's primary DID; demote-then-promote does not.
   async setOrgsPrimaryDid(primaryDidDetails: IPrimaryDidDetails): Promise<string> {
     try {
       const { did, didDocument, id, orgId, networkId, previousDidId } = primaryDidDetails;
       await this.prisma.$transaction([
+        // Conditional: an org setting its very first primary DID has nothing to demote.
+        ...(previousDidId
+          ? [
+              this.prisma.org_dids.update({
+                where: {
+                  id: previousDidId
+                },
+                data: {
+                  isPrimaryDid: false
+                }
+              })
+            ]
+          : []),
         this.prisma.org_dids.update({
           where: {
             id
@@ -1085,20 +1108,7 @@ export class OrganizationRepository {
             didDocument,
             ledgerId: networkId
           }
-        }),
-        // Conditional: an org setting its very first primary DID has nothing to demote.
-        ...(previousDidId
-          ? [
-              this.prisma.org_dids.update({
-                where: {
-                  id: previousDidId
-                },
-                data: {
-                  isPrimaryDid: false
-                }
-              })
-            ]
-          : [])
+        })
       ]);
       return ResponseMessages.organisation.success.didDetails;
     } catch (error) {
