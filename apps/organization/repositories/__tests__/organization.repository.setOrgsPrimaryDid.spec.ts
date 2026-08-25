@@ -8,10 +8,14 @@ import { OrganizationRepository } from '../organization.repository';
  * replacement -- no primary DID at all.
  *
  * setPreviousDidFlase() is gone; the demotion now travels in as `previousDidId` and is included,
- * conditionally, as a THIRD operation inside setOrgsPrimaryDid's own `$transaction([...])` array.
- * These tests assert that shape directly against a mocked PrismaService: exactly one
- * `$transaction` call carrying all the writes that must succeed or fail together, and no
- * `org_dids.update` call made outside of it.
+ * conditionally, as an operation inside setOrgsPrimaryDid's own `$transaction([...])` array. These
+ * tests assert that shape directly against a mocked PrismaService: exactly one `$transaction`
+ * call carrying all the writes that must succeed or fail together, and no `org_dids.update` call
+ * made outside of it.
+ *
+ * The demotion must be the FIRST operation, ahead of the promotion, to satisfy the
+ * org_dids_one_primary_per_org_unique partial unique index (mocked here, so this only pins the
+ * order -- see organization.repository.ts for why it matters).
  */
 describe('OrganizationRepository.setOrgsPrimaryDid', () => {
   const primaryDidDetails = {
@@ -43,11 +47,21 @@ describe('OrganizationRepository.setOrgsPrimaryDid', () => {
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     const operations = prisma.$transaction.mock.calls[0][0] as { __op: string }[];
-    expect(operations.map((op) => op.__op)).toEqual(['org_dids.update', 'org_agents.update', 'org_dids.update']);
-    expect((prisma.org_dids as unknown as { update: jest.Mock }).update).toHaveBeenNthCalledWith(2, {
+    expect(operations.map((op) => op.__op)).toEqual(['org_dids.update', 'org_dids.update', 'org_agents.update']);
+    expect((prisma.org_dids as unknown as { update: jest.Mock }).update).toHaveBeenNthCalledWith(1, {
       where: { id: 'previous-did-row' },
       data: { isPrimaryDid: false }
     });
+  });
+
+  it('orders the demotion BEFORE the promotion -- promoting first would trip org_dids_one_primary_per_org_unique', async () => {
+    const { repository, prisma } = buildRepository((ops) => Promise.resolve(ops));
+
+    await repository.setOrgsPrimaryDid({ ...primaryDidDetails, previousDidId: 'previous-did-row' });
+
+    const updateCalls = (prisma.org_dids as unknown as { update: jest.Mock }).update.mock.calls;
+    expect(updateCalls[0][0]).toEqual({ where: { id: 'previous-did-row' }, data: { isPrimaryDid: false } });
+    expect(updateCalls[1][0]).toEqual({ where: { id: primaryDidDetails.id }, data: { isPrimaryDid: true } });
   });
 
   it('omits the demotion operation entirely when there is no previous primary DID (previousDidId undefined)', async () => {

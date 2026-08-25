@@ -1064,10 +1064,27 @@ export class OrganizationRepository {
   // then failed for any reason (an invalid row id, a uniqueness conflict, a transient DB error),
   // the org was left with the old DID already demoted and no replacement -- no primary DID at
   // all. All three writes now either all commit together or none do. See the #76 review.
+  //
+  // Demote must run before promote: org_dids_one_primary_per_org_unique (partial unique index on
+  // orgId WHERE isPrimaryDid) is checked per-statement, so promoting first would briefly flag two
+  // rows primary for the same org and throw P2002.
   async setOrgsPrimaryDid(primaryDidDetails: IPrimaryDidDetails): Promise<string> {
     try {
       const { did, didDocument, id, orgId, networkId, previousDidId } = primaryDidDetails;
       await this.prisma.$transaction([
+        // Conditional: an org setting its very first primary DID has nothing to demote.
+        ...(previousDidId
+          ? [
+              this.prisma.org_dids.update({
+                where: {
+                  id: previousDidId
+                },
+                data: {
+                  isPrimaryDid: false
+                }
+              })
+            ]
+          : []),
         this.prisma.org_dids.update({
           where: {
             id
@@ -1085,20 +1102,7 @@ export class OrganizationRepository {
             didDocument,
             ledgerId: networkId
           }
-        }),
-        // Conditional: an org setting its very first primary DID has nothing to demote.
-        ...(previousDidId
-          ? [
-              this.prisma.org_dids.update({
-                where: {
-                  id: previousDidId
-                },
-                data: {
-                  isPrimaryDid: false
-                }
-              })
-            ]
-          : [])
+        })
       ]);
       return ResponseMessages.organisation.success.didDetails;
     } catch (error) {
