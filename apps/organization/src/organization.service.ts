@@ -58,6 +58,7 @@ import { ClientCredentialTokenPayloadDto } from '@credebl/client-registration/dt
 import { IAccessTokenData } from '@credebl/common/interfaces/interface';
 import { IClientRoles } from '@credebl/client-registration/interfaces/client.interface';
 import { toNumber } from '@credebl/common/cast.helper';
+import { networkNamespace } from '@credebl/common/common.utils';
 import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { DeleteOrgInvitationsEmail } from '../templates/delete-organization-invitations.template';
 import { IOrgRoles } from 'libs/org-roles/interfaces/org-roles.interface';
@@ -234,26 +235,25 @@ export class OrganizationService {
 
       //check user DID exist in the organization's did list
       await this.ensureDidBelongsToOrg(orgId, did);
-      const didDetails = await this.organizationRepository.getDidDetailsByDid(did);
+      const didDetails = await this.organizationRepository.getDidDetailsByDid(orgId, did);
 
       if (!didDetails) {
         throw new NotFoundException(ResponseMessages.organisation.error.didNotFound);
       }
 
+      // The `id` parameter is caller-supplied and, before this check, was trusted blindly:
+      // getDidDetailsByDid resolves the row from (orgId, did) alone, but the row actually updated
+      // below is looked up by `id`, not `did`. A caller who knows (or guesses) another org's
+      // org_dids.id -- while passing a did/orgId pair that legitimately belongs to THEIR own org --
+      // could otherwise flip isPrimaryDid on a row belonging to a completely different
+      // organization. Validating that the supplied id matches the row this did/orgId pair actually
+      // resolves to closes that gap without changing the API's shape. See the #76 review.
+      if (didDetails.id !== id) {
+        throw new BadRequestException(ResponseMessages.organisation.error.didIdMismatch);
+      }
+
       const dids = await this.organizationRepository.getDids(orgId);
       const noPrimaryDid = dids.every((orgDids) => false === orgDids.isPrimaryDid);
-
-      let existingPrimaryDid;
-      let priviousDidFalse;
-      if (!noPrimaryDid) {
-        existingPrimaryDid = await this.organizationRepository.getPerviousPrimaryDid(orgId);
-
-        if (!existingPrimaryDid) {
-          throw new NotFoundException(ResponseMessages.organisation.error.didNotFound);
-        }
-
-        priviousDidFalse = await this.organizationRepository.setPreviousDidFlase(existingPrimaryDid.id);
-      }
 
       const didParts = did.split(':');
       let nameSpace: string | null = null;
@@ -263,10 +263,30 @@ export class OrganizationService {
         nameSpace = `${didParts[2]}:${didParts[3]}`;
       } else if (DidMethod.POLYGON === didParts[1]) {
         nameSpace = `${didParts[1]}:${didParts[2]}`;
+      } else if (DidMethod.ETHEREUM === didParts[1]) {
+        // Same helper schema.service.ts's updateW3CSchemas already uses to resolve a did:ethr
+        // publisherDid to its ledger row -- without this branch, every did:ethr DID fell through
+        // to the `else` below, forcing org_agents.ledgerId to the Not_Applicable placeholder
+        // regardless of the DID's real network. That silently diverges from the schema's own
+        // ledgerId (resolved the same way, via networkNamespace), which the pre-existing
+        // ledger-mismatch guard in issuance.service.ts then rejects on the next issuance attempt.
+        // Confirmed in production: switching an org's primary DID between did:ethr and did:polygon
+        // and back (e.g. following the v2.2.0 runbook's DAT-1 multi-primary-DID remediation step)
+        // deterministically corrupts org_agents.ledgerId every time the ethr DID is set primary.
+        nameSpace = networkNamespace(did);
       } else {
         nameSpace = null;
       }
 
+      // Resolved (and, for a namespaced DID, validated via getNetworkByNameSpace's own
+      // findFirstOrThrow) BEFORE the previous primary DID is demoted below -- getNetworkByNameSpace
+      // throws outright if the resolved namespace has no seeded ledger row (e.g. a did:ethr DID
+      // whose network segment doesn't match one of the seeded ethr:* rows). Resolving it first
+      // means that throw aborts the whole call before any destructive write happens, leaving the
+      // org's existing primary DID untouched. Doing this after setPreviousDidFlase (the original
+      // order) would instead have already demoted the current primary DID by the time the throw
+      // happened, and setOrgsPrimaryDid below would never run to replace it -- leaving the org with
+      // no primary DID at all. See the #76 review.
       let network;
       if (null !== nameSpace) {
         network = await this.organizationRepository.getNetworkByNameSpace(nameSpace);
@@ -277,17 +297,30 @@ export class OrganizationService {
         }
       }
 
+      let existingPrimaryDid;
+      if (!noPrimaryDid) {
+        // excludeId (id) prevents this from ever returning the row being promoted -- see
+        // getPerviousPrimaryDid's own comment. A null result here is a legitimate outcome, not an
+        // error: it means the only org_dids row currently flagged primary IS the target row (a
+        // pre-existing multi-primary-DID corruption state), so there is nothing else to demote.
+        existingPrimaryDid = await this.organizationRepository.getPerviousPrimaryDid(orgId, id);
+      }
+
+      // previousDidId is threaded through so setOrgsPrimaryDid can demote the old primary DID in
+      // the SAME transaction as promoting the new one and syncing org_agents -- the old,
+      // separate setPreviousDidFlase call ran BEFORE this point, outside any transaction with the
+      // writes below, so a failure in setOrgsPrimaryDid could leave the org with its previous DID
+      // already demoted and no primary DID at all. See the #76 review.
       const primaryDidDetails: IPrimaryDidDetails = {
         did,
         orgId,
         id,
         didDocument: didDetails.didDocument,
-        networkId: network?.id ?? null
+        networkId: network?.id ?? null,
+        previousDidId: existingPrimaryDid?.id
       };
 
-      const setPrimaryDid = await this.organizationRepository.setOrgsPrimaryDid(primaryDidDetails);
-
-      await Promise.all([setPrimaryDid, existingPrimaryDid, priviousDidFalse]);
+      await this.organizationRepository.setOrgsPrimaryDid(primaryDidDetails);
 
       return ResponseMessages.organisation.success.primaryDid;
     } catch (error) {

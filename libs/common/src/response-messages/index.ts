@@ -133,6 +133,7 @@ export const ResponseMessages = {
       invalidClient: 'Invalid client credentials',
       primaryDid: 'This DID is already set to primary DID',
       didNotFound: 'DID does not exist in organiation',
+      didIdMismatch: 'The provided id does not match the DID record for this did/orgId',
       organizationNotFound: 'Organization not found',
       MaximumOrgsLimit: 'Limit reached: You can be associated with or create maximum 10 organizations.',
       adminTokenDetails: 'Error in generating admin token details',
