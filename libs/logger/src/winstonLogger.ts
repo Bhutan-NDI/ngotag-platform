@@ -8,9 +8,12 @@ import * as ecsFormat from '@elastic/ecs-winston-format';
 export const WinstonLoggerTransportsKey = Symbol();
 
 // Falls back to Debug so behaviour is unchanged unless LOG_LEVEL is set; deployed
-// environments should set it to 'info'.
-const configuredLogLevel = process.env.LOG_LEVEL as LogLevel;
-const consoleLogLevel = Object.values(LogLevel).includes(configuredLogLevel) ? configuredLogLevel : LogLevel.Debug;
+// environments should set it to 'info'. Read lazily (not at module scope) because this file
+// is imported, and evaluated, before ConfigModule.forRoot() loads .env.
+function getConsoleLogLevel(): LogLevel {
+  const configuredLogLevel = process.env.LOG_LEVEL as LogLevel;
+  return Object.values(LogLevel).includes(configuredLogLevel) ? configuredLogLevel : LogLevel.Debug;
+}
 
 let esTransport;
 if ('true' === process.env.ELK_LOG?.toLowerCase()) {
@@ -62,7 +65,7 @@ export default class WinstonLogger implements Logger {
     });
 
     return {
-      level: consoleLogLevel,
+      level: getConsoleLogLevel(),
       levels,
       // format: ecsFormat.ecsFormat({ convertReqRes: true }),
       format: winston.format.combine(
