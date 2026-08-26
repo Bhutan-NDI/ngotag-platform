@@ -41,7 +41,8 @@ import {
   IProofPresentationDetails,
   IExportCloudWallet,
   IImportCloudWallet,
-  IWalletPortabilityJobStatus
+  IWalletPortabilityJobStatus,
+  ISelfAttestedCredential
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -1097,6 +1098,71 @@ export class CloudWalletService {
     } catch (error) {
       await this.commonService.handleError(error);
       throw error;
+    }
+  }
+
+  /**
+   * Create self-attested W3C credential
+   * @param selfAttestedCredential
+   * @returns Self-attested credential Details
+   */
+  async createSelfAttestedW3cCredential(selfAttestedCredential: ISelfAttestedCredential): Promise<Response> {
+    try {
+      const { userId } = selfAttestedCredential;
+      // Destructured explicitly rather than rest-spread: agent-controller's tsoa config throws on
+      // any body property outside its jsonLdCredentialOptions model (@context/type/
+      // credentialSubject/proofType only, additionalProperties: false). ISelfAttestedCredential's
+      // own `[key: string]: unknown` says extras pass through, which they don't past the agent's
+      // validation — matching the model's real contract here instead.
+      const { '@context': context, type, credentialSubject, proofType } = selfAttestedCredential;
+      const selfAttestedDetails = { '@context': context, type, credentialSubject, proofType };
+
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
+
+      if (!checkUserExist) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
+      }
+      // baseWalletDetails deliberately unused here (not destructured) — not because it's wrong
+      // (_commonCloudWalletInfo already resolves the tenant's own base wallet via
+      // getBaseWalletByAgentEndpoint, fixed at the root on the base branch), just not needed: this
+      // handler wants decryptedApiKey plus getTenant's own agentEndpoint below, not
+      // baseWalletDetails.agentEndpoint (which would be the same value regardless).
+      const [, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      // A second, identical query to _commonCloudWalletInfo's own internal getCloudSubWallet
+      // call — deliberate, not an oversight. Widening the helper's 2-tuple return to also hand
+      // back the tenant record would save this round-trip but touches every one of its ~28
+      // other callers; left as its own query here rather than take that on as part of this fix.
+      const getTenant = await this.cloudWalletRepository.getCloudSubWallet(userId);
+
+      const { tenantId, agentEndpoint } = getTenant;
+
+      // No tenantId appended — the endpoint now resolves the tenant from decryptedApiKey's own
+      // claims (a per-tenant token, not the base wallet's), matching CLOUD_WALLET_GET_PROOF_REQUEST
+      // and URL_CONN_INVITE's existing calling convention above. See the constant's own comment.
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_SELF_ATTESTED_W3C_CREDENTIAL}`;
+
+      const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
+
+      if (!checkCloudWalletAgentHealth) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
+      }
+      const selfAttestedCredentialResponse = await this.commonService.httpPost(url, selfAttestedDetails, {
+        headers: { authorization: decryptedApiKey }
+      });
+
+      if (!selfAttestedCredentialResponse) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.createSelfAttestedW3cCredential, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      selfAttestedCredentialResponse.tenantId = tenantId;
+
+      return selfAttestedCredentialResponse;
+    } catch (error) {
+      this.logger.error(`[createSelfAttestedW3cCredential] - error in create self-attested credential: ${error}`);
+      await this.commonService.handleError(error);
     }
   }
 }
