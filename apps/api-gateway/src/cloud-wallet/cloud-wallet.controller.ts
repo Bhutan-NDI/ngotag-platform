@@ -39,6 +39,7 @@ import {
   CredentialListDto,
   ExportCloudWalletDto,
   GetAllCloudWalletConnectionsDto,
+  ImportCloudWalletDto,
   ReceiveInvitationUrlDTO,
   UpdateBaseWalletDto
 } from './dtos/cloudWallet.dto';
@@ -583,8 +584,8 @@ export class CloudWalletController {
   }
 
   /**
-   * Poll the status of an export job started via POST /export-wallet. Export against
-   * agent-controller's native WalletPortabilityService is an async job — this is how completion
+   * Poll the status of an export job started via POST /export-wallet. Export/import against
+   * agent-controller's native WalletPortabilityService are async jobs — this is how completion
    * (the download URL + checksum) is actually observed.
    * @param jobId
    * @returns the export job's current status
@@ -612,6 +613,78 @@ export class CloudWalletController {
       statusCode: HttpStatus.OK,
       // Neutral message, not exportWallet's "started successfully" -- this is a poll response,
       // and the job may be pending/in_progress/completed/failed. Actual state is in data.status.
+      message: ResponseMessages.agent.success.jobStatusFetched,
+      data: jobStatusResponse
+    };
+
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  /**
+   * Import a wallet from a prior export. exportUrl/checksum/passKey are the values a completed
+   * export job returned. Async: returns { jobId, status } immediately — poll the status endpoint
+   * below for the actual completion result.
+   * @param importWallet
+   * @returns { jobId, status }
+   */
+  @Post('/import-wallet')
+  @ApiOperation({
+    summary: 'Import Wallet',
+    description: 'Import Wallet'
+  })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'), UserRoleGuard)
+  // 202, not 200/201: same reasoning as exportWallet's identical comment -- this starts an async
+  // job, it doesn't create an addressable resource or return a completed result.
+  @ApiResponse({ status: HttpStatus.ACCEPTED, description: 'Import job started', type: ApiResponseDto })
+  async importWallet(
+    @Body() importWallet: ImportCloudWalletDto,
+    @User() user: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const { email, id } = user;
+    importWallet.email = email;
+    importWallet.userId = id;
+
+    const importWalletDetails = await this.cloudWalletService.importWallet(importWallet);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.ACCEPTED,
+      message: ResponseMessages.agent.success.importWallet,
+      data: importWalletDetails
+    };
+
+    return res.status(HttpStatus.ACCEPTED).json(finalResponse);
+  }
+
+  /**
+   * Poll the status of an import job started via POST /import-wallet. On completion, the
+   * response carries backupProfile — the name the tenant's pre-import profile was renamed to
+   * (never deleted automatically, see agent-controller's WalletPortabilityService).
+   * @param jobId
+   * @returns the import job's current status
+   */
+  @Get('/import-wallet/status/:jobId')
+  @ApiOperation({ summary: 'Get import wallet job status', description: 'Get import wallet job status' })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'), UserRoleGuard)
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async getImportWalletStatus(
+    // ParseUUIDPipe -- same reasoning as getExportWalletStatus's identical fix above: jobId is
+    // interpolated into a URL called with the base-wallet's own credential, and without
+    // validating the expected opaque format first, encoded traversal/query/fragment characters
+    // could redirect that privileged call to an unintended route. See the #73 review.
+    @Param('jobId', new ParseUUIDPipe()) jobId: string,
+    @Res() res: Response,
+    @User() user: user
+  ): Promise<Response> {
+    const { id, email } = user;
+    const jobStatusResponse = await this.cloudWalletService.getImportWalletStatus({ userId: id, email, jobId });
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      // Neutral message, not importWallet's "started successfully" -- see
+      // getExportWalletStatus's identical comment above.
       message: ResponseMessages.agent.success.jobStatusFetched,
       data: jobStatusResponse
     };

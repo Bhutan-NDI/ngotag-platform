@@ -40,6 +40,7 @@ import {
   IW3cCredentials,
   IProofPresentationDetails,
   IExportCloudWallet,
+  IImportCloudWallet,
   IWalletPortabilityJobStatus
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
@@ -738,9 +739,10 @@ export class CloudWalletService {
   }
 
   /**
-   * Poll the status of an export job started via exportCloudWallet.
+   * Poll the status of an export job started via exportCloudWallet. On completion, the response
+   * carries a short-lived pre-signed S3 download URL and the artifact's SHA-256 checksum.
    * @param jobStatus
-   * @returns the export job's current status
+   * @returns the WalletPortabilityJobRecord, as reported by agent-controller
    */
   async getExportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
     try {
@@ -859,12 +861,66 @@ export class CloudWalletService {
       // successful delete over a counter update. Without this, useCount only ever goes up (see
       // claimBaseWalletCapacity's own docblock), permanently leaking capacity that a real
       // deletion should have freed. See the #73 review.
-      await this.cloudWalletRepository
-        .decrementBaseWalletUseCount(baseWalletDetails.id)
-        .catch((error) =>
-          this.logger.error(`[deleteCloudWallet] - failed to decrement base wallet useCount: ${error}`)
-        );
+      await this.cloudWalletRepository.decrementBaseWalletUseCount(baseWalletDetails.id).catch((error) => {
+        this.logger.error(`[deleteCloudWallet] - failed to decrement base wallet useCount: ${error}`);
+      });
       return deletedCloudWalletDetails;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Start a native wallet import job against agent-controller. Async: returns { jobId, status }
+   * immediately — poll getImportWalletStatus for the actual completion result (backupProfile).
+   * exportUrl/checksum/passKey are the values returned by a prior export job.
+   * @param importWallet
+   * @returns { jobId, status }
+   */
+  async importCloudWallet(importWallet: IImportCloudWallet): Promise<Response> {
+    try {
+      const { userId, exportUrl, checksum, passKey } = importWallet;
+
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
+      if (!checkUserExist) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
+      }
+
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_IMPORT}${tenantId}`;
+
+      const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
+      if (!checkCloudWalletAgentHealth) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
+      }
+
+      // POST /multi-tenancy/import/:tenantId requires the *base* wallet's own token, not the
+      // tenant token decryptedApiKey holds (that one's only valid against /agent, which is what
+      // checkAgentHealth just used it for) -- every /multi-tenancy/* route rejects a tenant-scoped
+      // token lacking the Basewallet scope. Same fix as checkCloudWalletStatus/deleteCloudWallet
+      // (and exportCloudWallet, on the stacked feat/cloud-wallet-export branch).
+      const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+
+      const importWalletResponse = await this.commonService.httpPost(
+        url,
+        { exportUrl, checksum, passKey },
+        {
+          headers: { authorization: baseWalletApiKey }
+        }
+      );
+
+      if (!importWalletResponse) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.importWallet, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      return importWalletResponse;
     } catch (error) {
       await this.commonService.handleError(error);
       throw error;
@@ -1003,6 +1059,41 @@ export class CloudWalletService {
         headers: { authorization: decryptedApiKey }
       });
       return proofFormatDataResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Poll the status of an import job started via importCloudWallet. On completion, the response
+   * carries backupProfile — the name the tenant's pre-import profile was renamed to.
+   * @param jobStatus
+   * @returns the WalletPortabilityJobRecord, as reported by agent-controller
+   */
+  async getImportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
+    try {
+      const { userId, jobId } = jobStatus;
+      const [baseWalletDetails] = await this._commonCloudWalletInfo(userId);
+      const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      // encodeURIComponent as defense in depth -- the controller's ParseUUIDPipe already rejects
+      // a malformed jobId before this is reached for a gateway-routed request, but this keeps the
+      // call safe even if that validation is ever loosened, bypassed, or reached via an internal
+      // NATS caller directly. See the #73 review.
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_IMPORT}${tenantId}/status/${encodeURIComponent(jobId)}`;
+      // Base wallet token required -- see importCloudWallet's identical comment.
+      const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+      const statusResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: baseWalletApiKey }
+      });
+
+      if (!statusResponse) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.jobStatusNotFound);
+      }
+
+      return statusResponse;
     } catch (error) {
       await this.commonService.handleError(error);
       throw error;

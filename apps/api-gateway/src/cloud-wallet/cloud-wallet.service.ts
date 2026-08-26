@@ -29,6 +29,7 @@ import {
   IGetCredentialsForRequest,
   ICredentialForRequestRes,
   IDeleteCloudWallet,
+  IImportCloudWallet,
   IWalletPortabilityJobStatus
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
@@ -180,6 +181,14 @@ export class CloudWalletService extends BaseService {
 
   getExportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'get-export-wallet-status', jobStatus);
+  }
+
+  importWallet(importWallet: IImportCloudWallet): Promise<Response> {
+    return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'import-cloud-wallet', importWallet);
+  }
+
+  getImportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
+    return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'get-import-wallet-status', jobStatus);
   }
 
   getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {

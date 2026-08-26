@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUrl,
   Matches,
   MaxLength,
   Min,
@@ -306,6 +307,85 @@ export class ExportCloudWalletDto {
   // the body. walletID had no counterpart on the agent side and was never read anywhere on the
   // platform side either — a required field forcing the client to send data the server owns.
   // See the #71 review's "DTO doesn't match agent-controller PR #72's export contract".
+
+  email: string;
+
+  userId: string;
+}
+
+// Matches the WalletPortabilityService's import contract exactly (exportUrl/checksum/passKey,
+// the same three values a prior export job returns) — no exportId/walletID, those were
+// legacy-Python-service concepts with no equivalent in the native design.
+export class ImportCloudWalletDto {
+  @ApiProperty({ example: 'https://example-bucket.s3.amazonaws.com/wallet-exports/...' })
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'exportUrl is required' })
+  // This validates a well-formed https URL, not a MinIO/self-hosted endpoint -- the only
+  // legitimate value is a pre-signed URL for agent-controller's own S3-only export bucket
+  // (agent-controller's downloadAndChecksum independently restricts to its S3 hostname; MinIO
+  // isn't a supported target on either side). require_protocol: true is what actually closes the
+  // gap this review found -- class-validator's @IsUrl defaults require_protocol to false, so
+  // protocols: ['https'] was only consulted when a scheme was present, and a scheme-less payload
+  // like '169.254.169.254/latest/meta-data/' passed gateway validation entirely, surfacing only
+  // as an opaque failure later in the poll response instead of a clean 400 at the edge. This is
+  // defense in depth, not a duplicate of agent-controller's own fix -- notably it does NOT stop
+  // an https URL pointing at a bare IP (e.g. a metadata endpoint, `https://169.254.169.254/...`);
+  // the agent-side bucket hostname allowlist is what rules that out.
+  //
+  // require_tld deliberately NOT set to false: every legitimate S3 hostname shape (virtual-hosted,
+  // region-qualified, path-style, dotted bucket name) already ends in `.com`/`.cn` and passes with
+  // the default require_tld: true -- verified empirically against this repo's installed validator
+  // version. Setting it false buys nothing for S3, but does let bare/internal hostnames like
+  // `https://minio-internal/...` or `https://localhost:9000/...` pass this check, reopening the
+  // exact SSRF surface this validator exists to narrow. See the #73 review.
+  @IsUrl(
+    // eslint-disable-next-line camelcase -- class-validator's own IsUrlOptions field names
+    { require_protocol: true, protocols: ['https'] },
+    { message: 'exportUrl must be a valid https URL' }
+  )
+  exportUrl: string;
+
+  // Example is a genuine 64-char SHA-256 hex digest (matches VALID_BODY in this DTO's own
+  // checksum.spec.ts) -- the previous example was 63 characters, one short of what the @Matches
+  // validator below requires, so Swagger UI's "Try it out" prefilled body 400'd on this field
+  // with nothing hinting the example itself was malformed. See the #73 review.
+  @ApiProperty({ example: 'b06a1534375273fdd838693e45ce17aded75b0e73524768a92078d8c621419c9' })
+  // Lowercased, not just trimmed -- the @Matches validator below is case-insensitive (/i) and
+  // this DTO's own test suite deliberately accepts an uppercase digest as a convenience, but
+  // agent-controller's own comparison (WalletPortabilityService.gzipAndChecksum returns
+  // hash.digest('hex'), always lowercase, compared with !==) is case-sensitive. Without
+  // normalizing here, a correct-but-uppercased checksum passed gateway validation, crossed NATS,
+  // consumed the tenant's only portability slot, and streamed the whole artifact down from S3 --
+  // only to fail "Checksum mismatch" at the agent for a digest that was arithmetically right.
+  // See the #73 review.
+  @Transform(({ value }) => trim(value)?.toLowerCase())
+  @IsNotEmpty({ message: 'checksum is required' })
+  @IsString({ message: 'checksum must be in string format.' })
+  // A bare non-empty-string check let any malformed value through to start real import work
+  // before agent-controller's own checksum comparison ever ran. Validating the exact expected
+  // SHA-256 hex representation here rejects a malformed request at the edge instead of relying
+  // on the agent to reject attacker-controlled integrity data after a job has already started.
+  // See the #73 review.
+  @Matches(/^[a-f0-9]{64}$/i, { message: 'checksum must be a 64-character hexadecimal SHA-256 digest' })
+  checksum: string;
+
+  // @ApiProperty, not @ApiPropertyOptional: @IsNotEmpty makes this required at runtime (a 400
+  // from the global ValidationPipe if omitted, and agent-controller's importTenantWallet 400s
+  // without it too: `if (!exportUrl || !passKey || !checksum)`), but @ApiPropertyOptional
+  // advertised it as optional in Swagger and excluded it from the generated model's `required`
+  // list. Same mismatch as ExportCloudWalletDto.passKey on the stacked #71. See the #73 review.
+  @ApiProperty({ example: 'XzFjo1RTZ2h9UVFCnPUyaQ' })
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'passKey is required' })
+  @IsString({ message: 'passKey must be in string format.' })
+  // Mirrors agent-controller's own MIN_PASSKEY_LENGTH (16), same as ExportCloudWalletDto.passKey
+  // -- without it an under-length passKey passes gateway validation, crosses NATS, runs
+  // checkUserExist + _commonCloudWalletInfo + checkAgentHealth, and only then fails at the agent
+  // as an opaque RpcException instead of a field-level 400. This is the same passKey the caller
+  // supplied at export time, so a weak one accepted here just means the export-side floor was
+  // bypassable via import's own endpoint. See the #73 review.
+  @MinLength(16, { message: 'passKey must be at least 16 characters' })
+  passKey: string;
 
   email: string;
 

@@ -30,6 +30,7 @@ import {
   IW3cCredentials,
   IProofPresentationDetails,
   IExportCloudWallet,
+  IImportCloudWallet,
   IWalletPortabilityJobStatus
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
@@ -168,5 +169,15 @@ export class CloudWalletController {
   @MessagePattern({ cmd: 'wallet-Proof-presentation-FormatData-by-record-id' })
   async getProofFormatDataByProofRecordId(proofPresentationDetails: IProofPresentationDetails): Promise<Response> {
     return this.cloudWalletService.getProofFormatDataByProofRecordId(proofPresentationDetails);
+  }
+
+  @MessagePattern({ cmd: 'import-cloud-wallet' })
+  async importCloudWallet(importWallet: IImportCloudWallet): Promise<Response> {
+    return this.cloudWalletService.importCloudWallet(importWallet);
+  }
+
+  @MessagePattern({ cmd: 'get-import-wallet-status' })
+  async getImportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
+    return this.cloudWalletService.getImportWalletStatus(jobStatus);
   }
 }

@@ -376,10 +376,11 @@ export const ResponseMessages = {
       createDid: 'Did created successfully',
       generateWebDid:
         'did:web DID Document generated successfully. Host the document then call the create DID endpoint.',
-      // Export is an async job against agent-controller's native WalletPortabilityService — this
-      // message fires the moment the job is *started*, not when it's actually done. The real
-      // artifact only exists once the status-poll endpoint reports completion.
+      // Export/import against agent-controller's native WalletPortabilityService are async jobs —
+      // these responses mean the job was started, not that the wallet is exported/imported yet.
+      // Poll the corresponding status endpoint for actual completion.
       exportWallet: 'Wallet export started successfully',
+      importWallet: 'Wallet import started successfully',
       // Neutral, state-agnostic message for the export/import status-poll endpoints -- the actual
       // state (pending/in_progress/completed/failed) is in the response body's own status field.
       // Reusing exportWallet/importWallet's "started successfully" wording on a poll response was
@@ -681,6 +682,8 @@ export const ResponseMessages = {
       agentNotRunning: 'Agent is not up and running',
       receiveInvitation: 'Error while receiving invitation by url',
       exportWallet: 'Error while exporting wallet',
+      importWallet: 'Error while importing wallet',
+      jobStatusNotFound: 'Export/import job status not found',
       AcceptOffer: 'Error while  invitation by url',
       notReachable: 'The agent endpoint is not reachable.',
       agentAlreadyExist: 'Agent already exist.',
@@ -690,7 +693,6 @@ export const ResponseMessages = {
       createSelfAttestedW3cCredential: 'Error while creating self-attested credential.',
       deleteCloudWallet: 'Error while deleting cloud wallet',
       checkCloudWalletStatus: 'Error while checking cloud wallet status',
-      jobStatusNotFound: 'Export/import job status not found',
       // Used by gateway routes whose NATS pattern has no handler on this branch yet -- see the
       // #71 review's "six gateway routes still dispatch NATS patterns that have no handler
       // anywhere; each hangs until the NATS timeout". Returned immediately, before publishing to

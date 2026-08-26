@@ -368,6 +368,9 @@ export enum CommonConstants {
   CLOUD_WALLET_GET_PROOF_REQUEST = '/didcomm/proofs',
   RECEIVE_INVITATION_BY_URL = '/didcomm/oob/receive-invitation-url',
   URL_CLOUD_WALLET_EXPORT = '/multi-tenancy/export/',
+  // Matches agent-controller's real native WalletPortabilityService route — NOT the legacy
+  // '/multi-tenancy/import-tenant/' path some older branches assumed.
+  URL_CLOUD_WALLET_IMPORT = '/multi-tenancy/import/',
   CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED = '/multi-tenancy/proofs/accept-request-with-cred',
   CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST = '/multi-tenancy/credentialsForRequest',
   CLOUD_WALLET_DELETE_BY_TENANT_ID = '/multi-tenancy/',
