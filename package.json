@@ -207,6 +207,8 @@
       "^libs/user-activity/repositories$": "<rootDir>/libs/user-activity/repositories",
       "^libs/org-roles/enums$": "<rootDir>/libs/org-roles/enums",
       "^apps/user/repositories/user.repository$": "<rootDir>/apps/user/repositories/user.repository",
+      "^libs/service/base.service$": "<rootDir>/libs/service/base.service",
+      "^apps/api-gateway/common/exception-handler$": "<rootDir>/apps/api-gateway/common/exception-handler",
       "^@app/supabase(|/.*)$": "<rootDir>/libs/supabase/src/$1",
       "^@credebl/aws(|/.*)$": "<rootDir>/libs/aws/src/$1",
       "^@credebl/azure-storage(|/.*)$": "<rootDir>/libs/azure-storage/src/$1",

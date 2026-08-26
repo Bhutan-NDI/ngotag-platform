@@ -72,6 +72,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
     if (payload?.email) {
       userInfo = await this.usersService.getUserByUserIdInKeycloak(payload?.email);
+    } else if (payload?.preferred_username && !payload.preferred_username.includes('service-account')) {
+      // Cloud-wallet (and other M2M) tokens may not carry an email claim — fall back to
+      // preferred_username, but skip Keycloak's own service-account principals (no real user
+      // behind them, e.g. "service-account-<client-id>"). getUserByUserIdInKeycloak is an EMAIL
+      // lookup (checkUserExist queries by email) — calling it with a username, as this used to,
+      // finds nothing and throws NotFoundException uncaught, 404ing every request from exactly
+      // the username-based (no email claim) users this fallback exists for. Use the
+      // username-based lookup instead, and tolerate a miss rather than letting it fail the whole
+      // request — userInfo simply stays undefined, same as if this branch hadn't matched at all.
+      try {
+        userInfo = await this.usersService.getUserByUsernameInKeycloak(payload?.preferred_username);
+      } catch (error) {
+        this.logger.log(
+          `No Keycloak user found for preferred_username '${payload?.preferred_username}': ${JSON.stringify(error)}`
+        );
+      }
     }
 
     if (payload.hasOwnProperty('client_id') && uuidRegex.test(payload['client_id'])) {

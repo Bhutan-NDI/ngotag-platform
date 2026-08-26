@@ -3,7 +3,7 @@ import { BaseService } from '../../../../libs/service/base.service';
 import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { UserEmailVerificationDto } from '../user/dto/create-user.dto';
 import { EmailVerificationDto } from '../user/dto/email-verify.dto';
-import { AddUserDetailsDto } from '../user/dto/add-user.dto';
+import { AddUserDetailsDto, AddUserDetailsUsernameBasedDto } from '../user/dto/add-user.dto';
 import {
   IClientAliases,
   IResetPasswordResponse,
@@ -106,5 +106,15 @@ export class AuthzService extends BaseService {
 
   async logout(logoutUserDto: UserLogoutDto): Promise<string> {
     return this.natsClient.sendNatsMessage(this.authServiceProxy, 'user-logout', logoutUserDto);
+  }
+
+  async addUserDetailsUsernameBased(userInfo: AddUserDetailsUsernameBasedDto): Promise<ISignUpUserResponse> {
+    const payload = { userInfo };
+    return this.natsClient.sendNatsMessage(this.authServiceProxy, 'add-user-username-based', payload);
+  }
+
+  async usernameLogin(username: string, password?: string, isPasskey = false): Promise<ISignInUser> {
+    const payload = { username, password, isPasskey };
+    return this.natsClient.sendNatsMessage(this.authServiceProxy, 'username-holder-login', payload);
   }
 }

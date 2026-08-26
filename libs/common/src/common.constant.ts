@@ -23,7 +23,6 @@ export enum CommonConstants {
   URL_CONN_ACCEPT_CONNECTION_REQUEST = '/connections/#/accept-request',
   URL_CONN_REMOVE_CONNECTION_BY_ID = '/connections/#/remove',
   URL_CONN_METADATA = '/connections/#/metadata',
-  URL_CONN_LEGACY_INVITE = '/didcomm/oob/create-legacy-invitation',
   URL_CONN_INVITE = '/didcomm/oob/create-invitation',
   URL_RECEIVE_INVITATION_URL = '/didcomm/oob/receive-invitation-url',
   URL_RECEIVE_INVITATION = '/didcomm/oob/receive-invitation',
@@ -270,8 +269,6 @@ export enum CommonConstants {
 
   // delete wallet
   URL_DELETE_WALLET = '/agent/wallet',
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
-  URL_DELETE_SHARED_WALLET = '/multi-tenancy/#',
 
   // agent status
   // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
@@ -369,13 +366,42 @@ export enum CommonConstants {
   CACHE_TTL_SECONDS = 604800,
 
   CLOUD_WALLET_GET_PROOF_REQUEST = '/didcomm/proofs',
-  CLOUD_WALLET_ACCEPT_PROOF_REQUEST = '/accept-request',
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
-  CLOUD_WALLET_CONNECTION_BY_ID = '/didcomm/connections',
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
   RECEIVE_INVITATION_BY_URL = '/didcomm/oob/receive-invitation-url',
+  URL_CLOUD_WALLET_EXPORT = '/multi-tenancy/export/',
+  CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED = '/multi-tenancy/proofs/accept-request-with-cred',
+  CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST = '/multi-tenancy/credentialsForRequest',
+  CLOUD_WALLET_DELETE_BY_TENANT_ID = '/multi-tenancy/',
+  // No trailing slash: acceptProofRequest builds
+  // `${CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CLOUD_WALLET_ACCEPT_PROOF_REQUEST}` --
+  // a trailing slash here only happened to still work because agent-controller's Express app
+  // (src/server.ts) uses the framework's default (strict routing off); an implicit dependency on
+  // that default, for no benefit, on a route this PR doesn't otherwise touch. See the #71 review.
+  CLOUD_WALLET_ACCEPT_PROOF_REQUEST = '/accept-request',
+  CLOUD_WALLET_DECLINE_PROOF_REQUEST = '/decline-request/',
+  CLOUD_WALLET_DID_LIST = '/multi-tenancy/dids/',
+  // These three are consumed today by cloud-wallet.service.ts (unchanged by this PR) and were
+  // repointed from /didcomm/* to nonexistent /multi-tenancy/* routes — restored to develop's
+  // working values. See the #71 review's "repointing these constants ... 404s three currently
+  // working flows".
+  CLOUD_WALLET_CONNECTION_BY_ID = '/didcomm/connections',
   CLOUD_WALLET_CREDENTIAL = '/didcomm/credentials',
+  // Matches agent-controller's real GET /didcomm/credentials/w3c and /didcomm/credentials/w3c/:id
+  // (no trailing slash, so ${CLOUD_WALLET_W3C_CREDENTIAL}/${id} concatenates cleanly).
+  CLOUD_WALLET_W3C_CREDENTIAL = '/didcomm/credentials/w3c',
+  // Suffix only — used as ${CLOUD_WALLET_CREDENTIAL}/${id}${CLOUD_WALLET_CREDENTIAL_FORMAT_DATA},
+  // matching agent-controller's real GET /didcomm/credentials/:credentialRecordId/form-data.
+  CLOUD_WALLET_CREDENTIAL_FORMAT_DATA = '/form-data',
+  // Suffix only — used as ${CLOUD_WALLET_GET_PROOF_REQUEST}/${id}${CLOUD_WALLET_PROOF_FORM_DATA},
+  // matching agent-controller's real GET /didcomm/proofs/:proofRecordId/form-data.
+  CLOUD_WALLET_PROOF_FORM_DATA = '/form-data',
+  // No agent-controller DELETE endpoint exists for credentials (checked ProofController /
+  // CredentialController directly) — delete-credential-by-record-id and
+  // delete-w3c-credential-by-record-id are deliberately not wired up yet; these constants are
+  // unused until agent-controller adds that capability.
+  CLOUD_WALLET_DELETE_CREDENTIAL = '/multi-tenancy/credential',
+  CLOUD_WALLET_DELETE_W3C_CREDENTIAL = '/multi-tenancy/credential/w3c',
   CLOUD_WALLET_BASIC_MESSAGE = '/didcomm/basic-messages/',
+  CLOUD_WALLET_SELF_ATTESTED_W3C_CREDENTIAL = '/multi-tenancy/credentials/w3c/self-attested/',
 
   // Bulk-issuance
   BATCH_SIZE = 100,
@@ -432,7 +458,6 @@ export enum CommonConstants {
 
   //Agent URL flags
   CONNECTION_INVITATION = 'connection-invitation',
-  LEGACY_INVITATION = 'legacy-invitation',
   SIGN_DATA_FROM_AGENT = 'sign-data-from-agent',
   VERIFY_SIGNED_DATA_FROM_AGENT = 'verify-signed-data-from-agent',
   CREATE_OFFER = 'create-offer',

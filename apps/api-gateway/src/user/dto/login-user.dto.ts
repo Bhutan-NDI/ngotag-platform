@@ -22,3 +22,21 @@ export class LoginUserDto {
   @IsBoolean({ message: 'isPasswordEncrypted should be boolean' })
   isPasswordEncrypted?: boolean = true;
 }
+
+export class LoginUserNameDto {
+  @ApiProperty({ example: '098f6bcd4621d373cade4e832627b4f6' })
+  @IsNotEmpty({ message: 'Username is required' })
+  @IsString({ message: 'Username should be a string' })
+  @Transform(({ value }) => trim(value))
+  username: string;
+
+  @ApiProperty()
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'Password is required.' })
+  password: string;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  @IsBoolean({ message: 'isPasskey should be boolean' })
+  isPasskey?: boolean;
+}

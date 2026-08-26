@@ -57,7 +57,7 @@ export class ClientRegistrationService {
       await this.keycloakUrlService.getUserByUsernameURL(realm, user.email),
       this.getAuthHeader(token)
     );
-    const userid = getUserResponse[0].id;
+    const userid = this.findMatchingKeycloakUser(getUserResponse, user.email).id;
 
     const passwordResponse = await this.resetPasswordOfKeycloakUser(realm, user.password, userid, token);
 
@@ -100,13 +100,91 @@ export class ClientRegistrationService {
       await this.keycloakUrlService.getUserByUsernameURL(realm, user.email),
       this.getAuthHeader(token)
     );
-    const userid = getUserResponse[0].id;
+    const matchedUser = this.findMatchingKeycloakUser(getUserResponse, user.email);
 
-    await this.resetPasswordOfKeycloakUser(realm, user.password, userid, token);
+    await this.resetPasswordOfKeycloakUser(realm, user.password, matchedUser.id, token);
 
     return {
-      keycloakUserId: getUserResponse[0].id
+      keycloakUserId: matchedUser.id
     };
+  }
+
+  /**
+   * Create a Keycloak user for the username-based (no email) signup flow. A parallel method
+   * rather than a branch inside createUser: that function hardcodes username: user.email and
+   * looks the created user back up by user.email, which a username-only signup has none of.
+   * Kept fully separate so the existing, working email flow is untouched.
+   * @param user
+   * @param realm
+   * @param token
+   */
+  async createUserByUsername(user: CreateUserDto, realm: string, token: string): Promise<{ keycloakUserId: string }> {
+    const payload = {
+      createdTimestamp: Date.parse(Date.now.toString()),
+      username: user.username,
+      enabled: true,
+      totp: false,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      disableableCredentialTypes: [],
+      requiredActions: [],
+      notBefore: 0,
+      access: {
+        manageGroupMembership: true,
+        view: true,
+        mapRoles: true,
+        impersonate: true,
+        manage: true
+      },
+      realmRoles: ['mb-user'],
+      attributes: {
+        ...(user.isHolder ? { userRole: `${CommonConstants.USER_HOLDER_ROLE}` } : {})
+      }
+    };
+
+    await this.commonService.httpPost(
+      await this.keycloakUrlService.createUserURL(realm),
+      payload,
+      this.getAuthHeader(token)
+    );
+
+    const getUserResponse = await this.commonService.httpGet(
+      await this.keycloakUrlService.getUserByUsernameURL(realm, user.username),
+      this.getAuthHeader(token)
+    );
+    const matchedUser = this.findMatchingKeycloakUser(getUserResponse, user.username);
+
+    await this.resetPasswordOfKeycloakUser(realm, user.password, matchedUser.id, token);
+
+    return {
+      keycloakUserId: matchedUser.id
+    };
+  }
+
+  /**
+   * getUserByUsernameURL's exact=true narrows the query, but this is the actual safety boundary:
+   * every caller here goes on to reset a password or hand back a keycloakUserId based on whatever
+   * this lookup returns, so blindly trusting position 0 is what turned a URL-encoding bug into an
+   * account-takeover primitive in the first place (see the #71 review). Confirming the returned
+   * record's own username matches what was asked for means a future encoding slip, an
+   * unexpectedly permissive Keycloak query, or a multi-result response can no longer silently
+   * resolve to the wrong account.
+   *
+   * Case-insensitive: Keycloak lowercases usernames on create (KeycloakModelUtils.toLowerCaseSafe
+   * in UserAdapter.setUsername), but every caller here passes the raw request-body email/username
+   * through unchanged, uppercase letters and all. An exact `===` match against a mixed-case
+   * expectedUsername genuinely never matches the lowercased Keycloak record, so this method was
+   * throwing invalidKeycloakId for any mixed-case signup -- after the Keycloak user had already
+   * been created, before its password was ever set. See the #73 review.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private findMatchingKeycloakUser(users: any[], expectedUsername: string): { id: string; username: string } {
+    const expected = expectedUsername?.toLowerCase();
+    const match = users?.find((candidate) => candidate.username?.toLowerCase() === expected);
+    if (!match) {
+      throw new NotFoundException(ResponseMessages.user.error.invalidKeycloakId);
+    }
+    return match;
   }
 
   async resetPasswordOfKeycloakUser(realm: string, resetPasswordValue: string, userid: string, token: string) {

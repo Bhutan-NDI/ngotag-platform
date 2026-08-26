@@ -53,6 +53,7 @@ export const ResponseMessages = {
       invalidInvitationStatus: 'Invalid invitation status',
       invalidKeycloakId: 'keycloakId is invalid',
       invalidEmail: 'Invalid Email Id!',
+      invalidUsername: 'Invalid username!',
       adduser: 'Unable to add user details',
       userRoleNotFound: 'User role not found',
       verifyEmail: 'The verification link has already been sent to your email address. please verify',
@@ -375,6 +376,16 @@ export const ResponseMessages = {
       createDid: 'Did created successfully',
       generateWebDid:
         'did:web DID Document generated successfully. Host the document then call the create DID endpoint.',
+      // Export is an async job against agent-controller's native WalletPortabilityService — this
+      // message fires the moment the job is *started*, not when it's actually done. The real
+      // artifact only exists once the status-poll endpoint reports completion.
+      exportWallet: 'Wallet export started successfully',
+      // Neutral, state-agnostic message for the export/import status-poll endpoints -- the actual
+      // state (pending/in_progress/completed/failed) is in the response body's own status field.
+      // Reusing exportWallet/importWallet's "started successfully" wording on a poll response was
+      // wrong for every state except the very first poll, and especially wrong on a failed job.
+      // See the #71/#73 reviews.
+      jobStatusFetched: 'Job status fetched successfully',
       health: 'Agent health details retrieved successfully.',
       ledgerConfig: 'Ledger config details fetched successfully.',
       sign: 'Payload signed successfully.',
@@ -637,35 +648,54 @@ export const ResponseMessages = {
   cloudWallet: {
     success: {
       create: 'Cloud wallet created successfully',
+      delete: 'Cloud wallet deleted successfully',
       receive: 'Received invitation successfully',
+      getBaseWalletInfo: 'Fetched base wallet info',
       configureBaseWallet: 'Successfully configure the base wallet.',
       acceptProofRequest: 'Proof request has been successfully accepted.',
+      checkCloudWalletStatus: 'Cloud wallet exists',
+      declineProofRequest: 'Proof request has been successfully declined.',
       createConnection: 'Connection created successfully.',
+      createSelfAttestedW3cCredential: 'Self-attested W3C credential created successfully',
       basicMessage: 'Basic message send successfully',
       getProofById: 'Proof presentation has been successfully received.',
+      getCredentialsByProofId: 'Credentials fetch by proof request id',
       getProofPresentation: 'Proof presentations has been successfully received.',
       didList: 'DID list fetched sucessfully',
       connectionById: 'Connection record fetched successfully',
       credentials: 'Credentials fetched successfully',
       credentialByRecordId: 'Credential fetched successfully',
+      proofPresentationByRecordId: 'Proof presentation fetched successfully',
+      deleteCredential: 'Credential deleted successfully',
       connectionList: 'Connection list fetched successfully',
       basicMessageByConnectionId: 'Basic message fetched successfully'
     },
     error: {
       baseWalletNotFound: 'Base wallet configuration not found',
       createCloudWallet: 'Error while creating cloud wallet on agent',
+      BaseWalletLimitExceeded: 'Limit exceeded for base wallet to create subwallet',
       encryptCloudWalletKey: 'Error while creating encrypting wallet key',
       userExist: 'Wallet already exist for the user',
       walletNotExist: 'Wallet not exist for the user',
       agentDetails: 'Invalid agent details',
       agentNotRunning: 'Agent is not up and running',
       receiveInvitation: 'Error while receiving invitation by url',
+      exportWallet: 'Error while exporting wallet',
       AcceptOffer: 'Error while  invitation by url',
       notReachable: 'The agent endpoint is not reachable.',
       agentAlreadyExist: 'Agent already exist.',
       platformAdminRecordNotFound: 'Platform admin reocrd not exist.',
       notFoundBaseWallet: 'The base wallet record is missing.',
-      walletRecordNotFound: 'Wallet record not found.'
+      walletRecordNotFound: 'Wallet record not found.',
+      createSelfAttestedW3cCredential: 'Error while creating self-attested credential.',
+      deleteCloudWallet: 'Error while deleting cloud wallet',
+      checkCloudWalletStatus: 'Error while checking cloud wallet status',
+      jobStatusNotFound: 'Export/import job status not found',
+      // Used by gateway routes whose NATS pattern has no handler on this branch yet -- see the
+      // #71 review's "six gateway routes still dispatch NATS patterns that have no handler
+      // anywhere; each hangs until the NATS timeout". Returned immediately, before publishing to
+      // NATS, rather than shipping a route that reads as supported API but always times out.
+      notImplemented: 'This operation is not yet available.'
     }
   },
   oidcIssuer: {

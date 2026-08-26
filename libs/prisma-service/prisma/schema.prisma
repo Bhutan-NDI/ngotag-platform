@@ -15,7 +15,7 @@ model user {
   firstName              String?                  @db.VarChar(500)
   lastName               String?                  @db.VarChar(500)
   email                  String?                  @unique(map: "UQ_e12875dfb3b1d92d7d7c5377e22") @db.VarChar(500)
-  username               String?                  @db.VarChar(500)
+  username               String?                  @unique(map: "UQ_username") @db.VarChar(255)
   verificationCode       String?                  @db.VarChar(500)
   isEmailVerified        Boolean                  @default(false)
   supabaseUserId         String?                  @db.VarChar(500)
@@ -117,7 +117,7 @@ model user_org_roles {
   idpRoleId    String?       @db.Uuid
   organisation organisation? @relation(fields: [orgId], references: [id])
   orgRole      org_roles     @relation(fields: [orgRoleId], references: [id])
-  user         user          @relation(fields: [userId], references: [id])
+  user         user          @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model organisation {
@@ -556,7 +556,7 @@ enum UserRole {
 model user_role_mapping {
   id         String    @id @default(uuid()) @db.Uuid
   userId     String    @db.Uuid
-  user       user      @relation(fields: [userId], references: [id])
+  user       user      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userRoleId String    @db.Uuid
   user_role  user_role @relation(fields: [userRoleId], references: [id])
 }
@@ -565,7 +565,7 @@ model cloud_wallet_user_info {
   id                  String          @id @default(uuid()) @db.Uuid
   label               String?
   tenantId            String?
-  email               String?         @unique() @db.VarChar(500)
+  email               String?         @db.VarChar(500)
   type                CloudWalletType
   createDateTime      DateTime        @default(now()) @db.Timestamptz(6)
   createdBy           String          @db.Uuid
@@ -577,6 +577,28 @@ model cloud_wallet_user_info {
   key                 String?
   connectionImageUrl  String?
   user                user?           @relation(fields: [userId], references: [id])
+  isActive            Boolean         @default(true) // Active/Deactive flag
+  useCount            Int             @default(0) // Current usage count
+  maxSubWallets       Int             @default(5000) // Max allowed count
+
+  // A user can hold at most one SUB_WALLET (their own cloud wallet), but this is *not* declared
+  // as @@unique([userId, type])/@@unique([email, type]) here — an unfiltered compound unique
+  // applies to BASE_WALLET rows too, and caps a deployment at exactly one BASE_WALLET row per
+  // admin account, ever: directly contradicting this PR's own capacity-pool design
+  // (getAvailableBaseWallet, getAllBaseWallets -> BaseAgentInfo[], per-wallet
+  // useCount/maxSubWallets). See the #71 review's "this constraint caps the deployment at one
+  // base wallet per admin, which makes the capacity-pool this PR builds unreachable".
+  //
+  // Prisma's schema DSL has no syntax for a value-filtered (partial) unique constraint, so the
+  // actual SUB_WALLET-only uniqueness lives in two partial unique indexes created by a raw
+  // migration (20260817000000_cloud_wallet_subwallet_only_unique) instead of an @@unique here —
+  // WHERE "type" = 'CLOUD_SUB_WALLET' on (email, type) and (userId, type). @@index below makes
+  // Prisma aware of the column shape (for query planning) without claiming a uniqueness guarantee
+  // it can't express. Base-wallet duplicate-prevention stays an application-level check in
+  // configureBaseWallet (keyed on agentEndpoint, the only thing that actually identifies "the same
+  // base wallet"), not a DB-level constraint, until agentEndpoint uniqueness is itself decided.
+  @@index([userId, type])
+  @@index([email, type])
 }
 
 enum CloudWalletType {
@@ -848,11 +870,15 @@ model ecosystem_orgs {
   lastChangedDateTime DateTime  @default(now()) @db.Timestamptz(6)
   lastChangedBy       String    @db.Uuid
   deletedAt           DateTime? @db.Timestamp(6)
-  userId              String    @db.Uuid
+  // Nullable, not required: this row is the *organisation's* membership in an ecosystem
+  // (@@unique([orgId, ecosystemId]) below) -- userId only records who added it. Deleting a user
+  // must not delete their orgs' ecosystem memberships (see deleteUserAndRelatedData's docblock);
+  // nulling this field instead is how that stays possible without an orphaned FK reference.
+  userId              String?   @db.Uuid
   ecosystem     ecosystem       @relation(fields: [ecosystemId], references: [id])
   ecosystemRole ecosystem_roles @relation(fields: [ecosystemRoleId], references: [id])
   organisation  organisation    @relation(fields: [orgId], references: [id])
-  user          user            @relation(fields:[userId], references: [id])
+  user          user?           @relation(fields:[userId], references: [id])
 
   @@unique([orgId, ecosystemId])
 }

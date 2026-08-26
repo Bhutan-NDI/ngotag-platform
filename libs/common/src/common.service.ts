@@ -63,6 +63,11 @@ export class CommonService {
     }
   }
 
+  // Resolves to the full AxiosResponse, not just the body — existing callers
+  // (agent-service.service.ts's deleteWallet x2, deleteOidcIssuer) read .status off the result
+  // to distinguish 204/404 from a real failure. Nothing in this PR's own new code calls
+  // httpDelete, so there's no reason to narrow this; see the #71 review's "changing httpDelete's
+  // return value permanently breaks org wallet deletion".
   async httpDelete(url: string, config?: unknown) {
     try {
       return await this.httpService

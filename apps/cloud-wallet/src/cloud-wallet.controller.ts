@@ -22,8 +22,18 @@ import {
   ICredentialDetails,
   GetAllCloudWalletConnections,
   IBasicMessage,
-  IBasicMessageDetails
+  IBasicMessageDetails,
+  ICheckCloudWalletStatus,
+  IDeleteCloudWallet,
+  BaseAgentInfo,
+  IUpdateBaseWallet,
+  IW3cCredentials,
+  IProofPresentationDetails,
+  IExportCloudWallet,
+  IWalletPortabilityJobStatus
 } from '@credebl/common/interfaces/cloud-wallet.interface';
+// eslint-disable-next-line camelcase
+import { cloud_wallet_user_info, user } from '@prisma/client';
 
 @Controller()
 export class CloudWalletController {
@@ -107,5 +117,56 @@ export class CloudWalletController {
   @MessagePattern({ cmd: 'send-basic-message' })
   async sendBasicMessage(messageDetails: IBasicMessageDetails): Promise<Response> {
     return this.cloudWalletService.sendBasicMessage(messageDetails);
+  }
+
+  @MessagePattern({ cmd: 'export-cloud-wallet' })
+  async exportCloudWallet(exportWallet: IExportCloudWallet): Promise<Response> {
+    return this.cloudWalletService.exportCloudWallet(exportWallet);
+  }
+
+  @MessagePattern({ cmd: 'get-export-wallet-status' })
+  async getExportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
+    return this.cloudWalletService.getExportWalletStatus(jobStatus);
+  }
+
+  @MessagePattern({ cmd: 'check-cloud-wallet-status' })
+  async checkCloudWalletStatus(checkCloudWalletStatusPayload: ICheckCloudWalletStatus): Promise<Response> {
+    return this.cloudWalletService.checkCloudWalletStatus(checkCloudWalletStatusPayload);
+  }
+
+  @MessagePattern({ cmd: 'delete-cloud-wallet' })
+  // eslint-disable-next-line camelcase
+  async deleteCloudWallet(deleteCloudWalletPayload: IDeleteCloudWallet): Promise<cloud_wallet_user_info> {
+    return this.cloudWalletService.deleteCloudWallet(deleteCloudWalletPayload);
+  }
+
+  @MessagePattern({ cmd: 'get-base-wallet-details' })
+  async getBaseWalletDetails(userDetails: user): Promise<BaseAgentInfo[]> {
+    return this.cloudWalletService.getBaseWalletDetails(userDetails);
+  }
+
+  @MessagePattern({ cmd: 'update-base-wallet-details' })
+  async updateBaseWalletDetails(updateBaseWalletPayload: IUpdateBaseWallet): Promise<BaseAgentInfo[]> {
+    return this.cloudWalletService.updateBaseWalletDetails(updateBaseWalletPayload);
+  }
+
+  @MessagePattern({ cmd: 'get-all-w3c-credenentials' })
+  async getAllW3cCredentials(w3cCredentialsDetails: IW3cCredentials): Promise<Response> {
+    return this.cloudWalletService.getAllW3cCredentials(w3cCredentialsDetails);
+  }
+
+  @MessagePattern({ cmd: 'get-w3c-credential-by-record-id' })
+  async getW3cCredentialByCredentialRecordId(w3cCredentialDetails: IW3cCredentials): Promise<Response> {
+    return this.cloudWalletService.getW3cCredentialByCredentialRecordId(w3cCredentialDetails);
+  }
+
+  @MessagePattern({ cmd: 'wallet-credentialFormatData-by-record-id' })
+  async getCredentialFormatDataByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<Response> {
+    return this.cloudWalletService.getCredentialFormatDataByCredentialRecordId(credentialDetails);
+  }
+
+  @MessagePattern({ cmd: 'wallet-Proof-presentation-FormatData-by-record-id' })
+  async getProofFormatDataByProofRecordId(proofPresentationDetails: IProofPresentationDetails): Promise<Response> {
+    return this.cloudWalletService.getProofFormatDataByProofRecordId(proofPresentationDetails);
   }
 }
