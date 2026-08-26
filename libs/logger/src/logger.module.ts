@@ -1,18 +1,7 @@
-import {
-  Global,
-  Inject,
-  MiddlewareConsumer,
-  Module,
-  NestModule
-} from '@nestjs/common';
+import { Global, Inject, MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 
-import WinstonLogger, {
-  WinstonLoggerTransportsKey
-} from '@credebl/logger/winstonLogger';
-import Logger, {
-  LoggerBaseKey,
-  LoggerKey
-} from '@credebl/logger/logger.interface';
+import WinstonLogger, { WinstonLoggerTransportsKey } from '@credebl/logger/winstonLogger';
+import Logger, { LoggerBaseKey, LoggerKey } from '@credebl/logger/logger.interface';
 import NestjsLoggerServiceAdapter from '@credebl/logger/nestjsLoggerServiceAdapter';
 import ConsoleTransport from '@credebl/logger/transports/consoleTransport';
 import * as morgan from 'morgan';
@@ -41,12 +30,12 @@ import { MICRO_SERVICE_NAME } from '@credebl/common/common.constant';
     },
     {
       provide: WinstonLoggerTransportsKey,
-      // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/no-unused-vars
+      // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
       useFactory: (configService: ConfigService) => {
         const transports = [];
 
         transports.push(
-          'json' === process.env.LOG_FORMAT ? ConsoleTransport.createJson() : ConsoleTransport.createColorize()
+          'json' === configService.logFormat ? ConsoleTransport.createJson() : ConsoleTransport.createColorize()
         );
         return transports;
       },
