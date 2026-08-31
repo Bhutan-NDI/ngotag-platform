@@ -451,6 +451,9 @@ export class UserService {
           token
         );
       } catch (error) {
+        if (error instanceof BadRequestException) {
+          throw error;
+        }
         throw new InternalServerErrorException('Error while registering user on keycloak');
       }
 
