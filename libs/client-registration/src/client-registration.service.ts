@@ -127,9 +127,9 @@ export class ClientRegistrationService {
       emailVerified: true,
       firstName: user.firstName,
       lastName: user.lastName,
-      // No real email for username-only accounts; Keycloak still requires one + emailVerified
-      // to consider the account fully set up for direct-grant login.
-      email: user.email ? user.email : process.env.CLOUD_WALLET_COMMON_EMAIL,
+      // Keycloak needs an email + emailVerified to consider the account fully set up. Per-user
+      // placeholder, not one shared literal -- Keycloak enforces unique emails by default.
+      email: user.email ? user.email : `${user.username}@${process.env.CLOUD_WALLET_COMMON_EMAIL}`,
       disableableCredentialTypes: [],
       requiredActions: [],
       notBefore: 0,

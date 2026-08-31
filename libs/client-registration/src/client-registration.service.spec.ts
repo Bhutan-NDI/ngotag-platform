@@ -74,20 +74,25 @@ describe('ClientRegistrationService — Keycloak lookup response is not trusted 
       expect(keycloakUrlService.ResetPasswordURL).not.toHaveBeenCalled();
     });
 
-    it('sets emailVerified: true and a fallback email so Keycloak considers the account fully set up', async () => {
+    it('sets emailVerified: true and a per-user placeholder email, not one shared literal', async () => {
       const oldEmail = process.env.CLOUD_WALLET_COMMON_EMAIL;
-      process.env.CLOUD_WALLET_COMMON_EMAIL = 'fallback@example.com';
-      const { service, commonService } = makeService([{ id: 'correct-id', username: 'alice' }]);
+      process.env.CLOUD_WALLET_COMMON_EMAIL = 'example.com';
+      try {
+        const { service, commonService } = makeService([{ id: 'correct-id', username: 'alice' }]);
 
-      await service.createUserByUsername({ username: 'alice', password: 'x' } as never, REALM, TOKEN);
+        await service.createUserByUsername({ username: 'alice', password: 'x' } as never, REALM, TOKEN);
 
-      const payload = commonService.httpPost.mock.calls[0][1] as Record<string, unknown>;
-      expect(payload.emailVerified).toBe(true);
-      expect(payload.email).toBe('fallback@example.com');
-      process.env.CLOUD_WALLET_COMMON_EMAIL = oldEmail;
+        const payload = commonService.httpPost.mock.calls[0][1] as Record<string, unknown>;
+        expect(payload.emailVerified).toBe(true);
+        expect(payload.email).toBe('alice@example.com');
+      } finally {
+        process.env.CLOUD_WALLET_COMMON_EMAIL = oldEmail;
+      }
     });
 
-    it('uses the caller-supplied email over the fallback when one is given', async () => {
+    // AddUserDetailsUsernameBasedDto (the only DTO that reaches this method in production) has no
+    // email field, so this branch isn't reachable today -- kept for whenever a real caller does.
+    it('uses the caller-supplied email over the placeholder when one is given', async () => {
       const { service, commonService } = makeService([{ id: 'correct-id', username: 'alice' }]);
 
       await service.createUserByUsername(
