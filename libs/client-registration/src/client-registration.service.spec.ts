@@ -73,6 +73,32 @@ describe('ClientRegistrationService — Keycloak lookup response is not trusted 
       ).rejects.toThrow(NotFoundException);
       expect(keycloakUrlService.ResetPasswordURL).not.toHaveBeenCalled();
     });
+
+    it('sets emailVerified: true and a fallback email so Keycloak considers the account fully set up', async () => {
+      const oldEmail = process.env.CLOUD_WALLET_COMMON_EMAIL;
+      process.env.CLOUD_WALLET_COMMON_EMAIL = 'fallback@example.com';
+      const { service, commonService } = makeService([{ id: 'correct-id', username: 'alice' }]);
+
+      await service.createUserByUsername({ username: 'alice', password: 'x' } as never, REALM, TOKEN);
+
+      const payload = commonService.httpPost.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.emailVerified).toBe(true);
+      expect(payload.email).toBe('fallback@example.com');
+      process.env.CLOUD_WALLET_COMMON_EMAIL = oldEmail;
+    });
+
+    it('uses the caller-supplied email over the fallback when one is given', async () => {
+      const { service, commonService } = makeService([{ id: 'correct-id', username: 'alice' }]);
+
+      await service.createUserByUsername(
+        { username: 'alice', password: 'x', email: 'real@example.com' } as never,
+        REALM,
+        TOKEN
+      );
+
+      const payload = commonService.httpPost.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.email).toBe('real@example.com');
+    });
   });
 
   describe('createUser', () => {
