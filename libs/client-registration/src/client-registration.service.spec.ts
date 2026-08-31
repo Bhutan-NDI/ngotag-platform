@@ -15,7 +15,7 @@
  * since both of this service's real dependencies (CommonService, KeycloakUrlService) are trivial
  * to fake directly.
  */
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ClientRegistrationService } from './client-registration.service';
 
 const REALM = 'test-realm';
@@ -72,6 +72,46 @@ describe('ClientRegistrationService — Keycloak lookup response is not trusted 
         service.createUserByUsername({ username: 'alice', password: 'x' } as never, REALM, TOKEN)
       ).rejects.toThrow(NotFoundException);
       expect(keycloakUrlService.ResetPasswordURL).not.toHaveBeenCalled();
+    });
+
+    it('sets emailVerified: true and a per-user placeholder email, not one shared literal', async () => {
+      const oldEmail = process.env.CLOUD_WALLET_EMAIL_DOMAIN;
+      process.env.CLOUD_WALLET_EMAIL_DOMAIN = 'example.com';
+      try {
+        const { service, commonService } = makeService([{ id: 'correct-id', username: 'alice' }]);
+
+        await service.createUserByUsername({ username: 'alice', password: 'x' } as never, REALM, TOKEN);
+
+        const payload = commonService.httpPost.mock.calls[0][1] as Record<string, unknown>;
+        expect(payload.emailVerified).toBe(true);
+        expect(payload.email).toBe('alice@example.com');
+      } finally {
+        process.env.CLOUD_WALLET_EMAIL_DOMAIN = oldEmail;
+      }
+    });
+
+    it('rejects a username unsafe as an email local-part instead of building a malformed placeholder', async () => {
+      const { service, commonService } = makeService([{ id: 'correct-id', username: 'al ice@x' }]);
+
+      await expect(
+        service.createUserByUsername({ username: 'al ice@x', password: 'x' } as never, REALM, TOKEN)
+      ).rejects.toThrow(BadRequestException);
+      expect(commonService.httpPost).not.toHaveBeenCalled();
+    });
+
+    // AddUserDetailsUsernameBasedDto (the only DTO that reaches this method in production) has no
+    // email field, so this branch isn't reachable today -- kept for whenever a real caller does.
+    it('uses the caller-supplied email over the placeholder when one is given', async () => {
+      const { service, commonService } = makeService([{ id: 'correct-id', username: 'alice' }]);
+
+      await service.createUserByUsername(
+        { username: 'alice', password: 'x', email: 'real@example.com' } as never,
+        REALM,
+        TOKEN
+      );
+
+      const payload = commonService.httpPost.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload.email).toBe('real@example.com');
     });
   });
 
