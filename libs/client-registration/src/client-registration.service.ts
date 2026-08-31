@@ -119,6 +119,12 @@ export class ClientRegistrationService {
    * @param token
    */
   async createUserByUsername(user: CreateUserDto, realm: string, token: string): Promise<{ keycloakUserId: string }> {
+    // The DTO doesn't constrain username's characters, but it needs to be safe as an email
+    // local-part here -- reject rather than silently build a malformed placeholder email.
+    if (!user.email && !/^[a-zA-Z0-9._%+-]+$/.test(user.username)) {
+      throw new BadRequestException('username is not valid for a placeholder email');
+    }
+
     const payload = {
       createdTimestamp: Date.parse(Date.now.toString()),
       username: user.username,
@@ -129,7 +135,7 @@ export class ClientRegistrationService {
       lastName: user.lastName,
       // Keycloak needs an email + emailVerified to consider the account fully set up. Per-user
       // placeholder, not one shared literal -- Keycloak enforces unique emails by default.
-      email: user.email ? user.email : `${user.username}@${process.env.CLOUD_WALLET_COMMON_EMAIL}`,
+      email: user.email ? user.email : `${user.username}@${process.env.CLOUD_WALLET_EMAIL_DOMAIN}`,
       disableableCredentialTypes: [],
       requiredActions: [],
       notBefore: 0,

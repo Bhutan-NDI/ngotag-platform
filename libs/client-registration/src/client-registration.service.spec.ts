@@ -15,7 +15,7 @@
  * since both of this service's real dependencies (CommonService, KeycloakUrlService) are trivial
  * to fake directly.
  */
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ClientRegistrationService } from './client-registration.service';
 
 const REALM = 'test-realm';
@@ -75,8 +75,8 @@ describe('ClientRegistrationService — Keycloak lookup response is not trusted 
     });
 
     it('sets emailVerified: true and a per-user placeholder email, not one shared literal', async () => {
-      const oldEmail = process.env.CLOUD_WALLET_COMMON_EMAIL;
-      process.env.CLOUD_WALLET_COMMON_EMAIL = 'example.com';
+      const oldEmail = process.env.CLOUD_WALLET_EMAIL_DOMAIN;
+      process.env.CLOUD_WALLET_EMAIL_DOMAIN = 'example.com';
       try {
         const { service, commonService } = makeService([{ id: 'correct-id', username: 'alice' }]);
 
@@ -86,8 +86,17 @@ describe('ClientRegistrationService — Keycloak lookup response is not trusted 
         expect(payload.emailVerified).toBe(true);
         expect(payload.email).toBe('alice@example.com');
       } finally {
-        process.env.CLOUD_WALLET_COMMON_EMAIL = oldEmail;
+        process.env.CLOUD_WALLET_EMAIL_DOMAIN = oldEmail;
       }
+    });
+
+    it('rejects a username unsafe as an email local-part instead of building a malformed placeholder', async () => {
+      const { service, commonService } = makeService([{ id: 'correct-id', username: 'al ice@x' }]);
+
+      await expect(
+        service.createUserByUsername({ username: 'al ice@x', password: 'x' } as never, REALM, TOKEN)
+      ).rejects.toThrow(BadRequestException);
+      expect(commonService.httpPost).not.toHaveBeenCalled();
     });
 
     // AddUserDetailsUsernameBasedDto (the only DTO that reaches this method in production) has no
