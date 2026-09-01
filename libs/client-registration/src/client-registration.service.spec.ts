@@ -45,6 +45,17 @@ function makeService(getUserResponse: unknown): {
 
 describe('ClientRegistrationService — Keycloak lookup response is not trusted at index 0 blindly', () => {
   describe('createUserByUsername', () => {
+    // Sane default so tests unrelated to the placeholder-email logic don't need to set this
+    // themselves. Tests that care about a specific value (or its absence) still manage it directly.
+    let oldEmailDomain: string | undefined;
+    beforeEach(() => {
+      oldEmailDomain = process.env.CLOUD_WALLET_EMAIL_DOMAIN;
+      process.env.CLOUD_WALLET_EMAIL_DOMAIN = 'example.com';
+    });
+    afterEach(() => {
+      process.env.CLOUD_WALLET_EMAIL_DOMAIN = oldEmailDomain;
+    });
+
     it('resets the password of the user whose own username matches, not whichever record came back first', async () => {
       // Models the exploit scenario directly: the lookup response's first entry is an unrelated
       // account. Pre-fix, getUserResponse[0].id would have been used for both the password reset
@@ -85,6 +96,55 @@ describe('ClientRegistrationService — Keycloak lookup response is not trusted 
         const payload = commonService.httpPost.mock.calls[0][1] as Record<string, unknown>;
         expect(payload.emailVerified).toBe(true);
         expect(payload.email).toBe('alice@example.com');
+      } finally {
+        process.env.CLOUD_WALLET_EMAIL_DOMAIN = oldEmail;
+      }
+    });
+
+    it('lowercases the placeholder email, matching the read-side checkUserExist lookup', async () => {
+      const oldEmail = process.env.CLOUD_WALLET_EMAIL_DOMAIN;
+      process.env.CLOUD_WALLET_EMAIL_DOMAIN = 'example.com';
+      try {
+        const { service, commonService } = makeService([{ id: 'correct-id', username: 'AliceHolder' }]);
+
+        const result = await service.createUserByUsername(
+          { username: 'AliceHolder', password: 'x' } as never,
+          REALM,
+          TOKEN
+        );
+
+        const payload = commonService.httpPost.mock.calls[0][1] as Record<string, unknown>;
+        expect(payload.email).toBe('aliceholder@example.com');
+        expect(result.email).toBe('aliceholder@example.com');
+      } finally {
+        process.env.CLOUD_WALLET_EMAIL_DOMAIN = oldEmail;
+      }
+    });
+
+    it('fails fast instead of building "<username>@undefined" when CLOUD_WALLET_EMAIL_DOMAIN is unset', async () => {
+      const oldEmail = process.env.CLOUD_WALLET_EMAIL_DOMAIN;
+      delete process.env.CLOUD_WALLET_EMAIL_DOMAIN;
+      try {
+        const { service, commonService } = makeService([{ id: 'correct-id', username: 'alice' }]);
+
+        await expect(
+          service.createUserByUsername({ username: 'alice', password: 'x' } as never, REALM, TOKEN)
+        ).rejects.toThrow('CLOUD_WALLET_EMAIL_DOMAIN is not configured');
+        expect(commonService.httpPost).not.toHaveBeenCalled();
+      } finally {
+        process.env.CLOUD_WALLET_EMAIL_DOMAIN = oldEmail;
+      }
+    });
+
+    it('returns the same email it set on the Keycloak user, for callers to persist locally', async () => {
+      const oldEmail = process.env.CLOUD_WALLET_EMAIL_DOMAIN;
+      process.env.CLOUD_WALLET_EMAIL_DOMAIN = 'example.com';
+      try {
+        const { service } = makeService([{ id: 'correct-id', username: 'alice' }]);
+
+        const result = await service.createUserByUsername({ username: 'alice', password: 'x' } as never, REALM, TOKEN);
+
+        expect(result.email).toBe('alice@example.com');
       } finally {
         process.env.CLOUD_WALLET_EMAIL_DOMAIN = oldEmail;
       }

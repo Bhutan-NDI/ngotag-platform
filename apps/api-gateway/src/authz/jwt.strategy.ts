@@ -71,23 +71,23 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
     if (payload?.email) {
-      userInfo = await this.usersService.getUserByUserIdInKeycloak(payload?.email);
-    } else if (payload?.preferred_username && !payload.preferred_username.includes('service-account')) {
-      // Cloud-wallet (and other M2M) tokens may not carry an email claim — fall back to
-      // preferred_username, but skip Keycloak's own service-account principals (no real user
-      // behind them, e.g. "service-account-<client-id>"). getUserByUserIdInKeycloak is an EMAIL
-      // lookup (checkUserExist queries by email) — calling it with a username, as this used to,
-      // finds nothing and throws NotFoundException uncaught, 404ing every request from exactly
-      // the username-based (no email claim) users this fallback exists for. Use the
-      // username-based lookup instead, and tolerate a miss rather than letting it fail the whole
-      // request — userInfo simply stays undefined, same as if this branch hadn't matched at all.
-      try {
-        userInfo = await this.usersService.getUserByUsernameInKeycloak(payload?.preferred_username);
-      } catch (error) {
-        this.logger.log(
-          `No Keycloak user found for preferred_username '${payload?.preferred_username}': ${JSON.stringify(error)}`
-        );
-      }
+      // getUserByUserIdInKeycloak looks up by email in platform's own DB (checkUserExist).
+      // Username-based accounts now carry an email claim in Keycloak but don't persist one
+      // locally, so this can legitimately miss — tolerate it and fall through below instead of
+      // letting an uncaught NotFoundException 404 the whole request.
+      userInfo = await this.tolerateKeycloakLookupMiss(
+        () => this.usersService.getUserByUserIdInKeycloak(payload?.email),
+        `email '${payload?.email}'`
+      );
+    }
+    if (!userInfo && payload?.preferred_username && !payload.preferred_username.includes('service-account')) {
+      // Cloud-wallet (and other M2M) tokens may not carry an email claim, or the email lookup
+      // above may have come back empty — fall back to preferred_username, but skip Keycloak's own
+      // service-account principals (no real user behind them, e.g. "service-account-<client-id>").
+      userInfo = await this.tolerateKeycloakLookupMiss(
+        () => this.usersService.getUserByUsernameInKeycloak(payload?.preferred_username),
+        `preferred_username '${payload?.preferred_username}'`
+      );
     }
 
     if (payload.hasOwnProperty('client_id') && uuidRegex.test(payload['client_id'])) {
@@ -131,5 +131,22 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ...userDetails,
       ...payload
     };
+  }
+
+  // Only a genuine "not found" is tolerated here -- callers fall back to trying the next lookup.
+  // Anything else (Keycloak admin API down, NATS failure) is a real backend error and should
+  // surface as one, not silently degrade auth (e.g. userRole never getting applied). Matched by
+  // message rather than status code: errors crossing the NATS boundary lose their HttpException
+  // class/status, so the message string is the only reliable signal available here today.
+  private async tolerateKeycloakLookupMiss(lookup: () => Promise<object>, label: string): Promise<object | undefined> {
+    try {
+      return await lookup();
+    } catch (error) {
+      if (error?.message !== ResponseMessages.user.error.notFound) {
+        throw error;
+      }
+      this.logger.log(`No Keycloak user found for ${label}: ${JSON.stringify(error)}`);
+      return undefined;
+    }
   }
 }

@@ -3,6 +3,7 @@
 
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -39,6 +40,7 @@ import {
 import { CloudWalletType, ProviderType, UserRole } from '@credebl/enum/enum';
 
 import { PrismaService } from '@credebl/prisma-service';
+import { ResponseMessages } from '@credebl/common/response-messages';
 import { RpcException } from '@nestjs/microservices';
 
 interface UserQueryOptions {
@@ -174,6 +176,7 @@ export class UserRepository {
       clientSecret: string;
       isPasskey?: boolean;
       password?: string;
+      email?: string;
     },
     keycloakUserId: string
   ): Promise<user> {
@@ -190,6 +193,10 @@ export class UserRepository {
           clientSecret: userInfo.clientSecret,
           keycloakUserId,
           publicProfile: true,
+          // Lowercased like username above -- the caller already lowercases it too, but enforcing
+          // it here as well keeps the invariant at the write boundary, not just in one caller.
+          // Needed for checkUserExist (email-based lookups, e.g. JwtStrategy) to find this row.
+          email: userInfo.email?.toLowerCase(),
           // Only persisted for the passkey path — see login()'s isPasskey branch, which re-derives
           // this to bridge into Keycloak's password grant on future logins. Non-passkey users are
           // verified against Keycloak directly at login time; nothing to store here for them.
@@ -198,6 +205,11 @@ export class UserRepository {
       });
     } catch (error) {
       this.logger.error(`Error in createUserByUsername: ${JSON.stringify(error)}`);
+      // email is @unique -- a placeholder colliding with an existing row (real or another
+      // placeholder) would otherwise surface as an opaque 500 instead of a clear conflict.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && 'P2002' === error.code) {
+        throw new ConflictException(ResponseMessages.user.error.exists);
+      }
       throw error;
     }
   }

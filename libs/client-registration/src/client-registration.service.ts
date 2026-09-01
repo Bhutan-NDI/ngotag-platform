@@ -6,7 +6,14 @@
 
 import * as qs from 'qs';
 
-import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+  UnauthorizedException
+} from '@nestjs/common';
 
 import { ClientCredentialTokenPayloadDto } from './dtos/client-credential-token-payload.dto';
 import { ClientTokenDto } from './dtos/client-token.dto';
@@ -66,7 +73,9 @@ export class ClientRegistrationService {
 
   async createUser(user: CreateUserDto, realm: string, token: string): Promise<{ keycloakUserId: string }> {
     const payload = {
-      createdTimestamp: Date.parse(Date.now.toString()),
+      // Date.parse(Date.now.toString()) stringified the function itself, not a call to it --
+      // always NaN. Keycloak expects epoch millis here, which is just Date.now().
+      createdTimestamp: Date.now(),
       username: user.email,
       enabled: true,
       totp: false,
@@ -118,24 +127,40 @@ export class ClientRegistrationService {
    * @param realm
    * @param token
    */
-  async createUserByUsername(user: CreateUserDto, realm: string, token: string): Promise<{ keycloakUserId: string }> {
+  async createUserByUsername(
+    user: CreateUserDto,
+    realm: string,
+    token: string
+  ): Promise<{ keycloakUserId: string; email: string }> {
     // The DTO doesn't constrain username's characters, but it needs to be safe as an email
     // local-part here -- reject rather than silently build a malformed placeholder email.
     if (!user.email && !/^[a-zA-Z0-9._%+-]+$/.test(user.username)) {
       throw new BadRequestException('username is not valid for a placeholder email');
     }
+    // An unset domain would silently build "<username>@undefined" -- now persisted locally as well
+    // as sent to Keycloak, so fail fast instead of writing a malformed value to a unique column.
+    if (!user.email && !process.env.CLOUD_WALLET_EMAIL_DOMAIN) {
+      throw new InternalServerErrorException('CLOUD_WALLET_EMAIL_DOMAIN is not configured');
+    }
+
+    // Keycloak needs an email + emailVerified to consider the account fully set up. Per-user
+    // placeholder, not one shared literal -- Keycloak enforces unique emails by default. Computed
+    // once here and returned below so callers can persist the same value locally. Lowercased like
+    // username two lines up -- checkUserExist's read side always lowercases the JWT's email claim
+    // before comparing, so a mixed-case value here would never match.
+    const email = (user.email ? user.email : `${user.username}@${process.env.CLOUD_WALLET_EMAIL_DOMAIN}`).toLowerCase();
 
     const payload = {
-      createdTimestamp: Date.parse(Date.now.toString()),
+      // Date.parse(Date.now.toString()) stringified the function itself, not a call to it --
+      // always NaN. Keycloak expects epoch millis here, which is just Date.now().
+      createdTimestamp: Date.now(),
       username: user.username,
       enabled: true,
       totp: false,
       emailVerified: true,
       firstName: user.firstName,
       lastName: user.lastName,
-      // Keycloak needs an email + emailVerified to consider the account fully set up. Per-user
-      // placeholder, not one shared literal -- Keycloak enforces unique emails by default.
-      email: user.email ? user.email : `${user.username}@${process.env.CLOUD_WALLET_EMAIL_DOMAIN}`,
+      email,
       disableableCredentialTypes: [],
       requiredActions: [],
       notBefore: 0,
@@ -167,7 +192,8 @@ export class ClientRegistrationService {
     await this.resetPasswordOfKeycloakUser(realm, user.password, matchedUser.id, token);
 
     return {
-      keycloakUserId: matchedUser.id
+      keycloakUserId: matchedUser.id,
+      email
     };
   }
 
