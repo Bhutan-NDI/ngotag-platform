@@ -336,17 +336,22 @@ export class AgentServiceController {
    * @param payload
    * @returns Get agent status
    */
-  @MessagePattern({ cmd: 'set-dedicated-agent-token' })
-  async setDedicatedAgentToken(payload: { setDedicatedAgentTokenDto: ISetDedicatedAgentToken }): Promise<object> {
-    return this.agentServiceService.setDedicatedAgentToken(payload.setDedicatedAgentTokenDto);
-  }
-
   @MessagePattern({ cmd: 'agent-configure' })
   async agentConfigure(payload: {
     agentConfigureDto: IAgentConfigure;
     user: IUserRequestInterface;
   }): Promise<IStoreAgent> {
     return this.agentServiceService.agentConfigure(payload.agentConfigureDto, payload.user);
+  }
+
+  /**
+   * Store a token minted outside the platform for an org with a dedicated agent
+   * @param payload
+   * @returns The org, endpoint and role the token was stored for
+   */
+  @MessagePattern({ cmd: 'set-dedicated-agent-token' })
+  async setDedicatedAgentToken(payload: { setDedicatedAgentTokenDto: ISetDedicatedAgentToken }): Promise<object> {
+    return this.agentServiceService.setDedicatedAgentToken(payload.setDedicatedAgentTokenDto);
   }
 
   @MessagePattern({ cmd: 'get-agent-details-by-org-id' })
