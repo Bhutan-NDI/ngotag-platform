@@ -451,7 +451,10 @@ export class UserService {
           token
         );
       } catch (error) {
-        if (error instanceof BadRequestException) {
+        // InternalServerErrorException passed through too -- createUserByUsername's own
+        // fail-fast (e.g. CLOUD_WALLET_EMAIL_DOMAIN unset) would otherwise be replaced by the
+        // generic message below, hiding the actual misconfiguration.
+        if (error instanceof BadRequestException || error instanceof InternalServerErrorException) {
           throw error;
         }
         throw new InternalServerErrorException('Error while registering user on keycloak');
