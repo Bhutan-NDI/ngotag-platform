@@ -465,7 +465,10 @@ export class UserService {
           clientId,
           clientSecret,
           isPasskey: userInfo.isPasskey,
-          password: encryptedPassword
+          password: encryptedPassword,
+          // Same placeholder Keycloak used, so checkUserExist (email-based lookups, e.g. JwtStrategy)
+          // can actually find this account locally.
+          email: keycloakDetails.email
         },
         keycloakDetails.keycloakUserId.toString()
       );
