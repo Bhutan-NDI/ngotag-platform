@@ -9,22 +9,24 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
   catch(exception: any): Observable<any> {
-    this.logger.error(`AnyExceptionFilter caught error: ${JSON.stringify(exception)}`);
+    // The Error is passed as its own argument, not interpolated: JSON.stringify(new Error())
+    // is '{}' because message and stack are non-enumerable, so this used to log nothing useful.
+    this.logger.error(
+      exception instanceof Error ? exception.message : String(exception),
+      exception instanceof Error ? exception : undefined
+    );
 
     let httpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = '';
     switch (exception.constructor) {
       case HttpException:
-        this.logger.error(`Its HttpException`);
         httpStatus = exception.getStatus() || HttpStatus.BAD_REQUEST;
         message = exception?.getResponse() || exception.message;
         break;
       case RpcException:
-        this.logger.error(`Its RpcException`);
         return throwError(() => exception.getError());
         break;
       case PrismaClientKnownRequestError:
-        this.logger.error(`Its PrismaClientKnownRequestError`);
         switch (exception.code) {
           case 'P2002': // Unique constraint failed on the {constraint}
           case 'P2000': // The provided value for the column is too long for the column's type. Column: {column_name}
@@ -55,12 +57,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
         }
         break;
       case PrismaClientValidationError:
-        this.logger.error(`Its PrismaClientValidationError`);
         httpStatus = HttpStatus.BAD_REQUEST;
         message = exception?.message || exception?.response?.message;
         break;
       default:
-        this.logger.error(`Its an Unknown Exception`);
         // eslint-disable-next-line no-case-declarations
         httpStatus =
           exception.response?.status ||

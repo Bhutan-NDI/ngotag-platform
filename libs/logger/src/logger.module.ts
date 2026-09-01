@@ -56,7 +56,8 @@ export class LoggerModule implements NestModule {
         morgan(this.configService.isProduction ? 'combined' : 'dev', {
           stream: {
             write: (message: string) => {
-              this.logger.debug(message, {
+              // info, not debug: access logs are wanted in production, where LOG_LEVEL=info.
+              this.logger.info(message, {
                 sourceClass: 'RequestLogger'
               });
             }

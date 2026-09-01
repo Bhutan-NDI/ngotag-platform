@@ -26,24 +26,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     let httpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = '';    
-    this.logger.error(
-      `AllExceptionsFilter caught error: ${JSON.stringify(exception)}`
-    );
     switch (exception.constructor) {
       case HttpException:
-        this.logger.error(`Its HttpException`);
         httpStatus = (exception as HttpException).getStatus();
         message = exception?.response?.error || exception?.message || 'Internal server error';
         break;
       case RpcException:
-        this.logger.error(`Its RpcException`);
         httpStatus = exception?.code || exception?.error?.code || HttpStatus.INTERNAL_SERVER_ERROR;
         message = exception?.error || exception?.error?.message?.error || 'RpcException';
         break;
       default:
-        this.logger.error(`Its an Unknown Exception`);
         if ('Rpc Exception' === exception.message) {
-          this.logger.error(`RpcException`);
           httpStatus = exception?.error?.code || HttpStatus.INTERNAL_SERVER_ERROR;
           message = exception?.error?.message?.error || 'Internal server error';
         } else {
@@ -61,13 +54,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
         }
 
         if (!this.isHttpErrorStatus(httpStatus)) {
-            this.logger.error(`httpStatus: ${httpStatus}`);
             httpStatus = HttpStatus.INTERNAL_SERVER_ERROR;          
         }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.logger.error(`Exception Filter : ${message} ${(exception as any)?.stack} ${request.method} ${request.url}`);
+    // Logged once, here, because this is the only point at which the response status is
+    // known -- a 4xx must not land in the error stream. The Error goes as its own argument
+    // so the adapter can put it in data.error and winston can lift its stack.
+    const level = HttpStatus.INTERNAL_SERVER_ERROR <= httpStatus ? 'error' : 'warn';
+    this.logger[level](
+      `${request.method} ${request.url} -> ${httpStatus}: ${message}`,
+      exception instanceof Error ? exception : undefined
+    );
     const responseBody = {
       statusCode: httpStatus,
       message,
@@ -90,7 +88,10 @@ export class CustomExceptionFilter implements RpcExceptionFilter<RpcException> {
   // Add explicit types for 'exception' and 'host'
   // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any
   catch(exception: RpcException, host: ArgumentsHost): Observable<any> {
-    this.logger.error(`CustomExceptionFilter caught error: ${JSON.stringify(exception)}`);
+    this.logger.error(
+      exception instanceof Error ? exception.message : String(exception),
+      exception instanceof Error ? exception : undefined
+    );
     return throwError(() => new RpcException({ message: exception.getError(), code: HttpStatus.BAD_REQUEST }));
   }
 }
