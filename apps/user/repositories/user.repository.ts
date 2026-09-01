@@ -191,9 +191,10 @@ export class UserRepository {
           clientSecret: userInfo.clientSecret,
           keycloakUserId,
           publicProfile: true,
-          // Same email Keycloak has for this account (real, or a per-user placeholder) — needed
-          // for checkUserExist (email-based lookups, e.g. JwtStrategy) to find this row.
-          email: userInfo.email,
+          // Lowercased like username above -- the caller already lowercases it too, but enforcing
+          // it here as well keeps the invariant at the write boundary, not just in one caller.
+          // Needed for checkUserExist (email-based lookups, e.g. JwtStrategy) to find this row.
+          email: userInfo.email?.toLowerCase(),
           // Only persisted for the passkey path — see login()'s isPasskey branch, which re-derives
           // this to bridge into Keycloak's password grant on future logins. Non-passkey users are
           // verified against Keycloak directly at login time; nothing to store here for them.

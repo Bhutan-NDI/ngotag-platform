@@ -66,7 +66,9 @@ export class ClientRegistrationService {
 
   async createUser(user: CreateUserDto, realm: string, token: string): Promise<{ keycloakUserId: string }> {
     const payload = {
-      createdTimestamp: Date.parse(Date.now.toString()),
+      // Date.parse(Date.now.toString()) stringified the function itself, not a call to it --
+      // always NaN. Keycloak expects epoch millis here, which is just Date.now().
+      createdTimestamp: Date.now(),
       username: user.email,
       enabled: true,
       totp: false,
@@ -137,7 +139,9 @@ export class ClientRegistrationService {
     const email = (user.email ? user.email : `${user.username}@${process.env.CLOUD_WALLET_EMAIL_DOMAIN}`).toLowerCase();
 
     const payload = {
-      createdTimestamp: Date.parse(Date.now.toString()),
+      // Date.parse(Date.now.toString()) stringified the function itself, not a call to it --
+      // always NaN. Keycloak expects epoch millis here, which is just Date.now().
+      createdTimestamp: Date.now(),
       username: user.username,
       enabled: true,
       totp: false,

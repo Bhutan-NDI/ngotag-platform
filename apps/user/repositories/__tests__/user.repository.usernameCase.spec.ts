@@ -70,4 +70,27 @@ describe('UserRepository — username case normalization', () => {
       expect.objectContaining({ data: expect.objectContaining({ email: 'alice@example.com' }) })
     );
   });
+
+  it('createUserByUsername lowercases the given email, regardless of the case it arrives in', async () => {
+    const create = jest.fn(async (args: { data: { username: string } }) => ({ id: 'user-1', ...args.data }));
+    const prisma = { user: { create } };
+    const logger = { error: jest.fn() };
+    const repository = new UserRepository(prisma as never, logger as never);
+
+    await repository.createUserByUsername(
+      {
+        username: 'alice',
+        firstName: 'Alice',
+        lastName: 'Holder',
+        clientId: 'client-1',
+        clientSecret: 'secret',
+        email: 'Alice@Example.com'
+      },
+      'keycloak-user-1'
+    );
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ email: 'alice@example.com' }) })
+    );
+  });
 });
