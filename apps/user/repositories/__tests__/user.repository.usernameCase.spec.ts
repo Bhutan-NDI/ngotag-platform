@@ -12,6 +12,8 @@
  * Constructed directly (not via Nest's TestingModule/DI container) — PrismaService is trivial to
  * fake for these two methods.
  */
+import { ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { UserRepository } from '../user.repository';
 
 describe('UserRepository — username case normalization', () => {
@@ -92,5 +94,31 @@ describe('UserRepository — username case normalization', () => {
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ email: 'alice@example.com' }) })
     );
+  });
+
+  it('createUserByUsername turns an email unique-constraint collision into a clear ConflictException', async () => {
+    const create = jest.fn(async () => {
+      throw new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`email`)', {
+        code: 'P2002',
+        clientVersion: '5.0.0'
+      });
+    });
+    const prisma = { user: { create } };
+    const logger = { error: jest.fn() };
+    const repository = new UserRepository(prisma as never, logger as never);
+
+    await expect(
+      repository.createUserByUsername(
+        {
+          username: 'alice',
+          firstName: 'Alice',
+          lastName: 'Holder',
+          clientId: 'client-1',
+          clientSecret: 'secret',
+          email: 'alice@example.com'
+        },
+        'keycloak-user-1'
+      )
+    ).rejects.toThrow(ConflictException);
   });
 });

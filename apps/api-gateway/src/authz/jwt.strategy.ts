@@ -133,13 +133,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     };
   }
 
-  // A miss here (thrown, e.g. no matching local row) is expected and tolerated -- callers
-  // fall back to trying the next lookup. This does not distinguish that from an unrelated
-  // backend failure (Keycloak admin API, NATS); both are logged and swallowed the same way.
+  // Only a genuine "not found" is tolerated here -- callers fall back to trying the next lookup.
+  // Anything else (Keycloak admin API down, NATS failure) is a real backend error and should
+  // surface as one, not silently degrade auth (e.g. userRole never getting applied). Matched by
+  // message rather than status code: errors crossing the NATS boundary lose their HttpException
+  // class/status, so the message string is the only reliable signal available here today.
   private async tolerateKeycloakLookupMiss(lookup: () => Promise<object>, label: string): Promise<object | undefined> {
     try {
       return await lookup();
     } catch (error) {
+      if (error?.message !== ResponseMessages.user.error.notFound) {
+        throw error;
+      }
       this.logger.log(`No Keycloak user found for ${label}: ${JSON.stringify(error)}`);
       return undefined;
     }

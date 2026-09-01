@@ -3,6 +3,7 @@
 
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -39,6 +40,7 @@ import {
 import { CloudWalletType, ProviderType, UserRole } from '@credebl/enum/enum';
 
 import { PrismaService } from '@credebl/prisma-service';
+import { ResponseMessages } from '@credebl/common/response-messages';
 import { RpcException } from '@nestjs/microservices';
 
 interface UserQueryOptions {
@@ -203,6 +205,11 @@ export class UserRepository {
       });
     } catch (error) {
       this.logger.error(`Error in createUserByUsername: ${JSON.stringify(error)}`);
+      // email is @unique -- a placeholder colliding with an existing row (real or another
+      // placeholder) would otherwise surface as an opaque 500 instead of a clear conflict.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && 'P2002' === error.code) {
+        throw new ConflictException(ResponseMessages.user.error.exists);
+      }
       throw error;
     }
   }
