@@ -101,6 +101,19 @@ export class ReceiveInvitationUrlDTO {
   @IsNotSQLInjection({ message: 'invitationUrl is required.' })
   invitationUrl: string;
 
+  // Restored -- was silently stripped by api-gateway's whitelist ValidationPipe, since develop's
+  // version of this DTO never declared it (this DTO was ported from a branch that forked before
+  // connectionType was added elsewhere, not because anyone removed it). The wallet frontend still
+  // sets this on revocation-credential connections and filters them out of the visible connections
+  // list by it -- silently dropping it here means those connections leak into the user-facing list.
+  @ApiPropertyOptional()
+  @IsString({ message: 'connectionType must be a string' })
+  @IsOptional()
+  @IsNotEmpty({ message: 'please provide valid connectionType' })
+  @Transform(({ value }) => trim(value))
+  @IsNotSQLInjection({ message: 'connectionType is required.' })
+  connectionType?: string;
+
   email?: string;
 
   userId?: string;

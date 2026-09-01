@@ -10,6 +10,12 @@
  * AcceptInvitationConfig requires it on both agent-controller's old multi-tenancy endpoint and
  * its current didcomm/oob one) -- a missing label previously reached the agent and came back as
  * an opaque error instead of failing validation locally with a clear message.
+ *
+ * connectionType is restored here -- present on pipeline-implementation, deployment, and both
+ * guardian branches, absent only from develop's own lineage (the branch this DTO was ported from
+ * forked before connectionType existed anywhere, not because it was removed). The wallet frontend
+ * still tags revocation-credential connections with it and filters them out of the visible
+ * connections list by that tag -- api-gateway's whitelist ValidationPipe was silently stripping it.
  */
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
@@ -53,5 +59,17 @@ describe('ReceiveInvitationUrlDTO', () => {
 
     const errors = await validate(instance);
     expect(errors.some((error) => 'label' === error.property)).toBe(true);
+  });
+
+  it('does not strip connectionType', async () => {
+    const instance = plainToInstance(ReceiveInvitationUrlDTO, {
+      invitationUrl: 'https://example.com?oob=abc',
+      label: 'My Wallet',
+      connectionType: 'REVOCATION_CREDENTIAL'
+    });
+
+    expect(instance.connectionType).toBe('REVOCATION_CREDENTIAL');
+    const errors = await validate(instance);
+    expect(errors).toHaveLength(0);
   });
 });
