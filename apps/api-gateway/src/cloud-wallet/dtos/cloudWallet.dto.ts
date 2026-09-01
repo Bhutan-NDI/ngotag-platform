@@ -45,13 +45,15 @@ export class ReceiveInvitationUrlDTO {
   @IsNotSQLInjection({ message: 'alias is required.' })
   alias?: string;
 
-  @ApiPropertyOptional()
+  // Required, not optional -- the agent's own contract (ReceiveInvitationByUrlProps /
+  // AcceptInvitationConfig) has always required label; a missing one previously traveled all the
+  // way to the agent and came back as an opaque error instead of a clear local validation failure.
+  @ApiProperty()
   @IsString({ message: 'label must be a string' })
-  @IsOptional()
   @IsNotEmpty({ message: 'please provide valid label' })
   @Transform(({ value }) => trim(value))
   @IsNotSQLInjection({ message: 'label is required.' })
-  label?: string;
+  label: string;
 
   @ApiPropertyOptional()
   @IsString({ message: 'Image URL must be a string' })
@@ -61,27 +63,26 @@ export class ReceiveInvitationUrlDTO {
   @IsNotSQLInjection({ message: 'Image URL is required.' })
   imageUrl?: string;
 
+  // trim() (cast.helper.ts) only handles strings -- returns undefined for anything else, so
+  // @Transform(trim) here was silently wiping every boolean sent, regardless of value. Dropped;
+  // trimming a boolean/int was never meaningful.
   @ApiPropertyOptional()
   @IsBoolean({ message: 'autoAcceptConnection must be a boolean' })
-  @Transform(({ value }) => trim(value))
   @IsOptional()
   autoAcceptConnection?: boolean;
 
   @ApiPropertyOptional()
   @IsBoolean({ message: 'autoAcceptInvitation must be a boolean' })
-  @Transform(({ value }) => trim(value))
   @IsOptional()
   autoAcceptInvitation?: boolean;
 
   @ApiPropertyOptional()
   @IsBoolean({ message: 'reuseConnection must be a boolean' })
-  @Transform(({ value }) => trim(value))
   @IsOptional()
   reuseConnection?: boolean;
 
   @ApiPropertyOptional()
   @IsInt({ message: 'acceptInvitationTimeoutMs must be an integer' })
-  @Transform(({ value }) => trim(value))
   @IsOptional()
   acceptInvitationTimeoutMs?: number;
 
