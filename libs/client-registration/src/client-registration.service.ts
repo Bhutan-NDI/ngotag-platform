@@ -131,8 +131,10 @@ export class ClientRegistrationService {
 
     // Keycloak needs an email + emailVerified to consider the account fully set up. Per-user
     // placeholder, not one shared literal -- Keycloak enforces unique emails by default. Computed
-    // once here and returned below so callers can persist the same value locally.
-    const email = user.email ? user.email : `${user.username}@${process.env.CLOUD_WALLET_EMAIL_DOMAIN}`;
+    // once here and returned below so callers can persist the same value locally. Lowercased like
+    // username two lines up -- checkUserExist's read side always lowercases the JWT's email claim
+    // before comparing, so a mixed-case value here would never match.
+    const email = (user.email ? user.email : `${user.username}@${process.env.CLOUD_WALLET_EMAIL_DOMAIN}`).toLowerCase();
 
     const payload = {
       createdTimestamp: Date.parse(Date.now.toString()),

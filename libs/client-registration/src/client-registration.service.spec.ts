@@ -90,6 +90,26 @@ describe('ClientRegistrationService — Keycloak lookup response is not trusted 
       }
     });
 
+    it('lowercases the placeholder email, matching the read-side checkUserExist lookup', async () => {
+      const oldEmail = process.env.CLOUD_WALLET_EMAIL_DOMAIN;
+      process.env.CLOUD_WALLET_EMAIL_DOMAIN = 'example.com';
+      try {
+        const { service, commonService } = makeService([{ id: 'correct-id', username: 'AliceHolder' }]);
+
+        const result = await service.createUserByUsername(
+          { username: 'AliceHolder', password: 'x' } as never,
+          REALM,
+          TOKEN
+        );
+
+        const payload = commonService.httpPost.mock.calls[0][1] as Record<string, unknown>;
+        expect(payload.email).toBe('aliceholder@example.com');
+        expect(result.email).toBe('aliceholder@example.com');
+      } finally {
+        process.env.CLOUD_WALLET_EMAIL_DOMAIN = oldEmail;
+      }
+    });
+
     it('returns the same email it set on the Keycloak user, for callers to persist locally', async () => {
       const oldEmail = process.env.CLOUD_WALLET_EMAIL_DOMAIN;
       process.env.CLOUD_WALLET_EMAIL_DOMAIN = 'example.com';

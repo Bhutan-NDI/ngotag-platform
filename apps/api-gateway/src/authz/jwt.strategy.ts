@@ -75,23 +75,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // Username-based accounts now carry an email claim in Keycloak but don't persist one
       // locally, so this can legitimately miss — tolerate it and fall through below instead of
       // letting an uncaught NotFoundException 404 the whole request.
-      try {
-        userInfo = await this.usersService.getUserByUserIdInKeycloak(payload?.email);
-      } catch (error) {
-        this.logger.log(`No Keycloak user found for email '${payload?.email}': ${JSON.stringify(error)}`);
-      }
+      userInfo = await this.tolerateKeycloakLookupMiss(
+        () => this.usersService.getUserByUserIdInKeycloak(payload?.email),
+        `email '${payload?.email}'`
+      );
     }
     if (!userInfo && payload?.preferred_username && !payload.preferred_username.includes('service-account')) {
-      // Cloud-wallet (and other M2M) tokens may not carry an email claim — fall back to
-      // preferred_username, but skip Keycloak's own service-account principals (no real user
-      // behind them, e.g. "service-account-<client-id>").
-      try {
-        userInfo = await this.usersService.getUserByUsernameInKeycloak(payload?.preferred_username);
-      } catch (error) {
-        this.logger.log(
-          `No Keycloak user found for preferred_username '${payload?.preferred_username}': ${JSON.stringify(error)}`
-        );
-      }
+      // Cloud-wallet (and other M2M) tokens may not carry an email claim, or the email lookup
+      // above may have come back empty — fall back to preferred_username, but skip Keycloak's own
+      // service-account principals (no real user behind them, e.g. "service-account-<client-id>").
+      userInfo = await this.tolerateKeycloakLookupMiss(
+        () => this.usersService.getUserByUsernameInKeycloak(payload?.preferred_username),
+        `preferred_username '${payload?.preferred_username}'`
+      );
     }
 
     if (payload.hasOwnProperty('client_id') && uuidRegex.test(payload['client_id'])) {
@@ -135,5 +131,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ...userDetails,
       ...payload
     };
+  }
+
+  // A miss here (thrown, e.g. no matching local row) is expected and tolerated -- callers
+  // fall back to trying the next lookup. This does not distinguish that from an unrelated
+  // backend failure (Keycloak admin API, NATS); both are logged and swallowed the same way.
+  private async tolerateKeycloakLookupMiss(lookup: () => Promise<object>, label: string): Promise<object | undefined> {
+    try {
+      return await lookup();
+    } catch (error) {
+      this.logger.log(`No Keycloak user found for ${label}: ${JSON.stringify(error)}`);
+      return undefined;
+    }
   }
 }
