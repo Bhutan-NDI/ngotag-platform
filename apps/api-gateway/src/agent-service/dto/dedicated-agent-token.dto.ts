@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
+import { IsNotEmpty, IsString, IsUrl, IsUUID } from 'class-validator';
 import { trim } from '@credebl/common/cast.helper';
 
 export class SetDedicatedAgentTokenDto {
@@ -24,6 +24,11 @@ export class SetDedicatedAgentTokenDto {
   @ApiProperty({ example: 'https://agent.example.com' })
   @IsString({ message: 'agentEndPoint must be in string format.' })
   @IsNotEmpty({ message: 'agentEndPoint is required.' })
+  @IsUrl({
+    // eslint-disable-next-line camelcase
+    require_protocol: true,
+    protocols: ['https']
+  })
   @Transform(({ value }) => trim(value))
   agentEndPoint: string;
 }

@@ -9,6 +9,7 @@ import {
   ConflictException,
   HttpException,
   HttpStatus,
+  ServiceUnavailableException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -58,9 +59,18 @@ import {
   IStoreOrgAgent,
   VerifyAuthorizationResponse
 } from './interface/agent-service.interface';
-import { AgentSpinUpStatus, AgentType, DidMethod, Ledgers, OrgAgentType, PromiseResult } from '@credebl/enum/enum';
+import {
+  AgentRole,
+  AgentSpinUpStatus,
+  AgentType,
+  DidMethod,
+  Ledgers,
+  OrgAgentType,
+  PromiseResult
+} from '@credebl/enum/enum';
 import { AgentServiceRepository } from './repositories/agent-service.repository';
 import { Prisma, RecordType, ledgers, org_agents, organisation, platform_config, user } from '@prisma/client';
+import * as jwt from 'jsonwebtoken';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { CommonService } from '@credebl/common';
 import { GetSchemaAgentRedirection } from 'apps/ledger/src/schema/schema.interface';
@@ -2142,48 +2152,87 @@ export class AgentServiceService {
   async setDedicatedAgentToken(payload: ISetDedicatedAgentToken): Promise<IDedicatedAgentTokenResult> {
     const { targetOrgId, agentToken, agentEndPoint } = payload;
     try {
-      const orgAgentDetails = await this.agentServiceRepository.getAgentApiKey(targetOrgId);
+      const [orgAgentDetails, dedicatedAgentTypeId, organizationDetails] = await Promise.all([
+        this.agentServiceRepository.getAgentApiKey(targetOrgId),
+        this.agentServiceRepository.getOrgAgentTypeDetails(OrgAgentType.DEDICATED),
+        this.agentServiceRepository.getOrgDetails(targetOrgId)
+      ]);
+
       if (!orgAgentDetails) {
         throw new NotFoundException(ResponseMessages.agent.error.agentNotExists);
       }
 
       // Refuse SHARED orgs: they re-mint themselves in getOrgAgentApiKey once the base wallet is
       // valid, and writing an unverified token here would replace that with one nothing has checked.
-      const dedicatedAgentTypeId = await this.agentServiceRepository.getOrgAgentTypeDetails(OrgAgentType.DEDICATED);
       if (orgAgentDetails.orgAgentTypeId !== dedicatedAgentTypeId) {
         throw new BadRequestException(ResponseMessages.agent.error.notDedicatedAgent);
       }
 
-      this.assertEndpointTrusted(orgAgentDetails.agentEndPoint);
-
-      // The caller states the target, so a tampered agentEndPoint column cannot silently redirect
-      // someone else's credential to an endpoint they never approved.
+      // Cheap equality before the URL parse below. The caller states the target, so a tampered
+      // agentEndPoint column cannot silently redirect someone else's credential.
       if (orgAgentDetails.agentEndPoint !== agentEndPoint) {
         throw new BadRequestException(ResponseMessages.agent.error.agentEndpointMismatch);
       }
 
-      // The platform never holds the agent's signing secret, so the token's signature cannot be
-      // verified locally. Prove it works against the agent instead, before persisting it. A bad token
-      // makes the probe throw rather than return, so both outcomes have to be handled.
-      let isInitialized = false;
-      try {
-        ({ isInitialized } = await this.getAgentHealthData(orgAgentDetails.agentEndPoint, agentToken));
-      } catch (error) {
-        this.logger.error(`[setDedicatedAgentToken] - agent probe failed: ${JSON.stringify(error?.message ?? error)}`);
-      }
-      if (!isInitialized) {
-        throw new BadRequestException(ResponseMessages.agent.error.agentTokenRejected);
-      }
+      this.assertEndpointTrusted(orgAgentDetails.agentEndPoint);
+
+      // GET /agent accepts tenant, dedicated and Basewallet scopes alike, so a live probe alone would
+      // let a RestTenantAgent token be stored against the base wallet -- where every SHARED self-heal
+      // would then 401 on the Basewallet-only tenant routes. Pin the role the target row requires.
+      const expectedRole =
+        CommonConstants.PLATFORM_ADMIN_ORG === organizationDetails?.name
+          ? AgentRole.RestRootAgentWithTenants
+          : AgentRole.RestRootAgent;
+      this.assertTokenRole(agentToken, expectedRole);
+      await this.assertTokenAcceptedByAgent(orgAgentDetails.agentEndPoint, agentToken);
 
       const encryptedToken = await this.tokenEncryption(agentToken);
       await this.agentServiceRepository.updateTenantToken(targetOrgId, encryptedToken);
 
-      this.logger.log(`Stored externally-minted agent token for orgId: ${targetOrgId}`);
-      return { orgId: targetOrgId, agentEndPoint: orgAgentDetails.agentEndPoint };
+      this.logger.log(`Stored externally-minted ${expectedRole} token for orgId: ${targetOrgId}`);
+      return { orgId: targetOrgId, agentEndPoint: orgAgentDetails.agentEndPoint, role: expectedRole };
     } catch (error) {
       // Serialise the error, never the payload -- it carries the token.
       this.logger.error(`[setDedicatedAgentToken] - error: ${JSON.stringify(error?.message ?? error)}`);
-      throw error;
+      throw new RpcException(error.response ?? error);
+    }
+  }
+
+  // Reads the role claim only. The platform never holds the agent's signing secret, so it cannot
+  // verify the signature here; assertTokenAcceptedByAgent is what proves the token is genuine.
+  private assertTokenRole(agentToken: string, expectedRole: AgentRole): void {
+    let decodedToken: jwt.JwtPayload;
+    try {
+      decodedToken = jwt.decode(agentToken) as jwt.JwtPayload;
+    } catch {
+      decodedToken = null;
+    }
+
+    if (!decodedToken?.role) {
+      throw new BadRequestException(ResponseMessages.agent.error.agentTokenNoRole);
+    }
+    if (decodedToken.role !== expectedRole) {
+      throw new BadRequestException(`${ResponseMessages.agent.error.agentTokenRoleMismatch}: expected ${expectedRole}`);
+    }
+  }
+
+  private async assertTokenAcceptedByAgent(agentEndPoint: string, agentToken: string): Promise<void> {
+    try {
+      const { isInitialized } = await this.getAgentHealthData(agentEndPoint, agentToken);
+      if (!isInitialized) {
+        throw new BadRequestException(ResponseMessages.agent.error.agentTokenRejected);
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      // A rejected credential and an unreachable agent need different fixes, so don't collapse them.
+      const status = error?.response?.status ?? error?.response?.statusCode ?? error?.status;
+      this.logger.error(`[setDedicatedAgentToken] - agent probe failed with status: ${status ?? 'unknown'}`);
+      if (HttpStatus.UNAUTHORIZED === status || HttpStatus.FORBIDDEN === status) {
+        throw new BadRequestException(ResponseMessages.agent.error.agentTokenRejected);
+      }
+      throw new ServiceUnavailableException(ResponseMessages.agent.error.agentDown);
     }
   }
 

@@ -49,6 +49,7 @@ export interface ISetDedicatedAgentToken {
 export interface IDedicatedAgentTokenResult {
   orgId: string;
   agentEndPoint: string;
+  role: string;
 }
 
 export interface IOutOfBandCredentialOffer {
