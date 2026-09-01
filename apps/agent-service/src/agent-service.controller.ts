@@ -11,6 +11,7 @@ import {
   IIssuanceCreateOffer,
   IOutOfBandCredentialOffer,
   ISendProofRequestPayload,
+  ISetDedicatedAgentToken,
   IStoreAgent,
   IStoreOrgAgentDetails,
   ITenantCredDef,
@@ -335,6 +336,11 @@ export class AgentServiceController {
    * @param payload
    * @returns Get agent status
    */
+  @MessagePattern({ cmd: 'set-dedicated-agent-token' })
+  async setDedicatedAgentToken(payload: { setDedicatedAgentTokenDto: ISetDedicatedAgentToken }): Promise<object> {
+    return this.agentServiceService.setDedicatedAgentToken(payload.setDedicatedAgentTokenDto);
+  }
+
   @MessagePattern({ cmd: 'agent-configure' })
   async agentConfigure(payload: {
     agentConfigureDto: IAgentConfigure;

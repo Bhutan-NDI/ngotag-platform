@@ -24,6 +24,8 @@ import {
   IConnectionDetails,
   IUserRequestInterface,
   IAgentSpinupDto,
+  IDedicatedAgentTokenResult,
+  ISetDedicatedAgentToken,
   IStoreOrgAgentDetails,
   ITenantCredDef,
   ITenantDto,
@@ -2128,6 +2130,78 @@ export class AgentServiceService {
     } catch (error) {
       this.logger.error(`Error in receive invitation in agent service : ${JSON.stringify(error)}`);
       throw error;
+    }
+  }
+
+  /**
+   * Stores a token that was minted outside the platform, for an org whose agent the platform cannot
+   * mint for. Dedicated agents are deployed externally and each holds its own API_KEY, so the operator
+   * mints via POST /agent/token and hands the token over. The platform-admin (base wallet) row is
+   * DEDICATED-typed too, so this same path repairs it -- only the minter differs.
+   */
+  async setDedicatedAgentToken(payload: ISetDedicatedAgentToken): Promise<IDedicatedAgentTokenResult> {
+    const { targetOrgId, agentToken, agentEndPoint } = payload;
+    try {
+      const orgAgentDetails = await this.agentServiceRepository.getAgentApiKey(targetOrgId);
+      if (!orgAgentDetails) {
+        throw new NotFoundException(ResponseMessages.agent.error.agentNotExists);
+      }
+
+      // Refuse SHARED orgs: they re-mint themselves in getOrgAgentApiKey once the base wallet is
+      // valid, and writing an unverified token here would replace that with one nothing has checked.
+      const dedicatedAgentTypeId = await this.agentServiceRepository.getOrgAgentTypeDetails(OrgAgentType.DEDICATED);
+      if (orgAgentDetails.orgAgentTypeId !== dedicatedAgentTypeId) {
+        throw new BadRequestException(ResponseMessages.agent.error.notDedicatedAgent);
+      }
+
+      this.assertEndpointTrusted(orgAgentDetails.agentEndPoint);
+
+      // The caller states the target, so a tampered agentEndPoint column cannot silently redirect
+      // someone else's credential to an endpoint they never approved.
+      if (orgAgentDetails.agentEndPoint !== agentEndPoint) {
+        throw new BadRequestException(ResponseMessages.agent.error.agentEndpointMismatch);
+      }
+
+      // The platform never holds the agent's signing secret, so the token's signature cannot be
+      // verified locally. Prove it works against the agent instead, before persisting it. A bad token
+      // makes the probe throw rather than return, so both outcomes have to be handled.
+      let isInitialized = false;
+      try {
+        ({ isInitialized } = await this.getAgentHealthData(orgAgentDetails.agentEndPoint, agentToken));
+      } catch (error) {
+        this.logger.error(`[setDedicatedAgentToken] - agent probe failed: ${JSON.stringify(error?.message ?? error)}`);
+      }
+      if (!isInitialized) {
+        throw new BadRequestException(ResponseMessages.agent.error.agentTokenRejected);
+      }
+
+      const encryptedToken = await this.tokenEncryption(agentToken);
+      await this.agentServiceRepository.updateTenantToken(targetOrgId, encryptedToken);
+
+      this.logger.log(`Stored externally-minted agent token for orgId: ${targetOrgId}`);
+      return { orgId: targetOrgId, agentEndPoint: orgAgentDetails.agentEndPoint };
+    } catch (error) {
+      // Serialise the error, never the payload -- it carries the token.
+      this.logger.error(`[setDedicatedAgentToken] - error: ${JSON.stringify(error?.message ?? error)}`);
+      throw error;
+    }
+  }
+
+  // agentEndPoint is a mutable column and a credential is about to be sent to it.
+  private assertEndpointTrusted(agentEndPoint: string): void {
+    if (!agentEndPoint) {
+      throw new NotFoundException(ResponseMessages.agent.error.agentUrl);
+    }
+
+    let url: URL;
+    try {
+      url = new URL(agentEndPoint);
+    } catch {
+      throw new BadRequestException(ResponseMessages.agent.error.malformedAgentEndpoint);
+    }
+
+    if ('https:' !== url.protocol) {
+      throw new BadRequestException(ResponseMessages.agent.error.insecureAgentEndpoint);
     }
   }
 
