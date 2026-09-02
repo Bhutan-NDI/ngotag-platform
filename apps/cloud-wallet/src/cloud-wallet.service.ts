@@ -168,7 +168,7 @@ export class CloudWalletService {
       const { proofRecordId, userId } = proofPrsentationByIdPayload;
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}}`;
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}`;
 
       const getProofById = await this.commonService.httpGet(url, { headers: { authorization: decryptedApiKey } });
       return getProofById;
