@@ -26,7 +26,6 @@ import {
   IExportCloudWallet,
   IDeclineProofRequest,
   IProofPresentationPayloadWithCred,
-  IGetCredentialsForRequest,
   ICredentialForRequestRes,
   IDeleteCloudWallet,
   IImportCloudWallet,
@@ -107,7 +106,7 @@ export class CloudWalletService extends BaseService {
       proofPresentationByIdPayload
     );
   }
-  getCredentialsForRequest(proofPresentationByIdPayload: IGetCredentialsForRequest): Promise<ICredentialForRequestRes> {
+  getCredentialsForRequest(proofPresentationByIdPayload: IProofPresentationDetails): Promise<ICredentialForRequestRes> {
     return this.natsClient.sendNatsMessage(
       this.cloudWalletServiceProxy,
       'get-credentials-for-request',

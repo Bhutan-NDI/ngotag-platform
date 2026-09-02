@@ -60,7 +60,7 @@ describe('CloudWalletService.declineProofRequest', () => {
     });
 
     expect(commonService.httpPost).toHaveBeenCalledWith(
-      `${AGENT_ENDPOINT}/didcomm/proofs/proof-1/decline-request/`,
+      `${AGENT_ENDPOINT}/didcomm/proofs/proof-1/decline-request`,
       { sendProblemReport: true, problemReportDescription: 'not needed' },
       { headers: { authorization: DECRYPTED_API_KEY } }
     );
@@ -96,12 +96,44 @@ describe('CloudWalletService.submitProofWithCred', () => {
 
     expect(commonService.httpPost).toHaveBeenCalledWith(
       `${AGENT_ENDPOINT}/didcomm/proofs/proof-1/accept-request-with-cred`,
-      proof,
+      { proofFormats: proof.proofFormats, comment: proof.comment },
       { headers: { authorization: DECRYPTED_API_KEY } }
     );
   });
 
-  it("maps agent-controller's invalid-state error to a 400, not a generic 500", async () => {
+  it('does not send proofRecordId in the body -- agent-controller takes it as a path param, and its tsoa schema rejects any extra body key with a 422', async () => {
+    const { service, commonService } = makeService();
+
+    await service.submitProofWithCred({
+      userId: 'user-1',
+      email: 'user@example.com',
+      proof: {
+        proofRecordId: 'proof-1',
+        proofFormats: { presentationExchange: { credentials: {} } }
+      }
+    });
+
+    const [[, sentBody]] = commonService.httpPost.mock.calls;
+    expect(sentBody).not.toHaveProperty('proofRecordId');
+  });
+
+  it("maps agent-controller's invalid-state error (current assertProofState wording) to a 400, not a generic 500", async () => {
+    const { service, commonService } = makeService();
+    commonService.httpPost.mockRejectedValueOnce({
+      response: { error: { message: "Cannot accept a proof record in state 'done'; expected 'request-received'." } }
+    });
+
+    await expect(
+      service.submitProofWithCred({
+        userId: 'user-1',
+        email: 'user@example.com',
+        proof: { proofRecordId: 'proof-1', proofFormats: { presentationExchange: { credentials: {} } } }
+      })
+    ).rejects.toMatchObject({ error: { statusCode: HttpStatus.BAD_REQUEST } });
+    expect(commonService.handleError).not.toHaveBeenCalled();
+  });
+
+  it("still maps agent-controller's old Credo-native invalid-state wording to a 400, in case any other code path still emits it", async () => {
     const { service, commonService } = makeService();
     commonService.httpPost.mockRejectedValueOnce({
       response: { error: { message: "Proof record is in invalid state 'done'" } }

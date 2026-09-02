@@ -17,8 +17,4 @@ export class DeclineProofRequestDto {
   @IsOptional()
   @IsString({ message: 'problemReportDescription must be a string' })
   problemReportDescription?: string;
-
-  userId: string;
-
-  email: string;
 }

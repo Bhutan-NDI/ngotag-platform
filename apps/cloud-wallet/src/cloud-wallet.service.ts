@@ -46,7 +46,6 @@ import {
   ISelfAttestedCredential,
   IDeclineProofRequest,
   IProofPresentationPayloadWithCred,
-  IGetCredentialsForRequest,
   ICredentialForRequestRes
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
@@ -248,10 +247,19 @@ export class CloudWalletService {
       const { agentEndpoint } = baseWalletDetails;
 
       const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proof.proofRecordId}${CommonConstants.CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED}`;
+      // proofRecordId is a path param on agent-controller's side, not part of the body -- its
+      // tsoa schema for this route only declares proofFormats/comment, and throw-on-extras
+      // rejects any other key with a 422. Sending the whole proof object (which also carries
+      // proofRecordId) broke every real call. See the #85 review.
+      const { proofFormats, comment } = proof;
 
-      const submitProofWithCredResponse = await this.commonService.httpPost(url, proof, {
-        headers: { authorization: decryptedApiKey }
-      });
+      const submitProofWithCredResponse = await this.commonService.httpPost(
+        url,
+        { proofFormats, comment },
+        {
+          headers: { authorization: decryptedApiKey }
+        }
+      );
       return submitProofWithCredResponse;
     } catch (error) {
       this.rethrowIfInvalidProofState(error);
@@ -269,7 +277,7 @@ export class CloudWalletService {
    * @returns credentials satisfying each requested attribute/predicate
    */
   async getCredentialsByProofId(
-    getCredentialsForRequestPayload: IGetCredentialsForRequest
+    getCredentialsForRequestPayload: IProofPresentationDetails
   ): Promise<ICredentialForRequestRes> {
     try {
       const { proofRecordId, userId } = getCredentialsForRequestPayload;
@@ -357,8 +365,16 @@ export class CloudWalletService {
   // remains a literal English substring match, which is inherently fragile either way. See the
   // #85 review.
   private rethrowIfInvalidProofState(error: { response?: { error?: { message?: string } } }): void {
-    if (error.response?.error?.message?.includes('Proof record is in invalid state')) {
-      throw new RpcException({ message: error.response.error.message, statusCode: HttpStatus.BAD_REQUEST });
+    const message = error.response?.error?.message;
+    // agent-controller's own #85-review fix (ProofController's assertProofState helper) now
+    // throws "Cannot ${verb} a proof record in state '...'; expected 'request-received'." for
+    // acceptRequestWithCred/declineRequest/getCredentialsForRequest's state-guard case --
+    // completely different wording from the original 'Proof record is in invalid state' match,
+    // which was Credo's own raw error text reaching here before that fix existed. Matching both:
+    // the new wording is what real traffic hits today, the old one is kept in case some other
+    // code path still emits Credo's raw text. See the #85 review.
+    if (message?.includes('Proof record is in invalid state') || message?.includes("expected 'request-received'")) {
+      throw new RpcException({ message, statusCode: HttpStatus.BAD_REQUEST });
     }
   }
 

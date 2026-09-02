@@ -70,8 +70,7 @@ import {
   IDeleteCloudWallet,
   IWalletPortabilityJobStatus,
   IDeclineProofRequest,
-  IProofPresentationPayloadWithCred,
-  IGetCredentialsForRequest
+  IProofPresentationPayloadWithCred
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CreateConnectionDto } from './dtos/create-connection.dto';
 import { SelfAttestedCredentialDto } from './dtos/self-attested-credential.dto';
@@ -405,7 +404,7 @@ export class CloudWalletController {
     @User() user: user
   ): Promise<Response> {
     const { id, email } = user;
-    const getCredentialsForRequestPayload: IGetCredentialsForRequest = {
+    const getCredentialsForRequestPayload: IProofPresentationDetails = {
       userId: id,
       email,
       proofRecordId

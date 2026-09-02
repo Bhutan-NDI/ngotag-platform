@@ -35,7 +35,6 @@ import {
   ISelfAttestedCredential,
   IDeclineProofRequest,
   IProofPresentationPayloadWithCred,
-  IGetCredentialsForRequest,
   ICredentialForRequestRes
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
@@ -84,7 +83,7 @@ export class CloudWalletController {
 
   @MessagePattern({ cmd: 'get-credentials-for-request' })
   async getCredentialsForRequest(
-    proofPresentationByIdPayload: IGetCredentialsForRequest
+    proofPresentationByIdPayload: IProofPresentationDetails
   ): Promise<ICredentialForRequestRes> {
     return this.cloudWalletService.getCredentialsByProofId(proofPresentationByIdPayload);
   }
