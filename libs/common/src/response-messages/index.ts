@@ -654,6 +654,11 @@ export const ResponseMessages = {
       getBaseWalletInfo: 'Fetched base wallet info',
       configureBaseWallet: 'Successfully configure the base wallet.',
       acceptProofRequest: 'Proof request has been successfully accepted.',
+      // Was reusing getProofById's message ("Proof presentation has been successfully received.")
+      // -- a holder submitting a proof with their chosen credential saw a message describing an
+      // unrelated GET handler instead of confirming the accept/submit actually happened. See the
+      // #85 review.
+      acceptRequestWithCred: 'Proof request has been successfully accepted with the chosen credential.',
       checkCloudWalletStatus: 'Cloud wallet exists',
       declineProofRequest: 'Proof request has been successfully declined.',
       createConnection: 'Connection created successfully.',

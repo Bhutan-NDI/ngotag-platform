@@ -225,6 +225,7 @@ export class CloudWalletService {
       });
       return declineProofRequestResponse;
     } catch (error) {
+      this.rethrowIfInvalidProofState(error);
       await this.commonService.handleError(error);
       throw error;
     }
@@ -253,6 +254,7 @@ export class CloudWalletService {
       });
       return submitProofWithCredResponse;
     } catch (error) {
+      this.rethrowIfInvalidProofState(error);
       await this.commonService.handleError(error);
       throw error;
     }
@@ -281,9 +283,7 @@ export class CloudWalletService {
       });
       return credentialsForRequest;
     } catch (error) {
-      if (error.response?.error?.message?.includes('Proof record is in invalid state')) {
-        throw new RpcException({ message: error.response.error.message, statusCode: HttpStatus.BAD_REQUEST });
-      }
+      this.rethrowIfInvalidProofState(error);
       await this.commonService.handleError(error);
       throw error;
     }
@@ -295,23 +295,11 @@ export class CloudWalletService {
    * before (not a restoration); now has a real DELETE /didcomm/credentials/:credentialRecordId.
    * @param credentialDetails
    */
-  // No explicit Promise<Response> return type -- httpDelete resolves to a raw AxiosResponse
-  // (unlike httpGet/httpPost's IFormattedResponse-shaped results), not assignable to DOM's Response
-  // type. Matches the untyped convention agent-service.service.ts's deleteWallet/deleteOidcIssuer
-  // already use for the same reason.
   async deleteCredentialByRecord(credentialDetails: ICredentialDetails): Promise<object | string> {
     try {
-      const { userId, credentialRecordId } = credentialDetails;
-      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
-      const { agentEndpoint } = baseWalletDetails;
-
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_CREDENTIAL}/${credentialRecordId}`;
-
-      const credentialDetailResponse = await this.commonService.httpDelete(url, {
-        headers: { authorization: decryptedApiKey }
-      });
-      return credentialDetailResponse;
+      return await this.deleteAgentCredential(CommonConstants.CLOUD_WALLET_CREDENTIAL, credentialDetails);
     } catch (error) {
+      this.rethrowIfInvalidProofState(error);
       await this.commonService.handleError(error);
       throw error;
     }
@@ -325,19 +313,52 @@ export class CloudWalletService {
    */
   async deleteW3cCredentialByRecord(credentialDetails: ICredentialDetails): Promise<object | string> {
     try {
-      const { userId, credentialRecordId } = credentialDetails;
-      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
-      const { agentEndpoint } = baseWalletDetails;
-
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_W3C_CREDENTIAL}/${credentialRecordId}`;
-
-      const credentialDetailResponse = await this.commonService.httpDelete(url, {
-        headers: { authorization: decryptedApiKey }
-      });
-      return credentialDetailResponse;
+      return await this.deleteAgentCredential(CommonConstants.CLOUD_WALLET_W3C_CREDENTIAL, credentialDetails);
     } catch (error) {
+      this.rethrowIfInvalidProofState(error);
       await this.commonService.handleError(error);
       throw error;
+    }
+  }
+
+  // Shared by deleteCredentialByRecord/deleteW3cCredentialByRecord above -- both were byte-for-byte
+  // identical aside from which CommonConstants URL constant is used. See the #85 review.
+  //
+  // Returns .data, not the raw AxiosResponse -- httpDelete resolves to the full AxiosResponse
+  // ({data, status, headers, config, request}), and returning that unchanged would either expose
+  // .config.headers.authorization (the tenant's just-used decrypted agent API key) to the calling
+  // client over the NATS reply, or throw on the circular request/socket references inside it,
+  // failing the call with a 500 even though the delete succeeded upstream. Matches the convention
+  // every other httpDelete caller in this codebase already follows (agent-service.service.ts's
+  // deleteWallet, deleteOidcIssuer, deleteOid4vpVerifier). See the #85 review.
+  private async deleteAgentCredential(
+    urlBase: CommonConstants,
+    credentialDetails: ICredentialDetails
+  ): Promise<object | string> {
+    const { userId, credentialRecordId } = credentialDetails;
+    const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+    const { agentEndpoint } = baseWalletDetails;
+
+    const url = `${agentEndpoint}${urlBase}/${credentialRecordId}`;
+
+    const credentialDetailResponse = await this.commonService.httpDelete(url, {
+      headers: { authorization: decryptedApiKey }
+    });
+    return credentialDetailResponse.data;
+  }
+
+  // Shared by declineProofRequest/submitProofWithCred/getCredentialsByProofId/
+  // deleteCredentialByRecord/deleteW3cCredentialByRecord -- all five can hit the same
+  // agent-controller state-machine violation (a proof/credential record in a state that doesn't
+  // support the requested operation), but only getCredentialsByProofId special-cased it before,
+  // leaving the other four to fall through to the generic handleError path with an inconsistent
+  // status/shape for the same class of business error. Centralizing this also means a wording
+  // change in agent-controller's error text only needs updating in one place -- the check itself
+  // remains a literal English substring match, which is inherently fragile either way. See the
+  // #85 review.
+  private rethrowIfInvalidProofState(error: { response?: { error?: { message?: string } } }): void {
+    if (error.response?.error?.message?.includes('Proof record is in invalid state')) {
+      throw new RpcException({ message: error.response.error.message, statusCode: HttpStatus.BAD_REQUEST });
     }
   }
 

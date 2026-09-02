@@ -351,7 +351,7 @@ export class CloudWalletController {
     const proofDetails = await this.cloudWalletService.submitProofWithCred(proofPresentationPayloadWithCred);
     const finalResponse: IResponse = {
       statusCode: HttpStatus.OK,
-      message: ResponseMessages.cloudWallet.success.getProofById,
+      message: ResponseMessages.cloudWallet.success.acceptRequestWithCred,
       data: proofDetails
     };
     return res.status(HttpStatus.OK).json(finalResponse);
