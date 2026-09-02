@@ -12,6 +12,7 @@ import { JwtPayload } from './jwt-payload.interface';
 import { OrganizationService } from '../organization/organization.service';
 import { PassportStrategy } from '@nestjs/passport';
 import { ResponseMessages } from '@credebl/common/response-messages';
+import { UserRole } from '@credebl/enum/enum';
 import { UserService } from '../user/user.service';
 import { passportJwtSecret } from 'jwks-rsa';
 
@@ -56,7 +57,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: JwtPayload): Promise<object> {
     let userDetails = null;
-    let userInfo;
 
     const sessionId = payload?.sid;
     let sessionDetails = null;
@@ -70,26 +70,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         throw new UnauthorizedException(ResponseMessages.user.error.invalidAccessToken);
       }
     }
-    if (payload?.email) {
-      // getUserByUserIdInKeycloak looks up by email in platform's own DB (checkUserExist).
-      // Username-based accounts now carry an email claim in Keycloak but don't persist one
-      // locally, so this can legitimately miss — tolerate it and fall through below instead of
-      // letting an uncaught NotFoundException 404 the whole request.
-      userInfo = await this.tolerateKeycloakLookupMiss(
-        () => this.usersService.getUserByUserIdInKeycloak(payload?.email),
-        `email '${payload?.email}'`
-      );
-    }
-    if (!userInfo && payload?.preferred_username && !payload.preferred_username.includes('service-account')) {
-      // Cloud-wallet (and other M2M) tokens may not carry an email claim, or the email lookup
-      // above may have come back empty — fall back to preferred_username, but skip Keycloak's own
-      // service-account principals (no real user behind them, e.g. "service-account-<client-id>").
-      userInfo = await this.tolerateKeycloakLookupMiss(
-        () => this.usersService.getUserByUsernameInKeycloak(payload?.preferred_username),
-        `preferred_username '${payload?.preferred_username}'`
-      );
-    }
-
     if (payload.hasOwnProperty('client_id') && uuidRegex.test(payload['client_id'])) {
       const orgDetails: IOrganization = await this.organizationService.findOrganizationOwner(payload['client_id']);
       this.logger.log('Organization details fetched');
@@ -118,9 +98,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!userDetails && !isServiceToken) {
       throw new NotFoundException(ResponseMessages.user.error.notFound);
     }
-    //TODO patch to QA
-    if (userInfo && userInfo?.['attributes'] && userInfo?.['attributes']?.userRole) {
-      userDetails['userRole'] = userInfo?.['attributes']?.userRole;
+    // Holder marker. This used to read a Keycloak `userRole` user attribute, which the realm's
+    // User Profile doesn't declare and so never stores -- the value was always undefined, which
+    // 403'd every holder on UserRoleGuard and silently disabled the inverse check on
+    // OrgRolesGuard/UserAccessGuard. user_role_mapping is the platform's own holder-only marker,
+    // written at signup for isHolder accounts and already fetched by findUserinKeycloak above.
+    const isHolder = userDetails?.user_role_mapping?.some((mapping) => UserRole.HOLDER === mapping?.user_role?.role);
+    if (isHolder) {
+      userDetails.userRole = CommonConstants.USER_HOLDER_ROLE;
     }
 
     if (userDetails && payload?.ecosystem_access) {
@@ -131,22 +116,5 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ...userDetails,
       ...payload
     };
-  }
-
-  // Only a genuine "not found" is tolerated here -- callers fall back to trying the next lookup.
-  // Anything else (Keycloak admin API down, NATS failure) is a real backend error and should
-  // surface as one, not silently degrade auth (e.g. userRole never getting applied). Matched by
-  // message rather than status code: errors crossing the NATS boundary lose their HttpException
-  // class/status, so the message string is the only reliable signal available here today.
-  private async tolerateKeycloakLookupMiss(lookup: () => Promise<object>, label: string): Promise<object | undefined> {
-    try {
-      return await lookup();
-    } catch (error) {
-      if (error?.message !== ResponseMessages.user.error.notFound) {
-        throw error;
-      }
-      this.logger.log(`No Keycloak user found for ${label}: ${JSON.stringify(error)}`);
-      return undefined;
-    }
   }
 }

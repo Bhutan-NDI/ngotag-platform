@@ -425,6 +425,12 @@ export class UserRepository {
                 }
               }
             }
+          },
+          // Holder marker for JwtStrategy -- written at signup only for isHolder accounts.
+          user_role_mapping: {
+            include: {
+              user_role: true
+            }
           }
         }
       });
