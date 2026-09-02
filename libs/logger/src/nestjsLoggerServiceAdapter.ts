@@ -43,7 +43,10 @@ export default class NestjsLoggerServiceAdapter extends ConsoleLogger implements
 
     // Surfaced as data.error so winstonLogger's format can lift error.stack into info.stack.
     const error = params.find((p) => p instanceof Error) as Error | undefined;
-    const rest = params.filter((p) => !(p instanceof Error));
+    // `undefined` is an absent optional argument, not a caller value -- keeping it produced a
+    // synthetic `props.params: [null]` in the JSON. `false`, `0` and an explicit `null` are real
+    // values and are kept.
+    const rest = params.filter((p) => !(p instanceof Error) && undefined !== p);
 
     return {
       sourceClass,

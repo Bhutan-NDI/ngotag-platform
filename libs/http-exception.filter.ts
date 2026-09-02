@@ -9,13 +9,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
   catch(exception: any): Observable<any> {
-    // The Error is passed as its own argument, not interpolated: JSON.stringify(new Error())
-    // is '{}' because message and stack are non-enumerable, so this used to log nothing useful.
-    this.logger.error(
-      exception instanceof Error ? exception.message : String(exception),
-      exception instanceof Error ? exception : undefined
-    );
-
     let httpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = '';
     switch (exception.constructor) {
@@ -23,9 +16,16 @@ export class HttpExceptionFilter implements ExceptionFilter {
         httpStatus = exception.getStatus() || HttpStatus.BAD_REQUEST;
         message = exception?.getResponse() || exception.message;
         break;
-      case RpcException:
-        return throwError(() => exception.getError());
-        break;
+      case RpcException: {
+        // Already classified by the service that raised it. Forward unchanged, but record it
+        // once here so the hop is not silent -- and derive the level from its own code.
+        const rpcError = exception.getError();
+        const rpcStatus =
+          ('object' === typeof rpcError && null !== rpcError && (rpcError as { code?: number }).code) ||
+          HttpStatus.INTERNAL_SERVER_ERROR;
+        this.log(exception, rpcStatus, this.describe(exception, rpcError));
+        return throwError(() => rpcError);
+      }
       case PrismaClientKnownRequestError:
         switch (exception.code) {
           case 'P2002': // Unique constraint failed on the {constraint}
@@ -37,7 +37,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
           case 'P2011': // Null constraint violation on the {constraint}
           case 'P2017': // The records for relation {relation_name} between the {parent_name} and {child_name} models are not connected.
           case 'P2021': // The table {table} does not exist in the current database.
-          case 'P2022': // The column {column} does not exist in the current database.          
+          case 'P2022': // The column {column} does not exist in the current database.
             httpStatus = HttpStatus.BAD_REQUEST;
             message = exception?.response?.message || exception?.message;
             break;
@@ -74,6 +74,42 @@ export class HttpExceptionFilter implements ExceptionFilter {
           exception?.message ||
           'Internal server error';
     }
+    this.log(exception, httpStatus, this.describe(exception, message));
     return throwError(() => new RpcException({ message, code: httpStatus }));
+  }
+
+  /**
+   * Emitted once per exception, after classification, because the level has to follow the
+   * resolved status -- a 404 from Prisma P2025 or an HttpException is a normal outcome and must
+   * not sit in the error stream. The Error goes as its own argument so the adapter can put it in
+   * data.error and winston can lift its stack; when the caught value is not an Error the optional
+   * argument is omitted entirely rather than passed as undefined.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private log(exception: any, httpStatus: number, description: string): void {
+    const level = HttpStatus.INTERNAL_SERVER_ERROR <= httpStatus ? 'error' : 'warn';
+    if (exception instanceof Error) {
+      this.logger[level](`${httpStatus}: ${description}`, exception);
+    } else {
+      this.logger[level](`${httpStatus}: ${description}`);
+    }
+  }
+
+  /** Prefers the classified message; falls back to something better than '[object Object]'. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private describe(exception: any, resolved: unknown): string {
+    if ('string' === typeof resolved && '' !== resolved) {
+      return resolved;
+    }
+    if (resolved && 'object' === typeof resolved) {
+      const nested = (resolved as { message?: unknown }).message;
+      if ('string' === typeof nested && '' !== nested) {
+        return nested;
+      }
+    }
+    if (exception instanceof Error && '' !== exception.message) {
+      return exception.message;
+    }
+    return `unclassified ${typeof exception} exception`;
   }
 }
