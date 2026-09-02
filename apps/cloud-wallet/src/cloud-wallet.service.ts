@@ -145,7 +145,7 @@ export class CloudWalletService {
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CommonConstants.CLOUD_WALLET_ACCEPT_PROOF_REQUEST}`;
+      const url = this.buildProofUrl(agentEndpoint, proofRecordId, CommonConstants.CLOUD_WALLET_ACCEPT_PROOF_REQUEST);
       const proofAcceptRequestPayload = {
         comment,
         filterByNonRevocationRequirements,
@@ -172,7 +172,7 @@ export class CloudWalletService {
       const { proofRecordId, userId } = proofPrsentationByIdPayload;
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}}`;
+      const url = this.buildProofUrl(agentEndpoint, proofRecordId);
 
       const getProofById = await this.commonService.httpGet(url, { headers: { authorization: decryptedApiKey } });
       return getProofById;
@@ -194,7 +194,7 @@ export class CloudWalletService {
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
       const threadParam = threadId ? `?threadId=${threadId}` : '';
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${threadParam}}`;
+      const url = this.buildProofUrl(agentEndpoint, '', threadParam);
       const getProofById = await this.commonService.httpGet(url, { headers: { authorization: decryptedApiKey } });
       return getProofById;
     } catch (error) {
@@ -216,7 +216,7 @@ export class CloudWalletService {
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CommonConstants.CLOUD_WALLET_DECLINE_PROOF_REQUEST}`;
+      const url = this.buildProofUrl(agentEndpoint, proofRecordId, CommonConstants.CLOUD_WALLET_DECLINE_PROOF_REQUEST);
       const declineProofRequestBody = { sendProblemReport, problemReportDescription };
 
       const declineProofRequestResponse = await this.commonService.httpPost(url, declineProofRequestBody, {
@@ -246,7 +246,11 @@ export class CloudWalletService {
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proof.proofRecordId}${CommonConstants.CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED}`;
+      const url = this.buildProofUrl(
+        agentEndpoint,
+        proof.proofRecordId,
+        CommonConstants.CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED
+      );
       // proofRecordId is a path param on agent-controller's side, not part of the body -- its
       // tsoa schema for this route only declares proofFormats/comment, and throw-on-extras
       // rejects any other key with a 422. Sending the whole proof object (which also carries
@@ -284,7 +288,11 @@ export class CloudWalletService {
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CommonConstants.CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST}`;
+      const url = this.buildProofUrl(
+        agentEndpoint,
+        proofRecordId,
+        CommonConstants.CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST
+      );
 
       const credentialsForRequest = await this.commonService.httpGet(url, {
         headers: { authorization: decryptedApiKey }
@@ -353,6 +361,13 @@ export class CloudWalletService {
       headers: { authorization: decryptedApiKey }
     });
     return credentialDetailResponse.data;
+  }
+
+  // Shared by all 7 CLOUD_WALLET_GET_PROOF_REQUEST-based methods -- the stray-'}' typo fixed in #86
+  // happened twice independently from copy-pasting this exact template string. proofRecordId
+  // defaults to '' for getProofPresentation, the one caller with no id (suffix is its query string).
+  private buildProofUrl(agentEndpoint: string, proofRecordId = '', suffix = ''): string {
+    return `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${suffix}`;
   }
 
   // Shared by declineProofRequest/submitProofWithCred/getCredentialsByProofId/
@@ -1233,7 +1248,7 @@ export class CloudWalletService {
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CommonConstants.CLOUD_WALLET_PROOF_FORM_DATA}`;
+      const url = this.buildProofUrl(agentEndpoint, proofRecordId, CommonConstants.CLOUD_WALLET_PROOF_FORM_DATA);
 
       const proofFormatDataResponse = await this.commonService.httpGet(url, {
         headers: { authorization: decryptedApiKey }
