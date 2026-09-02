@@ -371,8 +371,12 @@ export enum CommonConstants {
   // Matches agent-controller's real native WalletPortabilityService route — NOT the legacy
   // '/multi-tenancy/import-tenant/' path some older branches assumed.
   URL_CLOUD_WALLET_IMPORT = '/multi-tenancy/import/',
-  CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED = '/multi-tenancy/proofs/accept-request-with-cred',
-  CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST = '/multi-tenancy/credentialsForRequest',
+  // Suffixes only, same convention as CLOUD_WALLET_ACCEPT_PROOF_REQUEST/CLOUD_WALLET_PROOF_FORM_DATA
+  // below — used as ${CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${suffix}. Repointed from the
+  // stale /multi-tenancy/* paths (agent-controller never had those; now has real /didcomm/proofs
+  // routes instead — see agent-controller's acceptRequestWithCred/getCredentialsForRequest port).
+  CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED = '/accept-request-with-cred',
+  CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST = '/credentials-for-request',
   CLOUD_WALLET_DELETE_BY_TENANT_ID = '/multi-tenancy/',
   // No trailing slash: acceptProofRequest builds
   // `${CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CLOUD_WALLET_ACCEPT_PROOF_REQUEST}` --
@@ -380,7 +384,7 @@ export enum CommonConstants {
   // (src/server.ts) uses the framework's default (strict routing off); an implicit dependency on
   // that default, for no benefit, on a route this PR doesn't otherwise touch. See the #71 review.
   CLOUD_WALLET_ACCEPT_PROOF_REQUEST = '/accept-request',
-  CLOUD_WALLET_DECLINE_PROOF_REQUEST = '/decline-request/',
+  CLOUD_WALLET_DECLINE_PROOF_REQUEST = '/decline-request',
   CLOUD_WALLET_DID_LIST = '/multi-tenancy/dids/',
   // These three are consumed today by cloud-wallet.service.ts (unchanged by this PR) and were
   // repointed from /didcomm/* to nonexistent /multi-tenancy/* routes — restored to develop's
@@ -397,12 +401,9 @@ export enum CommonConstants {
   // Suffix only — used as ${CLOUD_WALLET_GET_PROOF_REQUEST}/${id}${CLOUD_WALLET_PROOF_FORM_DATA},
   // matching agent-controller's real GET /didcomm/proofs/:proofRecordId/form-data.
   CLOUD_WALLET_PROOF_FORM_DATA = '/form-data',
-  // No agent-controller DELETE endpoint exists for credentials (checked ProofController /
-  // CredentialController directly) — delete-credential-by-record-id and
-  // delete-w3c-credential-by-record-id are deliberately not wired up yet; these constants are
-  // unused until agent-controller adds that capability.
-  CLOUD_WALLET_DELETE_CREDENTIAL = '/multi-tenancy/credential',
-  CLOUD_WALLET_DELETE_W3C_CREDENTIAL = '/multi-tenancy/credential/w3c',
+  // agent-controller now has real DELETE endpoints for both (see CredentialController.deleteById/
+  // deleteW3cById) — same base paths as CLOUD_WALLET_CREDENTIAL/CLOUD_WALLET_W3C_CREDENTIAL above,
+  // so these two are retired in favor of reusing those directly (${base}/${credentialRecordId}).
   CLOUD_WALLET_BASIC_MESSAGE = '/didcomm/basic-messages/',
   // No trailing tenantId — agent-controller's endpoint moved off /multi-tenancy/:tenantId (only
   // reachable with a base-wallet token) onto request.agent (POST /agent/credential/self-attested),

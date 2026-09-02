@@ -9,6 +9,7 @@ import {
   Logger,
   NotFoundException
 } from '@nestjs/common';
+import { RpcException } from '@nestjs/microservices';
 import {
   IAcceptOffer,
   ICreateCloudWalletDid,
@@ -42,7 +43,10 @@ import {
   IExportCloudWallet,
   IImportCloudWallet,
   IWalletPortabilityJobStatus,
-  ISelfAttestedCredential
+  ISelfAttestedCredential,
+  IDeclineProofRequest,
+  IProofPresentationPayloadWithCred,
+  ICredentialForRequestRes
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -196,6 +200,181 @@ export class CloudWalletService {
     } catch (error) {
       await this.commonService.handleError(error);
       throw error;
+    }
+  }
+
+  /**
+   * Decline a received proof request as holder, optionally sending a problem-report message.
+   * Restored — deleted when agent-controller had no matching endpoint (#71 review); agent-controller
+   * now has a real POST /didcomm/proofs/:id/decline-request (PR #76).
+   * @param declineProofRequestPayload
+   * @returns proof presentation
+   */
+  async declineProofRequest(declineProofRequestPayload: IDeclineProofRequest): Promise<IProofRequestRes> {
+    try {
+      const { proofRecordId, sendProblemReport, problemReportDescription, userId } = declineProofRequestPayload;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CommonConstants.CLOUD_WALLET_DECLINE_PROOF_REQUEST}`;
+      const declineProofRequestBody = { sendProblemReport, problemReportDescription };
+
+      const declineProofRequestResponse = await this.commonService.httpPost(url, declineProofRequestBody, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return declineProofRequestResponse;
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Submit a proof request accept with the caller's own chosen credential per requirement, instead
+   * of auto-selecting (see acceptProofRequest above). Wired now that agent-controller has a real
+   * POST /didcomm/proofs/:id/accept-request-with-cred (this agent's contract never had an
+   * equivalent before — not a restoration).
+   * @param proofPresentationPayloadWithCred
+   * @returns proof presentation
+   */
+  async submitProofWithCred(
+    proofPresentationPayloadWithCred: IProofPresentationPayloadWithCred
+  ): Promise<IProofRequestRes> {
+    try {
+      const { proof, userId } = proofPresentationPayloadWithCred;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proof.proofRecordId}${CommonConstants.CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED}`;
+      // proofRecordId is a path param on agent-controller's side, not part of the body -- its
+      // tsoa schema for this route only declares proofFormats/comment, and throw-on-extras
+      // rejects any other key with a 422. Sending the whole proof object (which also carries
+      // proofRecordId) broke every real call. See the #85 review.
+      const { proofFormats, comment } = proof;
+
+      const submitProofWithCredResponse = await this.commonService.httpPost(
+        url,
+        { proofFormats, comment },
+        {
+          headers: { authorization: decryptedApiKey }
+        }
+      );
+      return submitProofWithCredResponse;
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * List the credentials that satisfy a proof request, without accepting any of them — lets the
+   * holder choose before submitting via submitProofWithCred above. Restored — deleted when
+   * agent-controller had no matching endpoint (#71 review); agent-controller now has a real
+   * GET /didcomm/proofs/:id/credentials-for-request (PR #76).
+   * @param getCredentialsForRequestPayload
+   * @returns credentials satisfying each requested attribute/predicate
+   */
+  async getCredentialsByProofId(
+    getCredentialsForRequestPayload: IProofPresentationDetails
+  ): Promise<ICredentialForRequestRes> {
+    try {
+      const { proofRecordId, userId } = getCredentialsForRequestPayload;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CommonConstants.CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST}`;
+
+      const credentialsForRequest = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return credentialsForRequest;
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete an AnonCreds/Indy credential exchange record (and, by default, its associated stored
+   * credential) by credential record id. New — agent-controller never had a matching endpoint
+   * before (not a restoration); now has a real DELETE /didcomm/credentials/:credentialRecordId.
+   * @param credentialDetails
+   */
+  async deleteCredentialByRecord(credentialDetails: ICredentialDetails): Promise<object | string> {
+    try {
+      return await this.deleteAgentCredential(CommonConstants.CLOUD_WALLET_CREDENTIAL, credentialDetails);
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a W3C credential by credential record id. New — same rationale as
+   * deleteCredentialByRecord above, but for the separate W3C credential store
+   * (DELETE /didcomm/credentials/w3c/:credentialRecordId).
+   * @param credentialDetails
+   */
+  async deleteW3cCredentialByRecord(credentialDetails: ICredentialDetails): Promise<object | string> {
+    try {
+      return await this.deleteAgentCredential(CommonConstants.CLOUD_WALLET_W3C_CREDENTIAL, credentialDetails);
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  // Shared by deleteCredentialByRecord/deleteW3cCredentialByRecord above -- both were byte-for-byte
+  // identical aside from which CommonConstants URL constant is used. See the #85 review.
+  //
+  // Returns .data, not the raw AxiosResponse -- httpDelete resolves to the full AxiosResponse
+  // ({data, status, headers, config, request}), and returning that unchanged would either expose
+  // .config.headers.authorization (the tenant's just-used decrypted agent API key) to the calling
+  // client over the NATS reply, or throw on the circular request/socket references inside it,
+  // failing the call with a 500 even though the delete succeeded upstream. Matches the convention
+  // every other httpDelete caller in this codebase already follows (agent-service.service.ts's
+  // deleteWallet, deleteOidcIssuer, deleteOid4vpVerifier). See the #85 review.
+  private async deleteAgentCredential(
+    urlBase: CommonConstants,
+    credentialDetails: ICredentialDetails
+  ): Promise<object | string> {
+    const { userId, credentialRecordId } = credentialDetails;
+    const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+    const { agentEndpoint } = baseWalletDetails;
+
+    const url = `${agentEndpoint}${urlBase}/${credentialRecordId}`;
+
+    const credentialDetailResponse = await this.commonService.httpDelete(url, {
+      headers: { authorization: decryptedApiKey }
+    });
+    return credentialDetailResponse.data;
+  }
+
+  // Shared by declineProofRequest/submitProofWithCred/getCredentialsByProofId/
+  // deleteCredentialByRecord/deleteW3cCredentialByRecord -- all five can hit the same
+  // agent-controller state-machine violation (a proof/credential record in a state that doesn't
+  // support the requested operation), but only getCredentialsByProofId special-cased it before,
+  // leaving the other four to fall through to the generic handleError path with an inconsistent
+  // status/shape for the same class of business error. Centralizing this also means a wording
+  // change in agent-controller's error text only needs updating in one place -- the check itself
+  // remains a literal English substring match, which is inherently fragile either way. See the
+  // #85 review.
+  private rethrowIfInvalidProofState(error: { response?: { error?: { message?: string } } }): void {
+    const message = error.response?.error?.message;
+    // agent-controller's own #85-review fix (ProofController's assertProofState helper) now
+    // throws "Cannot ${verb} a proof record in state '...'; expected 'request-received'." for
+    // acceptRequestWithCred/declineRequest/getCredentialsForRequest's state-guard case --
+    // completely different wording from the original 'Proof record is in invalid state' match,
+    // which was Credo's own raw error text reaching here before that fix existed. Matching both:
+    // the new wording is what real traffic hits today, the old one is kept in case some other
+    // code path still emits Credo's raw text. See the #85 review.
+    if (message?.includes('Proof record is in invalid state') || message?.includes("expected 'request-received'")) {
+      throw new RpcException({ message, statusCode: HttpStatus.BAD_REQUEST });
     }
   }
 

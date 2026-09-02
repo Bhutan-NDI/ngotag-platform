@@ -380,11 +380,6 @@ export interface IProofPresentationPayloadWithCred {
   };
 }
 
-export interface IGetCredentialsForRequest {
-  userId: string;
-  email: string;
-  proofRecordId: string;
-}
 export interface IProofPresentationDetails {
   userId: string;
   email: string;
