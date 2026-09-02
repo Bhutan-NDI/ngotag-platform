@@ -51,7 +51,10 @@ export interface IDeclineProofRequest {
 
 export interface IReceiveInvitation {
   alias?: string;
-  label?: string;
+  // Required, matching ReceiveInvitationUrlDTO -- agent-controller's own endpoint (both the old
+  // multi-tenancy one and the current /didcomm/oob one) has always required label. See the #71
+  // review's IReceiveInvitation/DTO contract-mismatch finding.
+  label: string;
   imageUrl?: string;
   autoAcceptConnection?: boolean;
   autoAcceptInvitation?: boolean;
@@ -61,6 +64,9 @@ export interface IReceiveInvitation {
   invitationUrl: string;
   email?: string;
   userId?: string;
+  // Restored, matching ReceiveInvitationUrlDTO -- see that DTO's own comment for why this exists
+  // (revocation-credential connection tagging/filtering) and why it was dropped in the first place.
+  connectionType?: string;
 }
 
 export interface IAcceptOffer {
@@ -374,11 +380,6 @@ export interface IProofPresentationPayloadWithCred {
   };
 }
 
-export interface IGetCredentialsForRequest {
-  userId: string;
-  email: string;
-  proofRecordId: string;
-}
 export interface IProofPresentationDetails {
   userId: string;
   email: string;

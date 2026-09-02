@@ -20,7 +20,6 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
-  ApiExcludeEndpoint,
   ApiForbiddenResponse,
   ApiOperation,
   ApiQuery,
@@ -69,15 +68,14 @@ import {
   IW3cCredentials,
   ICheckCloudWalletStatus,
   IDeleteCloudWallet,
-  IWalletPortabilityJobStatus
+  IWalletPortabilityJobStatus,
+  IDeclineProofRequest,
+  IProofPresentationPayloadWithCred
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CreateConnectionDto } from './dtos/create-connection.dto';
 import { SelfAttestedCredentialDto } from './dtos/self-attested-credential.dto';
-// ProofWithCredDto/DeclineProofRequestDto: only used by handlers currently gated with
-// NOT_IMPLEMENTED below (no microservice handler exists anywhere yet) -- restore these imports
-// alongside each handler's real body once a handler exists. See the #71 review.
-// createSelfAttestedW3cCredential's own handler is real again on this branch -- the microservice
-// handler it needed now exists (see cloud-wallet.service.ts).
+import { DeclineProofRequestDto } from './dtos/decline-proof-request.dto';
+import { ProofWithCredDto } from './dtos/accept-proof-request-with-cred.dto';
 
 @UseFilters(CustomExceptionFilter)
 @Controller()
@@ -300,18 +298,28 @@ export class CloudWalletController {
    * @returns success message
    */
   @Post('/proofs/decline-request')
-  @ApiOperation({ summary: 'Accept proof request', description: 'Accept proof request' })
+  @ApiOperation({ summary: 'Decline proof request', description: 'Decline proof request' })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
-  @ApiExcludeEndpoint()
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
-  // decline-proof-request-by-holder has no microservice handler anywhere yet -- returning early
-  // here (before publishing to NATS) instead of shipping a route that reads as supported API but
-  // always hangs until the NATS timeout. See the #71 review. Remove this guard once a real
-  // handler exists.
-  async declineProofRequest(@Res() res: Response): Promise<Response> {
-    return res
-      .status(HttpStatus.NOT_IMPLEMENTED)
-      .json({ statusCode: HttpStatus.NOT_IMPLEMENTED, message: ResponseMessages.cloudWallet.error.notImplemented });
+  async declineProofRequest(
+    @Res() res: Response,
+    @Body() declineProofRequest: DeclineProofRequestDto,
+    @User() user: user
+  ): Promise<Response> {
+    const { id, email } = user;
+    const declineProofRequestPayload: IDeclineProofRequest = {
+      ...declineProofRequest,
+      userId: id,
+      email
+    };
+
+    const declineProofRequestDetails = await this.cloudWalletService.declineProofRequest(declineProofRequestPayload);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.CREATED,
+      message: ResponseMessages.cloudWallet.success.declineProofRequest,
+      data: declineProofRequestDetails
+    };
+    return res.status(HttpStatus.CREATED).json(finalResponse);
   }
 
   /**
@@ -321,16 +329,31 @@ export class CloudWalletController {
    * @returns success message
    */
   @Post('/proofs/acceptRequestWithCred')
-  @ApiOperation({ summary: 'Get proof presentation by Id', description: 'Get proof presentation by Id' })
+  @ApiOperation({
+    summary: 'Accept proof request with a chosen credential',
+    description: 'Accept proof request with a chosen credential'
+  })
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
-  @ApiExcludeEndpoint()
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
-  // submit-proof-with-cred has no microservice handler anywhere yet -- see declineProofRequest's
-  // identical comment above.
-  async acceptRequestWithCred(@Res() res: Response): Promise<Response> {
-    return res
-      .status(HttpStatus.NOT_IMPLEMENTED)
-      .json({ statusCode: HttpStatus.NOT_IMPLEMENTED, message: ResponseMessages.cloudWallet.error.notImplemented });
+  async acceptRequestWithCred(
+    @Res() res: Response,
+    @Body() proofDto: ProofWithCredDto,
+    @User() user: user
+  ): Promise<Response> {
+    const { id, email } = user;
+    const proofPresentationPayloadWithCred: IProofPresentationPayloadWithCred = {
+      userId: id,
+      email,
+      proof: proofDto
+    };
+
+    const proofDetails = await this.cloudWalletService.submitProofWithCred(proofPresentationPayloadWithCred);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.cloudWallet.success.acceptRequestWithCred,
+      data: proofDetails
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**
@@ -372,16 +395,30 @@ export class CloudWalletController {
    * @returns success message
    */
   @Get('/credentialsForRequest/:proofRecordId')
-  @ApiOperation({ summary: 'Get proof presentation by Id', description: 'Get proof presentation by Id' })
+  @ApiOperation({ summary: 'Get credentials for request', description: 'Get credentials for request' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
-  @ApiExcludeEndpoint()
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
-  // get-credentials-for-request has no microservice handler anywhere yet -- see
-  // declineProofRequest's identical comment above.
-  async getCredentialsForRequest(@Res() res: Response): Promise<Response> {
-    return res
-      .status(HttpStatus.NOT_IMPLEMENTED)
-      .json({ statusCode: HttpStatus.NOT_IMPLEMENTED, message: ResponseMessages.cloudWallet.error.notImplemented });
+  async getCredentialsForRequest(
+    @Param('proofRecordId') proofRecordId: string,
+    @Res() res: Response,
+    @User() user: user
+  ): Promise<Response> {
+    const { id, email } = user;
+    const getCredentialsForRequestPayload: IProofPresentationDetails = {
+      userId: id,
+      email,
+      proofRecordId
+    };
+
+    const getCredentialsForRequestDetails = await this.cloudWalletService.getCredentialsForRequest(
+      getCredentialsForRequestPayload
+    );
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.cloudWallet.success.getCredentialsByProofId,
+      data: getCredentialsForRequestDetails
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**
@@ -1026,18 +1063,32 @@ export class CloudWalletController {
    */
   @Delete('/credential/:credentialRecordId')
   @ApiOperation({
-    summary: 'Get credential by credential record Id',
-    description: 'Get credential by credential record Id'
+    summary: 'Delete credential by credential record Id',
+    description: 'Delete credential by credential record Id'
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
-  @ApiExcludeEndpoint()
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
-  // delete-credential-by-record-id has no microservice handler anywhere yet -- see
-  // declineProofRequest's identical comment above.
-  async deleteCredentialByCredentialRecordId(@Res() res: Response): Promise<Response> {
-    return res
-      .status(HttpStatus.NOT_IMPLEMENTED)
-      .json({ statusCode: HttpStatus.NOT_IMPLEMENTED, message: ResponseMessages.cloudWallet.error.notImplemented });
+  async deleteCredentialByCredentialRecordId(
+    @Param('credentialRecordId') credentialRecordId: string,
+    @Res() res: Response,
+    @User() user: user
+  ): Promise<Response> {
+    const { id, email } = user;
+
+    const credentialDetails: ICredentialDetails = {
+      userId: id,
+      email,
+      credentialRecordId
+    };
+
+    const deleteCredentialResponse =
+      await this.cloudWalletService.deleteCredentialByCredentialRecordId(credentialDetails);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.cloudWallet.success.deleteCredential,
+      data: deleteCredentialResponse
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**
@@ -1048,18 +1099,32 @@ export class CloudWalletController {
    */
   @Delete('/credential/w3c/:credentialRecordId')
   @ApiOperation({
-    summary: 'Get credential by credential record Id',
-    description: 'Get credential by credential record Id'
+    summary: 'Delete W3C credential by credential record Id',
+    description: 'Delete W3C credential by credential record Id'
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
-  @ApiExcludeEndpoint()
   @UseGuards(AuthGuard('jwt'), UserRoleGuard)
-  // delete-w3c-credential-by-record-id has no microservice handler anywhere yet -- see
-  // declineProofRequest's identical comment above.
-  async deleteW3cCredentialByCredentialRecordId(@Res() res: Response): Promise<Response> {
-    return res
-      .status(HttpStatus.NOT_IMPLEMENTED)
-      .json({ statusCode: HttpStatus.NOT_IMPLEMENTED, message: ResponseMessages.cloudWallet.error.notImplemented });
+  async deleteW3cCredentialByCredentialRecordId(
+    @Param('credentialRecordId') credentialRecordId: string,
+    @Res() res: Response,
+    @User() user: user
+  ): Promise<Response> {
+    const { id, email } = user;
+
+    const credentialDetails: ICredentialDetails = {
+      userId: id,
+      email,
+      credentialRecordId
+    };
+
+    const deleteCredentialResponse =
+      await this.cloudWalletService.deleteW3cCredentialByCredentialRecordId(credentialDetails);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.cloudWallet.success.deleteCredential,
+      data: deleteCredentialResponse
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**

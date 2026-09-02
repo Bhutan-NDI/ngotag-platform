@@ -32,7 +32,10 @@ import {
   IExportCloudWallet,
   IImportCloudWallet,
   IWalletPortabilityJobStatus,
-  ISelfAttestedCredential
+  ISelfAttestedCredential,
+  IDeclineProofRequest,
+  IProofPresentationPayloadWithCred,
+  ICredentialForRequestRes
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 // eslint-disable-next-line camelcase
 import { cloud_wallet_user_info, user } from '@prisma/client';
@@ -64,6 +67,25 @@ export class CloudWalletController {
   @MessagePattern({ cmd: 'get-proof-presentation-holder' })
   async getProofPresentation(proofPresentationPayload: IGetProofPresentation): Promise<IProofRequestRes[]> {
     return this.cloudWalletService.getProofPresentation(proofPresentationPayload);
+  }
+
+  @MessagePattern({ cmd: 'decline-proof-request-by-holder' })
+  async declineProofRequest(declineProofRequestPayload: IDeclineProofRequest): Promise<IProofRequestRes> {
+    return this.cloudWalletService.declineProofRequest(declineProofRequestPayload);
+  }
+
+  @MessagePattern({ cmd: 'submit-proof-with-cred' })
+  async submitProofWithCred(
+    proofPresentationByIdPayload: IProofPresentationPayloadWithCred
+  ): Promise<IProofRequestRes> {
+    return this.cloudWalletService.submitProofWithCred(proofPresentationByIdPayload);
+  }
+
+  @MessagePattern({ cmd: 'get-credentials-for-request' })
+  async getCredentialsForRequest(
+    proofPresentationByIdPayload: IProofPresentationDetails
+  ): Promise<ICredentialForRequestRes> {
+    return this.cloudWalletService.getCredentialsByProofId(proofPresentationByIdPayload);
   }
 
   @MessagePattern({ cmd: 'create-cloud-wallet' })
@@ -165,6 +187,16 @@ export class CloudWalletController {
   @MessagePattern({ cmd: 'wallet-credentialFormatData-by-record-id' })
   async getCredentialFormatDataByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<Response> {
     return this.cloudWalletService.getCredentialFormatDataByCredentialRecordId(credentialDetails);
+  }
+
+  @MessagePattern({ cmd: 'delete-credential-by-record-id' })
+  async deleteCredentialByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<object | string> {
+    return this.cloudWalletService.deleteCredentialByRecord(credentialDetails);
+  }
+
+  @MessagePattern({ cmd: 'delete-w3c-credential-by-record-id' })
+  async deleteW3cCredentialByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<object | string> {
+    return this.cloudWalletService.deleteW3cCredentialByRecord(credentialDetails);
   }
 
   @MessagePattern({ cmd: 'wallet-Proof-presentation-FormatData-by-record-id' })
