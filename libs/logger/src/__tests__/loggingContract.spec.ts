@@ -234,6 +234,16 @@ describe('HttpExceptionFilter (all microservices)', () => {
     expect(String(emitted[0].message)).toContain('500');
   });
 
+  it('rejects a non-error RpcException status (200) and falls back to 500', () => {
+    // There is no such thing as a 1xx/2xx/3xx outcome once something has already been thrown --
+    // a stray 200 here must not turn a caught exception into a reported success.
+    swallow(filter.catch(new RpcException({ message: 'ok?', code: 200 })));
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].level).toBe('error');
+    expect(String(emitted[0].message)).toContain('500');
+  });
+
   it('handles a null rejection without throwing', () => {
     expect(() => swallow(filter.catch(null))).not.toThrow();
     expect(emitted).toHaveLength(1);
@@ -306,6 +316,14 @@ describe('AllExceptionsFilter (API Gateway, global)', () => {
     expect(emitted).toHaveLength(1);
     expect(replied.status).toBe(500);
   });
+
+  it('rejects a non-error RpcException status (302) and falls back to 500', () => {
+    filter.catch(new RpcException({ message: 'redirect?', code: 302 }), host() as never);
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].level).toBe('error');
+    expect(replied.status).toBe(500);
+  });
 });
 
 describe('CustomExceptionFilter (API Gateway, controller-scoped)', () => {
@@ -355,5 +373,41 @@ describe('CustomExceptionFilter (API Gateway, controller-scoped)', () => {
   it('handles a null rejection without throwing', () => {
     expect(() => filter.catch(null as never, host() as never)).not.toThrow();
     expect(emitted).toHaveLength(1);
+  });
+
+  it('rejects a non-error statusCode (200) and falls back to 500', () => {
+    // A malformed getResponse() carrying a 2xx must not turn a caught exception into a
+    // reported success.
+    filter.catch(new HttpException({ statusCode: 200, message: 'ok?' }, 200), host() as never);
+
+    expect(replied.status).toBe(500);
+    expect(replied.body?.statusCode).toBe(500);
+    expect(emitted[0].level).toBe('error');
+  });
+
+  it('normalizes a structured message instead of throwing on .includes', () => {
+    // { message: { error: ... } } is the plain-object shape that used to hit
+    // exceptionResponse.message.includes(...) before message was type-checked.
+    expect(() =>
+      filter.catch(new HttpException({ statusCode: 400, message: { error: 'nested failure' } }, 400), host() as never)
+    ).not.toThrow();
+
+    expect(emitted).toHaveLength(1);
+    expect(replied.status).toBe(400);
+    expect(typeof replied.body?.message).toBe('string');
+  });
+
+  it('preserves a validation-error array message', () => {
+    filter.catch(new HttpException({ statusCode: 400, message: ['name must not be empty'] }, 400), host() as never);
+
+    expect(replied.body?.message).toEqual(['name must not be empty']);
+  });
+
+  it('validates a numeric-string statusCode consistently across the log, body, and response.status()', () => {
+    filter.catch(new HttpException({ statusCode: '404', message: 'missing' }, 404), host() as never);
+
+    expect(replied.status).toBe(404);
+    expect(replied.body?.statusCode).toBe(404);
+    expect(String(emitted[0].message)).toContain('404');
   });
 });

@@ -1,19 +1,25 @@
 import { HttpStatus } from '@nestjs/common';
 
-const MIN_HTTP_STATUS = 100;
+const MIN_HTTP_STATUS = 400;
 const MAX_HTTP_STATUS = 599;
 
 /**
- * Picks the first candidate that is genuinely an HTTP status.
+ * Picks the first candidate that is genuinely an HTTP *error* status.
  *
- * Two shapes made this necessary. Producers in this repository raise RpcException with the status
- * under `code`, `statusCode` or `status` depending on the service, so reading a single field sent
- * routine 404s and 409s down the 500 path. And library errors carry a `code` that is not a status
- * at all -- `ECONNREFUSED` from a socket, for instance -- which then flowed into a numeric
- * comparison as NaN and made a downstream outage look like a client error.
+ * Every caller uses this at an exception boundary -- there is no such thing as a 1xx/2xx/3xx
+ * outcome once something has already been thrown. Accepting that range let a 200 or 302 that
+ * leaked into `code`/`statusCode` be forwarded as a successful response for a request that
+ * actually failed.
+ *
+ * Two further shapes made a validated resolver necessary in the first place. Producers in this
+ * repository raise RpcException with the status under `code`, `statusCode` or `status` depending
+ * on the service, so reading a single field sent routine 404s and 409s down the 500 path. And
+ * library errors carry a `code` that is not a status at all -- `ECONNREFUSED` from a socket, for
+ * instance -- which then flowed into a numeric comparison as NaN and made a downstream outage look
+ * like a client error.
  *
  * Numeric strings are accepted because a status crossing NATS as JSON can arrive that way;
- * anything else falls back to 500.
+ * anything else, including a valid but non-error status, falls back to 500.
  */
 export function resolveHttpStatus(...candidates: unknown[]): number {
   for (const candidate of candidates) {
