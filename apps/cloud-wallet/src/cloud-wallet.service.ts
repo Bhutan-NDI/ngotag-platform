@@ -1,4 +1,5 @@
 /* eslint-disable camelcase */
+import { createHash } from 'crypto';
 import { CommonService } from '@credebl/common';
 import {
   BadRequestException,
@@ -698,7 +699,9 @@ export class CloudWalletService {
    * @param walletDetails
    * @returns DID list
    */
-  async getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {
+  async getDidList(
+    walletDetails: IWalletDetailsForDidList
+  ): Promise<IProofRequestRes[] | (Record<string, unknown> & { hashTenantID: string })> {
     try {
       const { userId, isDefault } = walletDetails;
 
@@ -715,6 +718,15 @@ export class CloudWalletService {
         : `${agentEndpoint}${CommonConstants.URL_AGENT_GET_DID}`;
 
       const didList = (await this.commonService.httpGet(url, { headers: { authorization: decryptedApiKey } })) ?? [];
+      // Reshaped to a single object: an array can't carry a named property (hashTenantID) across a JSON hop.
+      if (isDefault) {
+        const [defaultDid] = didList;
+        if (!defaultDid) {
+          throw new NotFoundException(ResponseMessages.cloudWallet.error.defaultDidNotFound);
+        }
+        const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+        return { ...defaultDid, hashTenantID: createHash('md5').update(tenantId).digest('hex') };
+      }
       return didList;
     } catch (error) {
       await this.commonService.handleError(error);

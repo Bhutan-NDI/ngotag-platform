@@ -190,7 +190,9 @@ export class CloudWalletService extends BaseService {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'get-import-wallet-status', jobStatus);
   }
 
-  getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {
+  getDidList(
+    walletDetails: IWalletDetailsForDidList
+  ): Promise<IProofRequestRes[] | (Record<string, unknown> & { hashTenantID: string })> {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'cloud-wallet-did-list', walletDetails);
   }
 

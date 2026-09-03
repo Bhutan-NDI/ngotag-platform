@@ -109,7 +109,9 @@ export class CloudWalletController {
   }
 
   @MessagePattern({ cmd: 'cloud-wallet-did-list' })
-  async getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {
+  async getDidList(
+    walletDetails: IWalletDetailsForDidList
+  ): Promise<IProofRequestRes[] | (Record<string, unknown> & { hashTenantID: string })> {
     return this.cloudWalletService.getDidList(walletDetails);
   }
 
