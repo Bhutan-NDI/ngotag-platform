@@ -5,11 +5,10 @@ name: Continuous Integration
 # This repository has had no checks of any kind on pull requests. Every check below currently
 # fails on develop, so gating merges on them today would block every open PR:
 #
-#   pnpm install --frozen-lockfile   fails (lockfile stale vs libs/storage/package.json)
-#   prettier --check                 fails
-#   eslint                           249 errors
-#   tsc --noEmit                     38 first-party errors (mostly *.spec.ts)
-#   jest                             6 failing tests of 127
+#   prettier --check   fails
+#   eslint             249 errors
+#   tsc --noEmit       38 first-party errors (mostly *.spec.ts)
+#   jest               6 failing tests of 127
 #
 # So each step runs with continue-on-error and the job never fails. The point is to make that
 # baseline visible on every PR and to let new tests actually run, rather than to stop anyone
@@ -34,9 +33,7 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     name: Validate (report-only)
-    # The install re-resolves while the lockfile is stale (see below), which is slow on a cold
-    # pnpm store. This stops a pathological run from sitting there for an hour.
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,27 +49,8 @@ jobs:
           node-version: 20
           cache: 'pnpm'
 
-      # Reported separately because it currently fails: pnpm-lock.yaml is out of date with
-      # libs/storage/package.json -- that workspace package was added 2026-07-23 and the lockfile
-      # was last updated 2026-06-02, so libs/storage is absent from it entirely.
-      #
-      # This does NOT affect the container builds: every Dockerfile copies only package.json,
-      # pnpm-lock.yaml and pnpm-workspace.yaml before `pnpm i --frozen-lockfile`, so the workspace
-      # package.json files are not in the build context and pnpm cannot see the mismatch. It shows
-      # up only where the full tree is checked out -- CI, and a fresh local install.
-      #
-      # The fix is `pnpm install` locally plus committing the lockfile, but that regenerated file
-      # is also what the production images install from, so it is deliberately left until after
-      # the cutover. Until then the fallback below keeps the rest of the checks meaningful; the
-      # first run is slow on a cold store and later runs hit the pnpm cache.
-      - name: Lockfile is up to date
-        id: frozen_install
-        continue-on-error: true
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Install dependencies (lockfile out of date)
-        if: steps.frozen_install.outcome == 'failure'
-        run: pnpm install --no-frozen-lockfile
 
       - name: Generate Prisma client
         run: pnpm prisma:generate
