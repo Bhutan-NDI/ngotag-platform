@@ -200,6 +200,31 @@ describe('setDedicatedAgentToken - rejected-probe logging', () => {
 
     logSpy.mockRestore();
   });
+
+  it('terminates and maps to agentDown on a probe timeout, without persisting or logging the token', async () => {
+    const sentinelToken = tokenFor(AgentRole.RestRootAgent);
+    // Axios timeout errors carry no `response` -- ECONNABORTED, not an HTTP status -- which is what
+    // AGENT_TOKEN_PROBE_TIMEOUT_MS turns an indefinitely-hanging probe into.
+    const timeoutRejection = {
+      code: 'ECONNABORTED',
+      message: 'timeout of 10000ms exceeded',
+      config: { headers: { authorization: sentinelToken } }
+    };
+    const { service, updateVerifiedTenantToken } = buildService({ probeRejection: timeoutRejection });
+    const logSpy = jest.spyOn(Logger.prototype, 'error');
+
+    const error = await call(service, sentinelToken).catch((e) => e);
+
+    expect(error).toBeInstanceOf(RpcException);
+    const payload = (error as RpcException).getError() as { statusCode?: number };
+    expect(payload.statusCode).toBe(503);
+    expect(updateVerifiedTenantToken).not.toHaveBeenCalled();
+
+    const loggedText = logSpy.mock.calls.map((args) => args.join(' ')).join('\n');
+    expect(loggedText).not.toContain(sentinelToken);
+
+    logSpy.mockRestore();
+  });
 });
 
 describe('setDedicatedAgentToken - via the @MessagePattern handler', () => {
