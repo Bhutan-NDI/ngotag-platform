@@ -245,7 +245,7 @@ describe('HttpExceptionFilter (all microservices)', () => {
     expect((forwarded!.getError() as { code: number }).code).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
   });
 
-  it("keeps the repository's { statusCode, error } envelope message rather than losing it", () => {
+  it('retains a { statusCode, error } envelope message rather than losing it', () => {
     // CommonService.sendError throws exactly this shape, with no `message` field at all.
     let forwarded: RpcException;
     filter
@@ -344,7 +344,7 @@ describe('AllExceptionsFilter (API Gateway, global)', () => {
     expect(replied.status).toBe(500);
   });
 
-  it("carries the repository's { statusCode, error } envelope across a microservice hop rather than losing it", () => {
+  it('carries a { statusCode, error } envelope across a microservice hop rather than losing it', () => {
     // Mirrors the real path: HttpExceptionFilter (microservice) forwards CommonService.sendError's
     // exception, and AllExceptionsFilter (Gateway) is what the client's response is built from.
     const microserviceFilter = new HttpExceptionFilter();
