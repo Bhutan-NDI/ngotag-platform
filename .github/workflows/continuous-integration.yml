@@ -1,0 +1,71 @@
+name: Continuous Integration
+
+# Report-only, deliberately.
+#
+# This repository has had no checks of any kind on pull requests. Every check below currently
+# fails on develop, so gating merges on them today would block every open PR:
+#
+#   prettier --check   fails
+#   eslint             249 errors
+#   tsc --noEmit       38 first-party errors (mostly *.spec.ts)
+#   jest               6 failing tests of 127
+#
+# So each step runs with continue-on-error and the job never fails. The point is to make that
+# baseline visible on every PR and to let new tests actually run, rather than to stop anyone
+# merging. Once a check reaches zero on develop, drop its continue-on-error and it becomes a
+# real gate -- jest is the closest and the most valuable to gate first.
+#
+# Note the package scripts are not usable here: `lint` runs eslint with --fix and `format` runs
+# prettier with --write, both of which mutate the tree. The non-mutating equivalents are used
+# directly instead.
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: platform-ci-${{ github.ref }}-${{ github.repository }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    name: Validate (report-only)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.3
+
+      - name: Setup node v20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm prisma:generate
+
+      - name: Formatting
+        continue-on-error: true
+        run: pnpm exec prettier --check "apps/**/*.ts" "libs/**/*.ts"
+
+      - name: Linting
+        continue-on-error: true
+        run: pnpm exec eslint "{apps,libs}/**/*.ts"
+
+      - name: Compile
+        continue-on-error: true
+        run: pnpm exec tsc --noEmit -p tsconfig.json
+
+      - name: Test
+        continue-on-error: true
+        run: pnpm exec jest --ci
