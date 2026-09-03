@@ -388,9 +388,9 @@ describe('CustomExceptionFilter (API Gateway, controller-scoped)', () => {
   it('normalizes a structured message instead of throwing on .includes', () => {
     // { message: { error: ... } } is the plain-object shape that used to hit
     // exceptionResponse.message.includes(...) before message was type-checked.
-    expect(() =>
-      filter.catch(new HttpException({ statusCode: 400, message: { error: 'nested failure' } }, 400), host() as never)
-    ).not.toThrow();
+    const structured = new HttpException({ statusCode: 400, message: { error: 'nested failure' } }, 400);
+
+    expect(() => filter.catch(structured, host() as never)).not.toThrow();
 
     expect(emitted).toHaveLength(1);
     expect(replied.status).toBe(400);
