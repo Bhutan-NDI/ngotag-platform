@@ -29,6 +29,11 @@ concurrency:
   group: platform-ci-${{ github.ref }}-${{ github.repository }}-${{ github.event_name }}
   cancel-in-progress: true
 
+env:
+  # Belt and braces alongside --ignore-scripts, matching the Dockerfiles.
+  PUPPETEER_SKIP_DOWNLOAD: 'true'
+  PHANTOMJS_SKIP_DOWNLOAD: 'true'
+
 jobs:
   validate:
     runs-on: ubuntu-24.04
@@ -49,8 +54,12 @@ jobs:
           node-version: 20
           cache: 'pnpm'
 
+      # --ignore-scripts matches every Dockerfile in this repo, and it is not optional here:
+      # the postinstall scripts fetch PhantomJS and three Chrome builds, which takes longer than
+      # the rest of the job put together. Prisma's client is generated explicitly below, which is
+      # the only postinstall output anything here needs.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Generate Prisma client
         run: pnpm prisma:generate
