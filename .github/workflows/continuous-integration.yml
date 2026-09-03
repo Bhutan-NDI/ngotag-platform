@@ -1,22 +1,25 @@
 name: Continuous Integration
 
-# Report-only, deliberately.
+# Two tiers, because this repository has had no checks at all and everything fails today.
 #
-# This repository has had no checks of any kind on pull requests. Every check below currently
-# fails on develop, so gating merges on them today would block every open PR. Measured by this
-# workflow on develop:
+#   GATING  -- formatting and linting, but only on the .ts files a PR actually changes. New code
+#              has to be clean. This blocks the merge, and it is the point of the workflow: the
+#              existing debt stops growing from today.
+#
+#   REPORT  -- compilation and the full test run, over the whole repo. These cannot gate yet, so
+#              they are continue-on-error and their real outcome goes to the run summary.
+#
+# A check that is green while the repository is broken teaches people to ignore it, so nothing
+# here is green unless it means something. Measured on develop:
 #
 #   prettier --check   209 files with style issues
 #   eslint             325 problems, 249 of them errors
 #   tsc --noEmit       36 errors, mostly in *.spec.ts
 #   jest               5 failing tests of 136, and 19 of 52 suites failing to run at all
 #
-# So each check runs with continue-on-error and the job never fails. Because that also hides the
-# result behind a green tick, the final step writes the real outcome of each check to the run
-# summary -- that is where to look, not at the tick.
-#
-# As a check reaches zero on develop, drop its continue-on-error and it becomes a real gate.
-# jest is the closest and the most valuable to gate first.
+# Those numbers are the backlog and clearing them is separate work -- dead spec files importing
+# modules that no longer exist, two missing dependencies, and jest resolution gaps. As each
+# reported check reaches zero on develop, move it up into the gating tier.
 #
 # The package scripts are not usable here: `lint` runs eslint with --fix and `format` runs
 # prettier with --write, both of which mutate the tree. The non-mutating equivalents are used
@@ -40,11 +43,14 @@ env:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    name: Validate (report-only)
+    name: Validate
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Needed to diff against the base branch for the changed-files gate.
+          fetch-depth: 0
 
       # No version pin here on purpose: package.json's `packageManager` field already sets it,
       # and specifying both makes the action fail with ERR_PNPM_BAD_PM_VERSION.
@@ -72,12 +78,37 @@ jobs:
         continue-on-error: true
         run: pnpm exec prisma generate --schema libs/prisma-service/prisma/schema.prisma
 
-      - name: Formatting
+      # ---------- gating tier: only what this PR changed ----------
+
+      - name: Collect changed TypeScript files
+        id: changed
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          FILES=$(git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}...HEAD" -- '*.ts' | tr '\n' ' ')
+          echo "files=${FILES}" >> "$GITHUB_OUTPUT"
+          if [ -z "${FILES}" ]; then
+            echo "No TypeScript files changed; the gating checks are skipped."
+          else
+            echo "Gating on: ${FILES}"
+          fi
+
+      - name: Formatting (changed files)
+        if: github.event_name == 'pull_request' && steps.changed.outputs.files != ''
+        run: pnpm exec prettier --check ${{ steps.changed.outputs.files }}
+
+      - name: Linting (changed files)
+        if: github.event_name == 'pull_request' && steps.changed.outputs.files != ''
+        run: pnpm exec eslint ${{ steps.changed.outputs.files }}
+
+      # ---------- reporting tier: whole repo, cannot gate yet ----------
+
+      - name: Formatting (whole repo)
         id: format
         continue-on-error: true
         run: pnpm exec prettier --check "apps/**/*.ts" "libs/**/*.ts"
 
-      - name: Linting
+      - name: Linting (whole repo)
         id: lint
         continue-on-error: true
         run: pnpm exec eslint "{apps,libs}/**/*.ts"
@@ -92,24 +123,28 @@ jobs:
         continue-on-error: true
         run: pnpm exec jest --ci
 
-      # The job is green whatever happens above, so the outcomes have to be surfaced somewhere a
-      # reader will actually see them.
       - name: Summary
         if: always()
         run: |
           {
-            echo "## Validate (report-only)"
+            echo "## Validate"
             echo ""
-            echo "Nothing here blocks the merge. This is the current state of the branch."
+            echo "**Gating** -- these block the merge, and cover only the files this PR changed."
+            echo "If the job failed, it failed on one of these and the fix is in your diff."
+            echo ""
+            echo "| Gate | Scope |"
+            echo "| --- | --- |"
+            echo "| Formatting | changed .ts files |"
+            echo "| Linting | changed .ts files |"
+            echo ""
+            echo "**Reported** -- whole repo, non-blocking. A failure here is almost certainly"
+            echo "pre-existing; the baseline is recorded at the top of the workflow file."
             echo ""
             echo "| Check | Result |"
             echo "| --- | --- |"
             echo "| Prisma client | ${{ steps.prisma.outcome }} |"
-            echo "| Formatting | ${{ steps.format.outcome }} |"
-            echo "| Linting | ${{ steps.lint.outcome }} |"
+            echo "| Formatting (whole repo) | ${{ steps.format.outcome }} |"
+            echo "| Linting (whole repo) | ${{ steps.lint.outcome }} |"
             echo "| Compile | ${{ steps.compile.outcome }} |"
             echo "| Test | ${{ steps.test.outcome }} |"
-            echo ""
-            echo "A failure above very likely predates this PR -- the baseline is recorded in the"
-            echo "workflow file. Worth checking you have not added to it."
           } >> "$GITHUB_STEP_SUMMARY"
