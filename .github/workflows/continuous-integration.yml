@@ -34,6 +34,9 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     name: Validate (report-only)
+    # The install re-resolves while the lockfile is stale (see below), which is slow on a cold
+    # pnpm store. This stops a pathological run from sitting there for an hour.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,9 +53,18 @@ jobs:
           cache: 'pnpm'
 
       # Reported separately because it currently fails: pnpm-lock.yaml is out of date with
-      # libs/storage/package.json on develop, so a clean install cannot reproduce the dependency
-      # tree. Running `pnpm install` locally and committing the lockfile fixes it; until then the
-      # fallback below keeps the rest of the checks meaningful.
+      # libs/storage/package.json -- that workspace package was added 2026-07-23 and the lockfile
+      # was last updated 2026-06-02, so libs/storage is absent from it entirely.
+      #
+      # This does NOT affect the container builds: every Dockerfile copies only package.json,
+      # pnpm-lock.yaml and pnpm-workspace.yaml before `pnpm i --frozen-lockfile`, so the workspace
+      # package.json files are not in the build context and pnpm cannot see the mismatch. It shows
+      # up only where the full tree is checked out -- CI, and a fresh local install.
+      #
+      # The fix is `pnpm install` locally plus committing the lockfile, but that regenerated file
+      # is also what the production images install from, so it is deliberately left until after
+      # the cutover. Until then the fallback below keeps the rest of the checks meaningful; the
+      # first run is slow on a cold store and later runs hit the pnpm cache.
       - name: Lockfile is up to date
         id: frozen_install
         continue-on-error: true
