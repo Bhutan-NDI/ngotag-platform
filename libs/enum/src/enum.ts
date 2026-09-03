@@ -91,6 +91,14 @@ export enum schemaRequestType {
   INDY = 'indy'
 }
 
+// Mirrors agent-controller's AgentRole. The role a minted token carries decides which routes the
+// agent will accept it on, so the platform has to assert it before storing one.
+export enum AgentRole {
+  RestRootAgentWithTenants = 'RestRootAgentWithTenants',
+  RestRootAgent = 'RestRootAgent',
+  RestTenantAgent = 'RestTenantAgent'
+}
+
 export enum OrgAgentType {
   DEDICATED = 'DEDICATED',
   SHARED = 'SHARED'

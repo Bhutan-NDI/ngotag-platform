@@ -395,7 +395,8 @@ export const ResponseMessages = {
       getWebhookUrl: 'Webhook Url fetched successfully',
       createKeys: 'Key-pair created successfully',
       walletDelete: 'The wallet has been deleted.',
-      webhookUrlUpdate: 'Webhook Url updated successfully'
+      webhookUrlUpdate: 'Webhook Url updated successfully',
+      dedicatedAgentToken: 'Agent token updated successfully'
     },
     error: {
       exists: 'An agent name is already exist',
@@ -443,6 +444,14 @@ export const ResponseMessages = {
       failedOrganization: 'Failed to fetch organization agent type details',
       promiseReject: 'One or more promises were rejected.',
       orgAgentNotFound: 'Org agent type not found',
+      notDedicatedAgent: 'This organization does not have a dedicated agent',
+      agentEndpointMismatch: 'Agent endpoint does not match the value configured for this organization',
+      insecureAgentEndpoint: 'Refusing to send an agent credential over a non-HTTPS endpoint',
+      malformedAgentEndpoint: 'Agent endpoint is not a valid URL',
+      agentTokenRejected: 'The agent did not accept the supplied token',
+      agentTokenNoRole: 'The supplied token carries no role claim',
+      agentTokenRoleMismatch: 'The supplied token does not carry the role this organization agent requires',
+      agentRowChanged: 'The organization agent changed while the token was being verified -- please retry',
       walletDoesNotExists: 'Organization wallet does not exists',
       requiredDomain: 'Domain is required for Web method',
       requiredNetwork: 'Network is required',

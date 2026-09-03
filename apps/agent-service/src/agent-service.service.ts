@@ -9,6 +9,7 @@ import {
   ConflictException,
   HttpException,
   HttpStatus,
+  ServiceUnavailableException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -16,6 +17,7 @@ import {
   NotFoundException
 } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
+import { HttpService } from '@nestjs/axios';
 import * as dotenv from 'dotenv';
 import { map } from 'rxjs/operators';
 dotenv.config();
@@ -24,6 +26,8 @@ import {
   IConnectionDetails,
   IUserRequestInterface,
   IAgentSpinupDto,
+  IDedicatedAgentTokenResult,
+  ISetDedicatedAgentToken,
   IStoreOrgAgentDetails,
   ITenantCredDef,
   ITenantDto,
@@ -56,9 +60,18 @@ import {
   IStoreOrgAgent,
   VerifyAuthorizationResponse
 } from './interface/agent-service.interface';
-import { AgentSpinUpStatus, AgentType, DidMethod, Ledgers, OrgAgentType, PromiseResult } from '@credebl/enum/enum';
+import {
+  AgentRole,
+  AgentSpinUpStatus,
+  AgentType,
+  DidMethod,
+  Ledgers,
+  OrgAgentType,
+  PromiseResult
+} from '@credebl/enum/enum';
 import { AgentServiceRepository } from './repositories/agent-service.repository';
 import { Prisma, RecordType, ledgers, org_agents, organisation, platform_config, user } from '@prisma/client';
+import * as jwt from 'jsonwebtoken';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { CommonService } from '@credebl/common';
 import { GetSchemaAgentRedirection } from 'apps/ledger/src/schema/schema.interface';
@@ -93,6 +106,7 @@ export class AgentServiceService {
     private readonly agentServiceRepository: AgentServiceRepository,
     private readonly prisma: PrismaService,
     private readonly commonService: CommonService,
+    private readonly httpService: HttpService,
     @Inject('NATS_CLIENT') private readonly agentServiceProxy: ClientProxy,
     // TODO: Remove duplicate, unused variable
     @Inject(CACHE_MANAGER) private cacheService: Cache,
@@ -2128,6 +2142,137 @@ export class AgentServiceService {
     } catch (error) {
       this.logger.error(`Error in receive invitation in agent service : ${JSON.stringify(error)}`);
       throw error;
+    }
+  }
+
+  /**
+   * Stores a token that was minted outside the platform, for an org whose agent the platform cannot
+   * mint for. Dedicated agents are deployed externally and each holds its own API_KEY, so the operator
+   * mints via POST /agent/token and hands the token over. The platform-admin (base wallet) row is
+   * DEDICATED-typed too, so this same path repairs it -- only the minter differs.
+   */
+  async setDedicatedAgentToken(payload: ISetDedicatedAgentToken): Promise<IDedicatedAgentTokenResult> {
+    const { targetOrgId, agentToken, agentEndPoint, userId } = payload;
+    try {
+      const [orgAgentDetails, dedicatedAgentTypeId, organizationDetails] = await Promise.all([
+        this.agentServiceRepository.getAgentApiKey(targetOrgId),
+        this.agentServiceRepository.getOrgAgentTypeDetails(OrgAgentType.DEDICATED),
+        this.agentServiceRepository.getOrgDetails(targetOrgId)
+      ]);
+
+      if (!orgAgentDetails) {
+        throw new NotFoundException(ResponseMessages.agent.error.agentNotExists);
+      }
+
+      // Refuse SHARED orgs: they re-mint themselves in getOrgAgentApiKey once the base wallet is
+      // valid, and writing an unverified token here would replace that with one nothing has checked.
+      if (orgAgentDetails.orgAgentTypeId !== dedicatedAgentTypeId) {
+        throw new BadRequestException(ResponseMessages.agent.error.notDedicatedAgent);
+      }
+
+      // Cheap equality before the URL parse below. The caller states the target, so a tampered
+      // agentEndPoint column cannot silently redirect someone else's credential.
+      if (orgAgentDetails.agentEndPoint !== agentEndPoint) {
+        throw new BadRequestException(ResponseMessages.agent.error.agentEndpointMismatch);
+      }
+
+      this.assertEndpointTrusted(orgAgentDetails.agentEndPoint);
+
+      // GET /agent accepts tenant, dedicated and Basewallet scopes alike, so a live probe alone would
+      // let a RestTenantAgent token be stored against the base wallet -- where every SHARED self-heal
+      // would then 401 on the Basewallet-only tenant routes. Pin the role the target row requires.
+      const expectedRole =
+        CommonConstants.PLATFORM_ADMIN_ORG === organizationDetails?.name
+          ? AgentRole.RestRootAgentWithTenants
+          : AgentRole.RestRootAgent;
+      this.assertTokenRole(agentToken, expectedRole);
+      await this.assertTokenAcceptedByAgent(orgAgentDetails.agentEndPoint, agentToken);
+
+      const encryptedToken = await this.tokenEncryption(agentToken);
+      // Compare-and-set on the row verified above: if storeOrgAgentDetails changed the endpoint or
+      // type while the probe was in flight, this token was verified against an agent that is no
+      // longer the one at targetOrgId, and must not be persisted onto whatever replaced it.
+      await this.agentServiceRepository.updateVerifiedTenantToken(
+        targetOrgId,
+        orgAgentDetails.agentEndPoint,
+        orgAgentDetails.orgAgentTypeId,
+        encryptedToken,
+        userId
+      );
+
+      this.logger.log(`Stored externally-minted ${expectedRole} token for orgId: ${targetOrgId}`);
+      return { orgId: targetOrgId, agentEndPoint: orgAgentDetails.agentEndPoint, role: expectedRole };
+    } catch (error) {
+      // Serialise the error, never the payload -- it carries the token.
+      this.logger.error(`[setDedicatedAgentToken] - error: ${JSON.stringify(error?.message ?? error)}`);
+      throw new RpcException(error.response ?? error);
+    }
+  }
+
+  // Reads the role claim only. The platform never holds the agent's signing secret, so it cannot
+  // verify the signature here; assertTokenAcceptedByAgent is what proves the token is genuine.
+  private assertTokenRole(agentToken: string, expectedRole: AgentRole): void {
+    let decodedToken: jwt.JwtPayload;
+    try {
+      decodedToken = jwt.decode(agentToken) as jwt.JwtPayload;
+    } catch {
+      decodedToken = null;
+    }
+
+    if (!decodedToken?.role) {
+      throw new BadRequestException(ResponseMessages.agent.error.agentTokenNoRole);
+    }
+    if (decodedToken.role !== expectedRole) {
+      throw new BadRequestException(`${ResponseMessages.agent.error.agentTokenRoleMismatch}: expected ${expectedRole}`);
+    }
+  }
+
+  // Calls httpService directly rather than going through getAgentHealthData/CommonService.httpGet:
+  // that helper's catch does `JSON.stringify(error)`, and AxiosError.toJSON() includes
+  // config.headers.authorization -- which here is the very token under test, so the routine
+  // 'bad token' case (a 401/403 probe response) would write it into the logs verbatim.
+  private async assertTokenAcceptedByAgent(agentEndPoint: string, agentToken: string): Promise<void> {
+    try {
+      const response = await this.httpService
+        .get(`${agentEndPoint}${CommonConstants.URL_AGENT_STATUS}`, {
+          headers: { authorization: agentToken },
+          timeout: Number(CommonConstants.AGENT_TOKEN_PROBE_TIMEOUT_MS)
+        })
+        .toPromise();
+      const { isInitialized } = response.data as AgentHealthData;
+      if (!isInitialized) {
+        throw new BadRequestException(ResponseMessages.agent.error.agentTokenRejected);
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      // A rejected credential and an unreachable agent need different fixes, so don't collapse them.
+      // Log only the status, never the error object -- it carries the request headers.
+      const status = error?.response?.status;
+      this.logger.error(`[setDedicatedAgentToken] - agent probe failed with status: ${status ?? 'unknown'}`);
+      if (HttpStatus.UNAUTHORIZED === status || HttpStatus.FORBIDDEN === status) {
+        throw new BadRequestException(ResponseMessages.agent.error.agentTokenRejected);
+      }
+      throw new ServiceUnavailableException(ResponseMessages.agent.error.agentDown);
+    }
+  }
+
+  // agentEndPoint is a mutable column and a credential is about to be sent to it.
+  private assertEndpointTrusted(agentEndPoint: string): void {
+    if (!agentEndPoint) {
+      throw new NotFoundException(ResponseMessages.agent.error.agentUrl);
+    }
+
+    let url: URL;
+    try {
+      url = new URL(agentEndPoint);
+    } catch {
+      throw new BadRequestException(ResponseMessages.agent.error.malformedAgentEndpoint);
+    }
+
+    if ('https:' !== url.protocol) {
+      throw new BadRequestException(ResponseMessages.agent.error.insecureAgentEndpoint);
     }
   }
 
