@@ -19,8 +19,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     let message = '';
     switch (exception.constructor) {
       case HttpException:
-        httpStatus = exception.getStatus() || HttpStatus.BAD_REQUEST;
-        message = exception?.getResponse() || exception.message;
+        httpStatus = resolveHttpStatus(exception.getStatus());
+        message = resolveMessage(exception.getResponse(), exception.message) ?? 'Internal server error';
         break;
       case RpcException: {
         // Already classified upstream; forward unchanged, but record the hop so it isn't silent.

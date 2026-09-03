@@ -236,6 +236,26 @@ describe('HttpExceptionFilter (all microservices)', () => {
     expect(String(emitted[0].message)).toContain('500');
   });
 
+  it('rejects a direct HttpException status (200) and falls back to 500', () => {
+    // The RpcException case above doesn't exercise the HttpException branch's own status read.
+    let forwarded: RpcException;
+    filter.catch(new HttpException('done?', HttpStatus.OK)).subscribe({ error: (e) => (forwarded = e) });
+
+    expect(emitted[0].level).toBe('error');
+    expect((forwarded!.getError() as { code: number }).code).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
+  });
+
+  it("keeps the repository's { statusCode, error } envelope message rather than losing it", () => {
+    // CommonService.sendError throws exactly this shape, with no `message` field at all.
+    let forwarded: RpcException;
+    filter
+      .catch(new HttpException({ statusCode: 503, error: 'agent unreachable' }, 503))
+      .subscribe({ error: (e) => (forwarded = e) });
+
+    expect((forwarded!.getError() as { message: string }).message).toBe('agent unreachable');
+    expect(String(emitted[0].message)).toContain('agent unreachable');
+  });
+
   it('handles a null rejection without throwing', () => {
     expect(() => swallow(filter.catch(null))).not.toThrow();
     expect(emitted).toHaveLength(1);
@@ -316,6 +336,30 @@ describe('AllExceptionsFilter (API Gateway, global)', () => {
     expect(emitted[0].level).toBe('error');
     expect(replied.status).toBe(500);
   });
+
+  it('rejects a direct HttpException status (200) and falls back to 500', () => {
+    filter.catch(new HttpException('done?', HttpStatus.OK), host() as never);
+
+    expect(emitted[0].level).toBe('error');
+    expect(replied.status).toBe(500);
+  });
+
+  it("carries the repository's { statusCode, error } envelope across a microservice hop rather than losing it", () => {
+    // Mirrors the real path: HttpExceptionFilter (microservice) forwards CommonService.sendError's
+    // exception, and AllExceptionsFilter (Gateway) is what the client's response is built from.
+    const microserviceFilter = new HttpExceptionFilter();
+    let forwarded: RpcException;
+    microserviceFilter
+      .catch(new HttpException({ statusCode: 503, error: 'agent unreachable' }, 503))
+      .subscribe({ error: (e) => (forwarded = e) });
+
+    // What actually crosses NATS is the plain payload the microservice's RpcException carried,
+    // re-wrapped as a fresh RpcException on the Gateway side -- not the instance itself.
+    filter.catch(new RpcException(forwarded!.getError()), host() as never);
+
+    expect(String(emitted[emitted.length - 1].message)).toContain('agent unreachable');
+    expect(replied.body?.message).toBe('agent unreachable');
+  });
 });
 
 describe('CustomExceptionFilter (API Gateway, controller-scoped)', () => {
@@ -365,6 +409,15 @@ describe('CustomExceptionFilter (API Gateway, controller-scoped)', () => {
   it('handles a null rejection without throwing', () => {
     expect(() => filter.catch(null as never, host() as never)).not.toThrow();
     expect(emitted).toHaveLength(1);
+  });
+
+  it('handles a circular rejection without throwing', () => {
+    // The empty-payload check used to run exception through JSON.stringify unguarded.
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    expect(() => filter.catch(circular as never, host() as never)).not.toThrow();
+    expect(replied.status).toBeDefined();
   });
 
   it('rejects a non-error statusCode (200) and falls back to 500', () => {

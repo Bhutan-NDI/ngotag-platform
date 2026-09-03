@@ -33,7 +33,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let message = '';
     switch (exception.constructor) {
       case HttpException:
-        httpStatus = (exception as HttpException).getStatus();
+        httpStatus = resolveHttpStatus((exception as HttpException).getStatus());
         message = exception?.response?.error || exception?.message || 'Internal server error';
         break;
       case RpcException: {

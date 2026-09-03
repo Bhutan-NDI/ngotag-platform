@@ -17,7 +17,14 @@ export class CustomExceptionFilter extends BaseExceptionFilter {
     let errorResponse;
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
 
-    if (!exception || '{}' === JSON.stringify(exception)) {
+    // JSON.stringify throws on a circular rejection; treat that as "not empty" rather than crash.
+    let stringified: string;
+    try {
+      stringified = JSON.stringify(exception);
+    } catch {
+      stringified = '';
+    }
+    if (!exception || '{}' === stringified) {
       errorResponse = {
         statusCode: status,
         message: 'Something went wrong!',
@@ -51,7 +58,7 @@ export class CustomExceptionFilter extends BaseExceptionFilter {
     // Validation-error arrays pass through unchanged; anything else is resolved to a string.
     const message = Array.isArray(exceptionResponse.message)
       ? exceptionResponse.message
-      : (resolveMessage(exceptionResponse.message) ?? 'Something went wrong!');
+      : (resolveMessage(exceptionResponse.message, exceptionResponse.error) ?? 'Something went wrong!');
 
     errorResponse = {
       statusCode: resolvedStatus,
