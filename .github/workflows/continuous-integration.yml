@@ -5,10 +5,11 @@ name: Continuous Integration
 # This repository has had no checks of any kind on pull requests. Every check below currently
 # fails on develop, so gating merges on them today would block every open PR:
 #
-#   prettier --check   fails
-#   eslint             249 errors
-#   tsc --noEmit       38 first-party errors (mostly *.spec.ts)
-#   jest               6 failing tests of 127
+#   pnpm install --frozen-lockfile   fails (lockfile stale vs libs/storage/package.json)
+#   prettier --check                 fails
+#   eslint                           249 errors
+#   tsc --noEmit                     38 first-party errors (mostly *.spec.ts)
+#   jest                             6 failing tests of 127
 #
 # So each step runs with continue-on-error and the job never fails. The point is to make that
 # baseline visible on every PR and to let new tests actually run, rather than to stop anyone
@@ -48,8 +49,18 @@ jobs:
           node-version: 20
           cache: 'pnpm'
 
-      - name: Install dependencies
+      # Reported separately because it currently fails: pnpm-lock.yaml is out of date with
+      # libs/storage/package.json on develop, so a clean install cannot reproduce the dependency
+      # tree. Running `pnpm install` locally and committing the lockfile fixes it; until then the
+      # fallback below keeps the rest of the checks meaningful.
+      - name: Lockfile is up to date
+        id: frozen_install
+        continue-on-error: true
         run: pnpm install --frozen-lockfile
+
+      - name: Install dependencies (lockfile out of date)
+        if: steps.frozen_install.outcome == 'failure'
+        run: pnpm install --no-frozen-lockfile
 
       - name: Generate Prisma client
         run: pnpm prisma:generate
