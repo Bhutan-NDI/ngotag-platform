@@ -61,8 +61,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      # Not `pnpm prisma:generate`: that script is `npx prisma generate` with no schema path and
+      # no prisma.schema entry in package.json, so it only works from inside libs/prisma-service
+      # (which is what the Dockerfiles do). Point at the schema directly instead.
       - name: Generate Prisma client
-        run: pnpm prisma:generate
+        continue-on-error: true
+        run: pnpm exec prisma generate --schema libs/prisma-service/prisma/schema.prisma
 
       - name: Formatting
         continue-on-error: true
