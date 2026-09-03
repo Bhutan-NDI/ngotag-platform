@@ -1,6 +1,7 @@
 import { CommonModule, NatsInterceptor } from '@credebl/common';
 import { PrismaService } from '@credebl/prisma-service';
 import { Logger, Module } from '@nestjs/common';
+import { HttpModule } from '@nestjs/axios';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { AgentServiceController } from './agent-service.controller';
 import { AgentServiceService } from './agent-service.service';
@@ -38,6 +39,10 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
       }
     ]),
     CommonModule,
+    // Used directly (not via CommonService.httpGet) by assertTokenAcceptedByAgent, which must not
+    // let AxiosError.toJSON() -- and CommonService.httpGet's JSON.stringify(error) -- write the
+    // submitted agent token's authorization header into logs.
+    HttpModule,
     CacheModule.register()
   ],
   controllers: [AgentServiceController],

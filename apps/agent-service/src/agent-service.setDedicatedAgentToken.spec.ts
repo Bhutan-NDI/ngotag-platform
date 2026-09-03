@@ -16,6 +16,7 @@ import { AgentRole, OrgAgentType } from '@credebl/enum/enum';
 import { AgentServiceService } from './agent-service.service';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { ISetDedicatedAgentToken } from './interface/agent-service.interface';
+import { Logger } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 
 const DEDICATED_TYPE_ID = 'dedicated-type-id';
@@ -29,13 +30,21 @@ interface Overrides {
   orgName?: string;
   orgAgentTypeId?: string;
   isInitialized?: boolean;
+  // Lets a test simulate the agent probe rejecting (e.g. a 401), instead of resolving.
+  probeRejection?: unknown;
 }
 
 const buildService = (
   overrides: Overrides = {}
 ): { service: AgentServiceService; updateTenantToken: jest.Mock; httpGet: jest.Mock } => {
   const updateTenantToken = jest.fn().mockResolvedValue({});
-  const httpGet = jest.fn().mockResolvedValue({ isInitialized: overrides.isInitialized ?? true });
+  const httpGet = jest
+    .fn()
+    .mockReturnValue(
+      overrides.probeRejection
+        ? { toPromise: () => Promise.reject(overrides.probeRejection) }
+        : { toPromise: () => Promise.resolve({ data: { isInitialized: overrides.isInitialized ?? true } }) }
+    );
 
   const repository = {
     getAgentApiKey: jest.fn().mockResolvedValue({
@@ -55,7 +64,8 @@ const buildService = (
   const service = new AgentServiceService(
     repository as never,
     null as never,
-    { httpGet } as never,
+    null as never,
+    { get: httpGet } as never,
     null as never,
     null as never,
     null as never,
@@ -144,5 +154,31 @@ describe('setDedicatedAgentToken - role gate', () => {
     await expect(call(service, tokenFor(AgentRole.RestRootAgent))).rejects.toThrow(RpcException);
     expect(httpGet).not.toHaveBeenCalled();
     expect(updateTenantToken).not.toHaveBeenCalled();
+  });
+});
+
+describe('setDedicatedAgentToken - rejected-probe logging', () => {
+  it('never writes the submitted token into logs, even on a rejected (401) probe', async () => {
+    const sentinelToken = tokenFor(AgentRole.RestRootAgent);
+    // Shaped like the AxiosError a real 401 response produces: carries the request headers
+    // (including the token under test) on `config`, the way AxiosError.toJSON() would serialise it.
+    const axiosLikeRejection = {
+      message: 'Request failed with status code 401',
+      response: { status: 401 },
+      config: { headers: { authorization: sentinelToken } },
+      toJSON: (): unknown => ({
+        message: 'Request failed with status code 401',
+        config: { headers: { authorization: sentinelToken } }
+      })
+    };
+    const { service } = buildService({ probeRejection: axiosLikeRejection });
+    const logSpy = jest.spyOn(Logger.prototype, 'error');
+
+    await call(service, sentinelToken).catch(() => undefined);
+
+    const loggedText = logSpy.mock.calls.map((args) => args.join(' ')).join('\n');
+    expect(loggedText).not.toContain(sentinelToken);
+
+    logSpy.mockRestore();
   });
 });

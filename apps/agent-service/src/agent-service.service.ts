@@ -17,6 +17,7 @@ import {
   NotFoundException
 } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
+import { HttpService } from '@nestjs/axios';
 import * as dotenv from 'dotenv';
 import { map } from 'rxjs/operators';
 dotenv.config();
@@ -105,6 +106,7 @@ export class AgentServiceService {
     private readonly agentServiceRepository: AgentServiceRepository,
     private readonly prisma: PrismaService,
     private readonly commonService: CommonService,
+    private readonly httpService: HttpService,
     @Inject('NATS_CLIENT') private readonly agentServiceProxy: ClientProxy,
     // TODO: Remove duplicate, unused variable
     @Inject(CACHE_MANAGER) private cacheService: Cache,
@@ -2216,9 +2218,18 @@ export class AgentServiceService {
     }
   }
 
+  // Calls httpService directly rather than going through getAgentHealthData/CommonService.httpGet:
+  // that helper's catch does `JSON.stringify(error)`, and AxiosError.toJSON() includes
+  // config.headers.authorization -- which here is the very token under test, so the routine
+  // 'bad token' case (a 401/403 probe response) would write it into the logs verbatim.
   private async assertTokenAcceptedByAgent(agentEndPoint: string, agentToken: string): Promise<void> {
     try {
-      const { isInitialized } = await this.getAgentHealthData(agentEndPoint, agentToken);
+      const response = await this.httpService
+        .get(`${agentEndPoint}${CommonConstants.URL_AGENT_STATUS}`, {
+          headers: { authorization: agentToken }
+        })
+        .toPromise();
+      const { isInitialized } = response.data as AgentHealthData;
       if (!isInitialized) {
         throw new BadRequestException(ResponseMessages.agent.error.agentTokenRejected);
       }
@@ -2227,7 +2238,8 @@ export class AgentServiceService {
         throw error;
       }
       // A rejected credential and an unreachable agent need different fixes, so don't collapse them.
-      const status = error?.response?.status ?? error?.response?.statusCode ?? error?.status;
+      // Log only the status, never the error object -- it carries the request headers.
+      const status = error?.response?.status;
       this.logger.error(`[setDedicatedAgentToken] - agent probe failed with status: ${status ?? 'unknown'}`);
       if (HttpStatus.UNAUTHORIZED === status || HttpStatus.FORBIDDEN === status) {
         throw new BadRequestException(ResponseMessages.agent.error.agentTokenRejected);
