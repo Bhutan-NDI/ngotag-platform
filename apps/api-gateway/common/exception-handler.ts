@@ -9,7 +9,7 @@ export class CustomExceptionFilter extends BaseExceptionFilter {
   private readonly logger = new Logger('CustomExceptionFilter');
 
   catch(rawException: HttpException, host: ArgumentsHost): void {
-    // Nullish and primitive rejections would throw below before anything is answered.
+    // Guards against nullish/primitive rejections that would throw below.
     const exception = normaliseException(rawException) as HttpException;
     const ctx = host.switchToHttp();
     const response = ctx.getResponse();
@@ -37,8 +37,7 @@ export class CustomExceptionFilter extends BaseExceptionFilter {
       exceptionResponse = exceptionResponseData as unknown as ExceptionResponse;
     }
 
-    // `.includes` assumes a string. A nested structured payload (e.g. `{ message: { error: ... } }`)
-    // reaches here as an object, not a string or the validation-error array Nest normally sends.
+    // `.includes` requires a string; message may instead be a validation array or a nested object.
     if (
       'string' === typeof exceptionResponse.message &&
       exceptionResponse.message.includes(ResponseMessages.nats.error.noSubscribers)
@@ -46,17 +45,10 @@ export class CustomExceptionFilter extends BaseExceptionFilter {
       exceptionResponse.message = ResponseMessages.nats.error.noSubscribers;
     }
 
-    // Logged here because this filter answers the request itself: 21 controllers register it with
-    // @UseFilters, so the exception never reaches the global AllExceptionsFilter and, until now,
-    // produced no record at all. Same contract as the other two: classify first, emit once, and
-    // let one validated status drive the level, the response body, and response.status() alike --
-    // a numeric-string or non-HTTP statusCode must not reach Express unvalidated, and a status that
-    // isn't genuinely an HTTP error (e.g. a stray 200) must not turn a caught exception into a
-    // reported success.
+    // This filter answers the request itself, so it must log here or the exception goes unrecorded.
+    // The same resolvedStatus feeds the log level, the response body, and response.status() below.
     const resolvedStatus = resolveHttpStatus(exceptionResponse.statusCode, status);
-    // Array messages are Nest's validation-error format and pass through unchanged; anything else
-    // that isn't already a plain string is resolved (looking one level into a nested `message`)
-    // rather than interpolated as an object.
+    // Validation-error arrays pass through unchanged; anything else is resolved to a string.
     const message = Array.isArray(exceptionResponse.message)
       ? exceptionResponse.message
       : (resolveMessage(exceptionResponse.message) ?? 'Something went wrong!');

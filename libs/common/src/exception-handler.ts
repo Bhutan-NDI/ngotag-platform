@@ -21,7 +21,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   catch(rawException: any, host: ArgumentsHost): void {
-    // Same guard as the microservice filter: `exception.constructor` throws on a nullish value.
+    // Guards against nullish/primitive rejections; exception.constructor below would throw first.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const exception = normaliseException(rawException) as any;
 
@@ -39,9 +39,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       case RpcException: {
         const rpcError = exception?.error as { code?: unknown; statusCode?: unknown; status?: unknown };
         httpStatus = resolveHttpStatus(exception?.code, rpcError?.code, rpcError?.statusCode, rpcError?.status);
-        // `exception.error` is Nest's stored payload object and is truthy whenever present, so
-        // taking it directly put an object into the response `message` and interpolated
-        // '[object Object]' into the log line.
+        // exception.error is truthy even as an object, so resolve it rather than use it directly.
         message = resolveMessage(rpcError, exception?.message) ?? 'RpcException';
         break;
       }
@@ -54,8 +52,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
           );
           message = resolveMessage(exception?.error, exception?.error?.message?.error) ?? 'Internal server error';
         } else {
-          // `exception.code` is only a status when it actually is one -- a socket error carries
-          // 'ECONNREFUSED' here.
+          // exception.code may be a non-HTTP value (e.g. 'ECONNREFUSED'), not a status.
           httpStatus = resolveHttpStatus(
             exception.response?.status,
             exception.response?.statusCode,
@@ -72,13 +69,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
         }
     }
 
-    // Logged once, here, because this is the only point at which the response status is
-    // known -- a 4xx must not land in the error stream. The Error goes as its own argument
-    // so the adapter can put it in data.error and winston can lift its stack.
+    // Logged once, after httpStatus is resolved, so a 4xx doesn't land in the error stream.
     const level = HttpStatus.INTERNAL_SERVER_ERROR <= httpStatus ? 'error' : 'warn';
     const summary = `${request.method} ${request.url} -> ${httpStatus}: ${message}`;
-    // The optional argument is omitted rather than passed as undefined, which would surface as a
-    // synthetic `props.params: [null]` in the JSON output.
+    // Omitted rather than passed as undefined, to avoid a synthetic props.params entry.
     if (exception instanceof Error) {
       this.logger[level](summary, exception);
     } else {

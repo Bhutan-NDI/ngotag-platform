@@ -4,22 +4,12 @@ const MIN_HTTP_STATUS = 400;
 const MAX_HTTP_STATUS = 599;
 
 /**
- * Picks the first candidate that is genuinely an HTTP *error* status.
+ * First candidate that is genuinely an HTTP error status (400-599).
  *
- * Every caller uses this at an exception boundary -- there is no such thing as a 1xx/2xx/3xx
- * outcome once something has already been thrown. Accepting that range let a 200 or 302 that
- * leaked into `code`/`statusCode` be forwarded as a successful response for a request that
- * actually failed.
- *
- * Two further shapes made a validated resolver necessary in the first place. Producers in this
- * repository raise RpcException with the status under `code`, `statusCode` or `status` depending
- * on the service, so reading a single field sent routine 404s and 409s down the 500 path. And
- * library errors carry a `code` that is not a status at all -- `ECONNREFUSED` from a socket, for
- * instance -- which then flowed into a numeric comparison as NaN and made a downstream outage look
- * like a client error.
- *
- * Numeric strings are accepted because a status crossing NATS as JSON can arrive that way;
- * anything else, including a valid but non-error status, falls back to 500.
+ * RpcException producers in this repo use `code`, `statusCode` or `status` inconsistently, and a
+ * library error's `code` (e.g. `ECONNREFUSED`) isn't a status at all. Numeric strings are accepted
+ * since a status can cross NATS as JSON; anything else, including a non-error status, falls back
+ * to 500.
  */
 export function resolveHttpStatus(...candidates: unknown[]): number {
   for (const candidate of candidates) {
@@ -42,9 +32,8 @@ export function resolveHttpStatus(...candidates: unknown[]): number {
 }
 
 /**
- * Picks the first candidate that yields a string, looking one level into `message` so an
- * RpcException payload does not end up interpolated as '[object Object]' into a log line or
- * returned as an object in the `message` field of a response.
+ * First candidate that yields a string, looking one level into a nested `message` so an object
+ * payload doesn't get interpolated as '[object Object]'.
  */
 export function resolveMessage(...candidates: unknown[]): string | undefined {
   for (const candidate of candidates) {
@@ -61,11 +50,8 @@ export function resolveMessage(...candidates: unknown[]): string | undefined {
   return undefined;
 }
 
-/**
- * `switch (exception.constructor)` throws a TypeError on a nullish rejection, before anything is
- * classified, logged or answered. Callers use this to substitute a real Error first, so the
- * filters keep their single-emission contract for every input.
- */
+/** Substitutes a real Error for a nullish/primitive rejection, since `exception.constructor`
+ *  would otherwise throw before anything can be classified or logged. */
 export function normaliseException(exception: unknown): unknown {
   if (null === exception || undefined === exception) {
     return new Error(`Nullish rejection (${String(exception)})`);

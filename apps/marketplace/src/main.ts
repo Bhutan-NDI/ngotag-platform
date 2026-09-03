@@ -15,8 +15,7 @@ async function bootstrap(): Promise<void> {
     options: getNatsOptions(CommonConstants.MARKETPLACE_SERVICE, process.env.MARKETPLACE_NKEY_SEED)
   });
 
-  // Without this the filter's records go to Nest's default console logger, bypassing winston
-  // entirely -- marketplace was the one microservice of nineteen that never wired it up.
+  // Without this the filter's records go to Nest's default console logger, bypassing winston.
   app.useLogger(app.get(NestjsLoggerServiceAdapter));
   app.useGlobalFilters(new HttpExceptionFilter());
 

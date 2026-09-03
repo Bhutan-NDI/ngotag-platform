@@ -25,8 +25,7 @@ import { Request } from 'express';
           if (!resolvedContextId) {
             resolvedContextId = v4();
           }
-          // Not logged: the id appears as correlationId on every subsequent line for this
-          // request, and a raw console.log breaks the one-JSON-object-per-line contract.
+          // Not logged: correlationId already appears on every subsequent line for this request.
           return resolvedContextId;
         }
       }

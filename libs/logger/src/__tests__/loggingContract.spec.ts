@@ -1,15 +1,8 @@
 /**
- * Regression coverage for the shared logging contract. `nestjsLoggerServiceAdapter` and the two
- * exception filters are wired into every one of the nineteen apps, so a defect here is a defect
- * everywhere at once — which is how both of the review findings this file locks down reached the
- * branch in the first place:
- *
- *   1. The microservice filter logged before the status was resolved, so an HttpException 404 and
- *      a Prisma P2025 both landed at `error` level.
- *   2. The adapter kept an absent optional argument, emitting a synthetic `props.params: [null]`.
- *
- * Assertions run against the real Winston format chain rather than a stub, because the defects
- * were only visible in the serialised output.
+ * Regression coverage for the shared logging contract used by every microservice: classify
+ * before logging, derive the level from the resolved status, and never emit a synthetic log
+ * param. Assertions run against the real Winston format chain rather than a stub, since these
+ * defects only show up in the serialised output.
  */
 import { HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
@@ -24,7 +17,7 @@ import { HttpExceptionFilter } from '../../../http-exception.filter';
 import { LogLevel } from '../log';
 import NestjsLoggerServiceAdapter from '../nestjsLoggerServiceAdapter';
 
-/** Mirrors winstonLogger.ts's format chain, including the guarded label from this PR. */
+/** Mirrors winstonLogger.ts's format chain, including the guarded label. */
 function buildWinston(sink: string[]): winston.Logger {
   const levels: Record<string, number> = {};
   let index = 0;
@@ -126,7 +119,7 @@ describe('nestjsLoggerServiceAdapter', () => {
   });
 
   it('does not emit props.params: [null] when undefined is passed explicitly', () => {
-    // The shape the exception filters used before this PR restructured them.
+    // Mirrors passing an explicit undefined, as the exception filters used to.
     (new Logger('CommonService').error as (m: string, ...rest: unknown[]) => void)('plain message', undefined);
 
     expect(emitted[0].data?.sourceClass).toBe('CommonService');
@@ -235,8 +228,7 @@ describe('HttpExceptionFilter (all microservices)', () => {
   });
 
   it('rejects a non-error RpcException status (200) and falls back to 500', () => {
-    // There is no such thing as a 1xx/2xx/3xx outcome once something has already been thrown --
-    // a stray 200 here must not turn a caught exception into a reported success.
+    // A stray 200 must not turn a caught exception into a reported success.
     swallow(filter.catch(new RpcException({ message: 'ok?', code: 200 })));
 
     expect(emitted).toHaveLength(1);
@@ -376,8 +368,7 @@ describe('CustomExceptionFilter (API Gateway, controller-scoped)', () => {
   });
 
   it('rejects a non-error statusCode (200) and falls back to 500', () => {
-    // A malformed getResponse() carrying a 2xx must not turn a caught exception into a
-    // reported success.
+    // A malformed 2xx status must not turn a caught exception into a reported success.
     filter.catch(new HttpException({ statusCode: 200, message: 'ok?' }, 200), host() as never);
 
     expect(replied.status).toBe(500);
@@ -386,8 +377,7 @@ describe('CustomExceptionFilter (API Gateway, controller-scoped)', () => {
   });
 
   it('normalizes a structured message instead of throwing on .includes', () => {
-    // { message: { error: ... } } is the plain-object shape that used to hit
-    // exceptionResponse.message.includes(...) before message was type-checked.
+    // { message: { error } } used to crash exceptionResponse.message.includes().
     const structured = new HttpException({ statusCode: 400, message: { error: 'nested failure' } }, 400);
 
     expect(() => filter.catch(structured, host() as never)).not.toThrow();

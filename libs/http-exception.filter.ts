@@ -11,8 +11,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   catch(rawException: any): Observable<any> {
-    // Nullish and primitive rejections would throw on `exception.constructor` below, before
-    // anything is classified, logged or answered.
+    // Guards against nullish/primitive rejections; exception.constructor below would throw first.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const exception = normaliseException(rawException) as any;
 
@@ -24,11 +23,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
         message = exception?.getResponse() || exception.message;
         break;
       case RpcException: {
-        // Already classified by the service that raised it. Forward unchanged, but record it
-        // once here so the hop is not silent -- and derive the level from its own code.
+        // Already classified upstream; forward unchanged, but record the hop so it isn't silent.
         const rpcError = exception.getError() as { code?: unknown; statusCode?: unknown; status?: unknown };
-        // Producers in this repo use all three field names -- connection and ecosystem raise
-        // `statusCode`, so reading only `code` logged routine 409s and 400s at error level.
         const rpcStatus = resolveHttpStatus(rpcError?.code, rpcError?.statusCode, rpcError?.status);
         this.log(exception, rpcStatus, this.describe(exception, rpcError));
         return throwError(() => rpcError);
@@ -69,8 +65,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         break;
       default:
         // eslint-disable-next-line no-case-declarations
-        // `exception.code` is only a status when it actually is one -- a socket error carries
-        // 'ECONNREFUSED' here, which used to be forwarded as the RPC code and compared as NaN.
+        // exception.code may be a non-HTTP value (e.g. 'ECONNREFUSED'), not a status.
         httpStatus = resolveHttpStatus(
           exception.response?.status,
           exception.response?.statusCode,
@@ -88,13 +83,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     return throwError(() => new RpcException({ message, code: httpStatus }));
   }
 
-  /**
-   * Emitted once per exception, after classification, because the level has to follow the
-   * resolved status -- a 404 from Prisma P2025 or an HttpException is a normal outcome and must
-   * not sit in the error stream. The Error goes as its own argument so the adapter can put it in
-   * data.error and winston can lift its stack; when the caught value is not an Error the optional
-   * argument is omitted entirely rather than passed as undefined.
-   */
+  /** Logged once per exception, at a level derived from httpStatus, so a 4xx isn't recorded as an error. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private log(exception: any, httpStatus: number, description: string): void {
     const level = HttpStatus.INTERNAL_SERVER_ERROR <= httpStatus ? 'error' : 'warn';
