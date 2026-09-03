@@ -3,19 +3,22 @@ name: Continuous Integration
 # Report-only, deliberately.
 #
 # This repository has had no checks of any kind on pull requests. Every check below currently
-# fails on develop, so gating merges on them today would block every open PR:
+# fails on develop, so gating merges on them today would block every open PR. Measured by this
+# workflow on develop:
 #
-#   prettier --check   fails
-#   eslint             249 errors
-#   tsc --noEmit       38 first-party errors (mostly *.spec.ts)
-#   jest               6 failing tests of 127
+#   prettier --check   209 files with style issues
+#   eslint             325 problems, 249 of them errors
+#   tsc --noEmit       36 errors, mostly in *.spec.ts
+#   jest               5 failing tests of 136, and 19 of 52 suites failing to run at all
 #
-# So each step runs with continue-on-error and the job never fails. The point is to make that
-# baseline visible on every PR and to let new tests actually run, rather than to stop anyone
-# merging. Once a check reaches zero on develop, drop its continue-on-error and it becomes a
-# real gate -- jest is the closest and the most valuable to gate first.
+# So each check runs with continue-on-error and the job never fails. Because that also hides the
+# result behind a green tick, the final step writes the real outcome of each check to the run
+# summary -- that is where to look, not at the tick.
 #
-# Note the package scripts are not usable here: `lint` runs eslint with --fix and `format` runs
+# As a check reaches zero on develop, drop its continue-on-error and it becomes a real gate.
+# jest is the closest and the most valuable to gate first.
+#
+# The package scripts are not usable here: `lint` runs eslint with --fix and `format` runs
 # prettier with --write, both of which mutate the tree. The non-mutating equivalents are used
 # directly instead.
 
@@ -54,32 +57,59 @@ jobs:
           node-version: 20
           cache: 'pnpm'
 
-      # --ignore-scripts matches every Dockerfile in this repo, and it is not optional here:
-      # the postinstall scripts fetch PhantomJS and three Chrome builds, which takes longer than
-      # the rest of the job put together. Prisma's client is generated explicitly below, which is
-      # the only postinstall output anything here needs.
+      # --ignore-scripts matches every Dockerfile in this repo, and it is not optional here: the
+      # postinstall scripts fetch PhantomJS and three Chrome builds, which took longer than the
+      # rest of the job put together. Prisma's client is the only postinstall output anything
+      # here needs, and it is generated explicitly below.
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       # Not `pnpm prisma:generate`: that script is `npx prisma generate` with no schema path and
-      # no prisma.schema entry in package.json, so it only works from inside libs/prisma-service
-      # (which is what the Dockerfiles do). Point at the schema directly instead.
+      # no prisma.schema entry in package.json, so it only resolves from inside
+      # libs/prisma-service, which is where the Dockerfiles run it.
       - name: Generate Prisma client
+        id: prisma
         continue-on-error: true
         run: pnpm exec prisma generate --schema libs/prisma-service/prisma/schema.prisma
 
       - name: Formatting
+        id: format
         continue-on-error: true
         run: pnpm exec prettier --check "apps/**/*.ts" "libs/**/*.ts"
 
       - name: Linting
+        id: lint
         continue-on-error: true
         run: pnpm exec eslint "{apps,libs}/**/*.ts"
 
       - name: Compile
+        id: compile
         continue-on-error: true
         run: pnpm exec tsc --noEmit -p tsconfig.json
 
       - name: Test
+        id: test
         continue-on-error: true
         run: pnpm exec jest --ci
+
+      # The job is green whatever happens above, so the outcomes have to be surfaced somewhere a
+      # reader will actually see them.
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Validate (report-only)"
+            echo ""
+            echo "Nothing here blocks the merge. This is the current state of the branch."
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Prisma client | ${{ steps.prisma.outcome }} |"
+            echo "| Formatting | ${{ steps.format.outcome }} |"
+            echo "| Linting | ${{ steps.lint.outcome }} |"
+            echo "| Compile | ${{ steps.compile.outcome }} |"
+            echo "| Test | ${{ steps.test.outcome }} |"
+            echo ""
+            echo "A failure above very likely predates this PR -- the baseline is recorded in the"
+            echo "workflow file. Worth checking you have not added to it."
+          } >> "$GITHUB_STEP_SUMMARY"
