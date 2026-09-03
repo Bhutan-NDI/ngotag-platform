@@ -34,7 +34,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     switch (exception.constructor) {
       case HttpException:
         httpStatus = resolveHttpStatus((exception as HttpException).getStatus());
-        message = exception?.response?.error || exception?.message || 'Internal server error';
+        message = resolveMessage(exception?.response, exception?.message) ?? 'Internal server error';
         break;
       case RpcException: {
         const rpcError = exception?.error as { code?: unknown; statusCode?: unknown; status?: unknown };

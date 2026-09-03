@@ -256,6 +256,15 @@ describe('HttpExceptionFilter (all microservices)', () => {
     expect(String(emitted[0].message)).toContain('agent unreachable');
   });
 
+  it('retains a { message: { error } } nested message rather than losing it', () => {
+    let forwarded: RpcException;
+    filter
+      .catch(new HttpException({ statusCode: 400, message: { error: 'nested failure' } }, 400))
+      .subscribe({ error: (e) => (forwarded = e) });
+
+    expect((forwarded!.getError() as { message: string }).message).toBe('nested failure');
+  });
+
   it('handles a null rejection without throwing', () => {
     expect(() => swallow(filter.catch(null))).not.toThrow();
     expect(emitted).toHaveLength(1);
@@ -359,6 +368,20 @@ describe('AllExceptionsFilter (API Gateway, global)', () => {
 
     expect(String(emitted[emitted.length - 1].message)).toContain('agent unreachable');
     expect(replied.body?.message).toBe('agent unreachable');
+  });
+
+  it('retains a { message: { error } } nested message on a direct HttpException, not just via RpcException', () => {
+    filter.catch(new HttpException({ statusCode: 400, message: { error: 'nested failure' } }, 400), host() as never);
+
+    expect(replied.body?.message).toBe('nested failure');
+  });
+
+  it('does not hang on a self-referencing message payload', () => {
+    const circular: Record<string, unknown> = {};
+    circular.message = circular;
+
+    expect(() => filter.catch(new HttpException(circular, 400), host() as never)).not.toThrow();
+    expect(typeof replied.body?.message).toBe('string');
   });
 });
 

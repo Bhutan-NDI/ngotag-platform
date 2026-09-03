@@ -31,26 +31,37 @@ export function resolveHttpStatus(...candidates: unknown[]): number {
   return HttpStatus.INTERNAL_SERVER_ERROR;
 }
 
-/**
- * First candidate that yields a string, looking one level into a nested `message` (falling back
- * to `error` when `message` is absent -- this repo's own `CommonService.sendError` throws
- * `{ statusCode, error }` with no `message` field at all) so an object payload doesn't get
- * interpolated as '[object Object]'.
- */
-export function resolveMessage(...candidates: unknown[]): string | undefined {
+const MAX_MESSAGE_DEPTH = 3;
+
+function resolveMessageAtDepth(candidates: unknown[], depth: number): string | undefined {
+  if (0 === depth) {
+    return undefined;
+  }
   for (const candidate of candidates) {
     if ('string' === typeof candidate && '' !== candidate) {
       return candidate;
     }
     if (candidate && 'object' === typeof candidate) {
       const { message, error } = candidate as { message?: unknown; error?: unknown };
-      const nested = message ?? error;
-      if ('string' === typeof nested && '' !== nested) {
+      const nested = resolveMessageAtDepth([message, error], depth - 1);
+      if (undefined !== nested) {
         return nested;
       }
     }
   }
   return undefined;
+}
+
+/**
+ * First candidate that yields a string, unwrapping into a nested `message` or `error` (whichever
+ * is present) up to a few levels deep -- both `{ message: { error: '...' } }` and this repo's
+ * `CommonService.sendError` shape `{ statusCode, error: '...' }` (no `message` field at all) occur
+ * as real exception payloads, and this avoids interpolating either as '[object Object]'.
+ *
+ * Depth is capped rather than unbounded so a self-referencing payload can't recurse forever.
+ */
+export function resolveMessage(...candidates: unknown[]): string | undefined {
+  return resolveMessageAtDepth(candidates, MAX_MESSAGE_DEPTH);
 }
 
 /** Substitutes a real Error for a nullish/primitive rejection, since `exception.constructor`
