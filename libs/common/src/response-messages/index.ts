@@ -689,6 +689,7 @@ export const ResponseMessages = {
       exportWallet: 'Error while exporting wallet',
       importWallet: 'Error while importing wallet',
       jobStatusNotFound: 'Export/import job status not found',
+      defaultDidNotFound: 'No default DID found for the wallet.',
       AcceptOffer: 'Error while  invitation by url',
       notReachable: 'The agent endpoint is not reachable.',
       agentAlreadyExist: 'Agent already exist.',
