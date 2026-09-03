@@ -2,13 +2,20 @@ import { Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nest
 import { RpcException } from '@nestjs/microservices';
 import { PrismaClientKnownRequestError, PrismaClientValidationError } from '@prisma/client/runtime/library';
 import { Observable, throwError } from 'rxjs';
+import { normaliseException, resolveHttpStatus, resolveMessage } from '@credebl/common/exception-normalisation';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger('CommonService');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  catch(exception: any): Observable<any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  catch(rawException: any): Observable<any> {
+    // Nullish and primitive rejections would throw on `exception.constructor` below, before
+    // anything is classified, logged or answered.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const exception = normaliseException(rawException) as any;
+
     let httpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = '';
     switch (exception.constructor) {
@@ -19,10 +26,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
       case RpcException: {
         // Already classified by the service that raised it. Forward unchanged, but record it
         // once here so the hop is not silent -- and derive the level from its own code.
-        const rpcError = exception.getError();
-        const rpcStatus =
-          ('object' === typeof rpcError && null !== rpcError && (rpcError as { code?: number }).code) ||
-          HttpStatus.INTERNAL_SERVER_ERROR;
+        const rpcError = exception.getError() as { code?: unknown; statusCode?: unknown; status?: unknown };
+        // Producers in this repo use all three field names -- connection and ecosystem raise
+        // `statusCode`, so reading only `code` logged routine 409s and 400s at error level.
+        const rpcStatus = resolveHttpStatus(rpcError?.code, rpcError?.statusCode, rpcError?.status);
         this.log(exception, rpcStatus, this.describe(exception, rpcError));
         return throwError(() => rpcError);
       }
@@ -62,11 +69,14 @@ export class HttpExceptionFilter implements ExceptionFilter {
         break;
       default:
         // eslint-disable-next-line no-case-declarations
-        httpStatus =
-          exception.response?.status ||
-          exception.response?.statusCode ||
-          exception.code ||
-          HttpStatus.INTERNAL_SERVER_ERROR;
+        // `exception.code` is only a status when it actually is one -- a socket error carries
+        // 'ECONNREFUSED' here, which used to be forwarded as the RPC code and compared as NaN.
+        httpStatus = resolveHttpStatus(
+          exception.response?.status,
+          exception.response?.statusCode,
+          exception.statusCode,
+          exception.code
+        );
         // eslint-disable-next-line no-case-declarations
         message =
           exception.response?.data?.message ||
@@ -98,18 +108,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
   /** Prefers the classified message; falls back to something better than '[object Object]'. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private describe(exception: any, resolved: unknown): string {
-    if ('string' === typeof resolved && '' !== resolved) {
-      return resolved;
-    }
-    if (resolved && 'object' === typeof resolved) {
-      const nested = (resolved as { message?: unknown }).message;
-      if ('string' === typeof nested && '' !== nested) {
-        return nested;
-      }
-    }
-    if (exception instanceof Error && '' !== exception.message) {
-      return exception.message;
-    }
-    return `unclassified ${typeof exception} exception`;
+    return (
+      resolveMessage(resolved, exception instanceof Error ? exception.message : undefined) ??
+      `unclassified ${typeof exception} exception`
+    );
   }
 }

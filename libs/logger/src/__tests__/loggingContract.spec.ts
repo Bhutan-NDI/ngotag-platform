@@ -18,6 +18,8 @@ import { Writable } from 'stream';
 import * as ecsFormat from '@elastic/ecs-winston-format';
 import * as winston from 'winston';
 
+import { AllExceptionsFilter } from '../../../common/src/exception-handler';
+import { CustomExceptionFilter } from '../../../../apps/api-gateway/common/exception-handler';
 import { HttpExceptionFilter } from '../../../http-exception.filter';
 import { LogLevel } from '../log';
 import NestjsLoggerServiceAdapter from '../nestjsLoggerServiceAdapter';
@@ -207,10 +209,151 @@ describe('HttpExceptionFilter (all microservices)', () => {
     expect(emitted[0].data?.props).toBeUndefined();
   });
 
+  it('resolves an RpcException status from statusCode, as connection and ecosystem raise it', () => {
+    swallow(filter.catch(new RpcException({ message: 'already exists', statusCode: HttpStatus.CONFLICT })));
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].level).toBe('warn');
+    expect(String(emitted[0].message)).toContain('409');
+  });
+
+  it('resolves an RpcException status from status', () => {
+    swallow(filter.catch(new RpcException({ message: 'bad input', status: HttpStatus.BAD_REQUEST })));
+
+    expect(emitted[0].level).toBe('warn');
+    expect(String(emitted[0].message)).toContain('400');
+  });
+
+  it('does not treat a non-HTTP Error.code as a status', () => {
+    const socketError = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    swallow(filter.catch(socketError));
+
+    // A downstream outage must read as a 500 error, not a warn carrying a string status.
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].level).toBe('error');
+    expect(String(emitted[0].message)).toContain('500');
+  });
+
+  it('handles a null rejection without throwing', () => {
+    expect(() => swallow(filter.catch(null))).not.toThrow();
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].level).toBe('error');
+  });
+
+  it('handles an undefined rejection without throwing', () => {
+    expect(() => swallow(filter.catch(undefined))).not.toThrow();
+    expect(emitted).toHaveLength(1);
+  });
+
+  it('handles a string rejection without leaking its contents', () => {
+    swallow(filter.catch('upstream said SENTINEL_TOKEN'));
+
+    expect(emitted).toHaveLength(1);
+    expect(JSON.stringify(emitted[0])).not.toContain('SENTINEL_TOKEN');
+    expect(String(emitted[0].message)).toContain('(string)');
+  });
+
   it('never emits caught error: {} for a real Error', () => {
     swallow(filter.catch(new Error('Askar: wallet not found')));
 
     expect(sink[0]).not.toContain('caught error: {}');
     expect(sink[0]).toContain('Askar: wallet not found');
+  });
+});
+
+describe('AllExceptionsFilter (API Gateway, global)', () => {
+  let emitted: Emitted[];
+  let sink: string[];
+  let filter: AllExceptionsFilter;
+  let replied: { status?: number; body?: Record<string, unknown> };
+
+  beforeEach(() => {
+    emitted = [];
+    sink = [];
+    replied = {};
+    Logger.overrideLogger(new NestjsLoggerServiceAdapter(buildLoggerBase(emitted, sink) as never));
+    const httpAdapterHost = {
+      httpAdapter: {
+        reply: (_res: unknown, body: Record<string, unknown>, status: number): void => {
+          replied = { status, body };
+        }
+      }
+    };
+    filter = new AllExceptionsFilter(httpAdapterHost as never);
+  });
+
+  function host(): unknown {
+    return { switchToHttp: () => ({ getRequest: () => ({ method: 'POST', url: '/orgs' }), getResponse: () => ({}) }) };
+  }
+
+  it('keeps the RpcException message a string rather than [object Object]', () => {
+    filter.catch(new RpcException({ message: 'tenant missing', code: HttpStatus.NOT_FOUND }), host() as never);
+
+    expect(String(emitted[0].message)).toContain('tenant missing');
+    expect(String(emitted[0].message)).not.toContain('[object Object]');
+    expect(typeof replied.body?.message).toBe('string');
+  });
+
+  it('logs a 404 RpcException at warn', () => {
+    filter.catch(new RpcException({ message: 'tenant missing', statusCode: HttpStatus.NOT_FOUND }), host() as never);
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].level).toBe('warn');
+  });
+
+  it('handles a null rejection without throwing', () => {
+    expect(() => filter.catch(null, host() as never)).not.toThrow();
+    expect(emitted).toHaveLength(1);
+    expect(replied.status).toBe(500);
+  });
+});
+
+describe('CustomExceptionFilter (API Gateway, controller-scoped)', () => {
+  let emitted: Emitted[];
+  let sink: string[];
+  let filter: CustomExceptionFilter;
+  let replied: { status?: number; body?: Record<string, unknown> };
+
+  beforeEach(() => {
+    emitted = [];
+    sink = [];
+    replied = {};
+    Logger.overrideLogger(new NestjsLoggerServiceAdapter(buildLoggerBase(emitted, sink) as never));
+    filter = new CustomExceptionFilter();
+  });
+
+  function host(): unknown {
+    const response = {
+      status(code: number): unknown {
+        replied.status = code;
+        return this;
+      },
+      json(body: Record<string, unknown>): unknown {
+        replied.body = body;
+        return this;
+      }
+    };
+    return { switchToHttp: () => ({ getResponse: () => response, getRequest: () => ({}) }) };
+  }
+
+  it('emits exactly one record for a controller exception — it used to emit none', () => {
+    filter.catch(new HttpException('org not found', HttpStatus.NOT_FOUND), host() as never);
+
+    expect(emitted).toHaveLength(1);
+    expect(replied.status).toBe(HttpStatus.NOT_FOUND);
+  });
+
+  it('logs a 404 at warn and a 500 at error', () => {
+    filter.catch(new HttpException('org not found', HttpStatus.NOT_FOUND), host() as never);
+    expect(emitted[0].level).toBe('warn');
+
+    emitted.length = 0;
+    filter.catch(new HttpException('boom', HttpStatus.INTERNAL_SERVER_ERROR), host() as never);
+    expect(emitted[0].level).toBe('error');
+  });
+
+  it('handles a null rejection without throwing', () => {
+    expect(() => filter.catch(null as never, host() as never)).not.toThrow();
+    expect(emitted).toHaveLength(1);
   });
 });

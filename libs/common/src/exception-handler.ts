@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { RpcException } from '@nestjs/microservices';
+import { normaliseException, resolveHttpStatus, resolveMessage } from './exception-normalisation';
 import { Observable, throwError } from 'rxjs';
 
 @Catch()
@@ -18,7 +19,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
   // Add explicit types for 'exception' and 'host'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  catch(exception: any, host: ArgumentsHost): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  catch(rawException: any, host: ArgumentsHost): void {
+    // Same guard as the microservice filter: `exception.constructor` throws on a nullish value.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const exception = normaliseException(rawException) as any;
+
     const { httpAdapter } = this.httpAdapterHost;
     const ctx = host.switchToHttp();
     const request = ctx.getRequest<Request>();
@@ -30,25 +36,34 @@ export class AllExceptionsFilter implements ExceptionFilter {
         httpStatus = (exception as HttpException).getStatus();
         message = exception?.response?.error || exception?.message || 'Internal server error';
         break;
-      case RpcException:
-        httpStatus = exception?.code || exception?.error?.code || HttpStatus.INTERNAL_SERVER_ERROR;
-        message = exception?.error || exception?.error?.message?.error || 'RpcException';
+      case RpcException: {
+        const rpcError = exception?.error as { code?: unknown; statusCode?: unknown; status?: unknown };
+        httpStatus = resolveHttpStatus(exception?.code, rpcError?.code, rpcError?.statusCode, rpcError?.status);
+        // `exception.error` is Nest's stored payload object and is truthy whenever present, so
+        // taking it directly put an object into the response `message` and interpolated
+        // '[object Object]' into the log line.
+        message = resolveMessage(rpcError, exception?.message) ?? 'RpcException';
         break;
+      }
       default:
         if ('Rpc Exception' === exception.message) {
-          httpStatus = exception?.error?.code || HttpStatus.INTERNAL_SERVER_ERROR;
-          message = exception?.error?.message?.error || 'Internal server error';
+          httpStatus = resolveHttpStatus(
+            exception?.error?.code,
+            exception?.error?.statusCode,
+            exception?.error?.status
+          );
+          message = resolveMessage(exception?.error, exception?.error?.message?.error) ?? 'Internal server error';
         } else {
-          httpStatus =
-            exception.response?.status ||
-            exception.response?.statusCode ||
-            exception.code ||
-            exception.statusCode ||
-            HttpStatus.INTERNAL_SERVER_ERROR;
+          // `exception.code` is only a status when it actually is one -- a socket error carries
+          // 'ECONNREFUSED' here.
+          httpStatus = resolveHttpStatus(
+            exception.response?.status,
+            exception.response?.statusCode,
+            exception.statusCode,
+            exception.code
+          );
           message =
-            exception.response?.data?.message ||
-            exception.response?.message ||
-            exception?.message ||
+            resolveMessage(exception.response?.data?.message, exception.response?.message, exception?.message) ??
             'Internal server error';
         }
 
