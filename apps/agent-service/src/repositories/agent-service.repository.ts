@@ -25,6 +25,7 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '@credebl/prisma-service';
+import { ResponseMessages } from '@credebl/common/response-messages';
 
 @Injectable()
 export class AgentServiceRepository {
@@ -630,7 +631,6 @@ export class AgentServiceRepository {
     }
   }
 
-
   async deleteOrgAgentByOrg(orgId: string): Promise<{
     orgDid: Prisma.BatchPayload;
     agentInvitation: Prisma.BatchPayload;
@@ -718,6 +718,43 @@ export class AgentServiceRepository {
       return updatedAgent;
     } catch (error) {
       this.logger.error(`[updateTenantToken] - Update tenant records details: ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Compare-and-set write for setDedicatedAgentToken: only persists the verified token if the row
+   * still matches the endpoint/type it was verified against, so a concurrent storeOrgAgentDetails
+   * cannot land a token verified against the old agent on the new one.
+   * @throws ConflictException if no row matched (the row changed, or orgId does not exist)
+   */
+  async updateVerifiedTenantToken(
+    orgId: string,
+    expectedAgentEndPoint: string,
+    expectedOrgAgentTypeId: string,
+    token: string,
+    lastChangedBy: string
+  ): Promise<void> {
+    try {
+      const { count } = await this.prisma.org_agents.updateMany({
+        where: {
+          orgId,
+          agentEndPoint: expectedAgentEndPoint,
+          orgAgentTypeId: expectedOrgAgentTypeId
+        },
+        data: {
+          apiKey: token,
+          lastChangedBy,
+          lastChangedDateTime: new Date()
+        }
+      });
+
+      if (1 !== count) {
+        throw new ConflictException(ResponseMessages.agent.error.agentRowChanged);
+      }
+    } catch (error) {
+      // Never JSON.stringify the raw error: token is not on this path, but keep the convention.
+      this.logger.error(`[updateVerifiedTenantToken] - ${error instanceof Error ? error.message : 'update failed'}`);
       throw error;
     }
   }

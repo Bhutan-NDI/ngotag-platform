@@ -274,6 +274,8 @@ export enum CommonConstants {
   // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
   URL_AGENT_STATUS = '/agent',
 
+  AGENT_TOKEN_PROBE_TIMEOUT_MS = 10000,
+
   // Tenant Status
   PENDING_STATE = 0,
   REJECT_STATE = 2,

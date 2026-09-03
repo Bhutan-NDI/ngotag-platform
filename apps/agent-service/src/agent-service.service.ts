@@ -2152,7 +2152,7 @@ export class AgentServiceService {
    * DEDICATED-typed too, so this same path repairs it -- only the minter differs.
    */
   async setDedicatedAgentToken(payload: ISetDedicatedAgentToken): Promise<IDedicatedAgentTokenResult> {
-    const { targetOrgId, agentToken, agentEndPoint } = payload;
+    const { targetOrgId, agentToken, agentEndPoint, userId } = payload;
     try {
       const [orgAgentDetails, dedicatedAgentTypeId, organizationDetails] = await Promise.all([
         this.agentServiceRepository.getAgentApiKey(targetOrgId),
@@ -2189,7 +2189,16 @@ export class AgentServiceService {
       await this.assertTokenAcceptedByAgent(orgAgentDetails.agentEndPoint, agentToken);
 
       const encryptedToken = await this.tokenEncryption(agentToken);
-      await this.agentServiceRepository.updateTenantToken(targetOrgId, encryptedToken);
+      // Compare-and-set on the row verified above: if storeOrgAgentDetails changed the endpoint or
+      // type while the probe was in flight, this token was verified against an agent that is no
+      // longer the one at targetOrgId, and must not be persisted onto whatever replaced it.
+      await this.agentServiceRepository.updateVerifiedTenantToken(
+        targetOrgId,
+        orgAgentDetails.agentEndPoint,
+        orgAgentDetails.orgAgentTypeId,
+        encryptedToken,
+        userId
+      );
 
       this.logger.log(`Stored externally-minted ${expectedRole} token for orgId: ${targetOrgId}`);
       return { orgId: targetOrgId, agentEndPoint: orgAgentDetails.agentEndPoint, role: expectedRole };
@@ -2226,7 +2235,8 @@ export class AgentServiceService {
     try {
       const response = await this.httpService
         .get(`${agentEndPoint}${CommonConstants.URL_AGENT_STATUS}`, {
-          headers: { authorization: agentToken }
+          headers: { authorization: agentToken },
+          timeout: Number(CommonConstants.AGENT_TOKEN_PROBE_TIMEOUT_MS)
         })
         .toPromise();
       const { isInitialized } = response.data as AgentHealthData;

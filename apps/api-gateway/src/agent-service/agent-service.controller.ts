@@ -486,12 +486,13 @@ export class AgentController {
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   async setDedicatedAgentToken(
     @Body() setDedicatedAgentTokenDto: SetDedicatedAgentTokenDto,
+    @User() user: user,
     @Res() res: Response
   ): Promise<Response> {
     // Deliberately not logging the DTO: it carries the token.
     this.logger.log(`**** Storing agent token for orgId: ${setDedicatedAgentTokenDto.targetOrgId}`);
 
-    const agentDetails = await this.agentService.setDedicatedAgentToken(setDedicatedAgentTokenDto);
+    const agentDetails = await this.agentService.setDedicatedAgentToken(setDedicatedAgentTokenDto, user);
 
     const finalResponse: IResponseType = {
       statusCode: HttpStatus.OK,

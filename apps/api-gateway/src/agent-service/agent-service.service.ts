@@ -107,8 +107,8 @@ export class AgentService extends BaseService {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'agent-configure', payload);
   }
 
-  async setDedicatedAgentToken(setDedicatedAgentTokenDto: SetDedicatedAgentTokenDto): Promise<object> {
-    const payload = { setDedicatedAgentTokenDto };
+  async setDedicatedAgentToken(setDedicatedAgentTokenDto: SetDedicatedAgentTokenDto, user: user): Promise<object> {
+    const payload = { setDedicatedAgentTokenDto, userId: user.id };
     // NATS call
 
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'set-dedicated-agent-token', payload);

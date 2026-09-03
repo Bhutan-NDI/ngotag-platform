@@ -44,6 +44,7 @@ export interface ISetDedicatedAgentToken {
   targetOrgId: string;
   agentToken: string;
   agentEndPoint: string;
+  userId: string;
 }
 
 export interface IDedicatedAgentTokenResult {

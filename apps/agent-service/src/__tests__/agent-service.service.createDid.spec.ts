@@ -62,6 +62,7 @@ function buildService(overrides: { getLedgerByNameSpaceImpl?: jest.Mock } = {}):
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
     {} as never
   );
   jest.spyOn(service, 'getOrgAgentApiKey').mockResolvedValue('mock-api-key');

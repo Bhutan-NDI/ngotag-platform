@@ -451,6 +451,7 @@ export const ResponseMessages = {
       agentTokenRejected: 'The agent did not accept the supplied token',
       agentTokenNoRole: 'The supplied token carries no role claim',
       agentTokenRoleMismatch: 'The supplied token does not carry the role this organization agent requires',
+      agentRowChanged: 'The organization agent changed while the token was being verified -- please retry',
       walletDoesNotExists: 'Organization wallet does not exists',
       requiredDomain: 'Domain is required for Web method',
       requiredNetwork: 'Network is required',

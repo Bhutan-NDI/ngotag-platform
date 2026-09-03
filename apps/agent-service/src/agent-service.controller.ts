@@ -350,8 +350,14 @@ export class AgentServiceController {
    * @returns The org, endpoint and role the token was stored for
    */
   @MessagePattern({ cmd: 'set-dedicated-agent-token' })
-  async setDedicatedAgentToken(payload: { setDedicatedAgentTokenDto: ISetDedicatedAgentToken }): Promise<object> {
-    return this.agentServiceService.setDedicatedAgentToken(payload.setDedicatedAgentTokenDto);
+  async setDedicatedAgentToken(payload: {
+    setDedicatedAgentTokenDto: Omit<ISetDedicatedAgentToken, 'userId'>;
+    userId: string;
+  }): Promise<object> {
+    return this.agentServiceService.setDedicatedAgentToken({
+      ...payload.setDedicatedAgentTokenDto,
+      userId: payload.userId
+    });
   }
 
   @MessagePattern({ cmd: 'get-agent-details-by-org-id' })
