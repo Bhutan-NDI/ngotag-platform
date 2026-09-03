@@ -37,10 +37,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # No version pin here on purpose: package.json's `packageManager` field already sets it,
+      # and specifying both makes the action fail with ERR_PNPM_BAD_PM_VERSION.
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.3
 
       - name: Setup node v20
         uses: actions/setup-node@v4
