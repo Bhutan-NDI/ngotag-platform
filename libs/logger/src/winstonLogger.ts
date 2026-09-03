@@ -97,7 +97,8 @@ export default class WinstonLogger implements Logger {
             info.error = undefined;
           }
 
-          info.label = `${info.organization}.${info.context}.${info.app}`;
+          // Guarded so unset vars omit the label instead of rendering as 'undefined.undefined.undefined'.
+          info.label = [info.organization, info.context, info.app].filter(Boolean).join('.') || undefined;
 
           return info;
         })(),

@@ -22,14 +22,10 @@ import { Request } from 'express';
             (Array.isArray(contextIdHeader) ? contextIdHeader[0] : contextIdHeader) ??
             (Array.isArray(correlationIdHeader) ? correlationIdHeader[0] : correlationIdHeader);
 
-          if (resolvedContextId) {
-            // eslint-disable-next-line no-console
-            console.log('ContextId received in request headers::::', resolvedContextId);
-          } else {
+          if (!resolvedContextId) {
             resolvedContextId = v4();
-            // eslint-disable-next-line no-console
-            console.log('ContextId not received in request headers, generated a new one::::', resolvedContextId);
           }
+          // Not logged: correlationId already appears on every subsequent line for this request.
           return resolvedContextId;
         }
       }
