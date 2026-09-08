@@ -66,10 +66,11 @@ export class WebhookRepository {
             orgId
           }
         });
-      } else if (tenantId && 'default' !== tenantId) {
+      } else if (tenantId && 'default' !== tenantId && orgId) {
+        // orgId fallback: cloud-wallet holder tenantIds have no org_agents row of their own
         webhookUrlInfo = await this.prisma.org_agents.findFirstOrThrow({
           where: {
-            tenantId
+            OR: [{ tenantId }, { orgId }]
           }
         });
       }
