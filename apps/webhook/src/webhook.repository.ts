@@ -67,9 +67,12 @@ export class WebhookRepository {
           }
         });
       } else if (tenantId && 'default' !== tenantId) {
+        // OR orgId: a holder's own tenantId (cloud wallet sub-wallets, tracked in
+        // cloud_wallet_user_info) never has its own org_agents row -- falls back to the
+        // org that registered this webhook URL instead. Restores pre-migration behavior.
         webhookUrlInfo = await this.prisma.org_agents.findFirstOrThrow({
           where: {
-            tenantId
+            OR: [{ tenantId }, { orgId }]
           }
         });
       }
