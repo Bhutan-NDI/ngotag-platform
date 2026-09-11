@@ -899,7 +899,7 @@ export class CloudWalletService {
    */
   async exportCloudWallet(exportWallet: IExportCloudWallet): Promise<Response> {
     try {
-      const { userId, passKey } = exportWallet;
+      const { userId, passKey, walletID } = exportWallet;
 
       const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
       if (!checkUserExist) {
@@ -925,7 +925,7 @@ export class CloudWalletService {
 
       const exportWalletResponse = await this.commonService.httpPost(
         url,
-        { passKey },
+        { passKey, walletID },
         {
           headers: { authorization: baseWalletApiKey }
         }
