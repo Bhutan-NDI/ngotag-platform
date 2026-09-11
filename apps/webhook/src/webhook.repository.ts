@@ -75,6 +75,11 @@ export class WebhookRepository {
         });
       }
 
+      // TEMP DIAGNOSTIC: confirm the OR fallback isn't resolving a different org than requested
+      this.logger.error(
+        `[getWebhookUrl] queried tenantId=${tenantId} orgId=${orgId} -> resolved orgId=${webhookUrlInfo?.orgId} tenantId=${webhookUrlInfo?.tenantId} webhookUrl=${webhookUrlInfo?.webhookUrl}`
+      );
+
       return webhookUrlInfo;
     } catch (error) {
       this.logger.error(`[getWebhookUrl] -  webhook url details: ${JSON.stringify(error)}`);
