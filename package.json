@@ -190,6 +190,7 @@
       "<rootDir>/libs/"
     ],
     "moduleNameMapper": {
+      "^apps/api-gateway/src/(.*)$": "<rootDir>/apps/api-gateway/src/$1",
       "@credebl/common/(.*)": "<rootDir>/libs/common/src/$1",
       "@credebl/common": "<rootDir>/libs/common/src",
       "@credebl/keycloak-url/(.*)": "<rootDir>/libs/keycloak-url/src/$1",

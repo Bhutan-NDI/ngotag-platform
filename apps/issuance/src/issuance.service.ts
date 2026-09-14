@@ -1,3 +1,4 @@
+import { IssuanceWorkCoordinator } from './issuance-work.coordinator';
 /* eslint-disable quotes */
 /* eslint-disable no-useless-catch */
 /* eslint-disable camelcase */
@@ -98,7 +99,6 @@ import { EmailService } from '@credebl/common/email.service';
 export class IssuanceService {
   private readonly logger = new Logger('IssueCredentialService');
   private counter = 0;
-  private processedJobsCounters: Record<string, number> = {};
   constructor(
     @Inject('NATS_CLIENT') private readonly issuanceServiceProxy: ClientProxy,
     private readonly commonService: CommonService,
@@ -114,7 +114,8 @@ export class IssuanceService {
     @Inject(ContextStorageServiceKey)
     private readonly contextStorageService: ContextStorageService,
     private readonly natsClient: NATSClient,
-    private readonly emailService: EmailService
+    private readonly emailService: EmailService,
+    private readonly issuanceWork: IssuanceWorkCoordinator
   ) {}
 
   async getIssuanceRecords(orgId: string): Promise<number> {
@@ -155,9 +156,8 @@ export class IssuanceService {
       const { orgId, credentialDefinitionId, comment, credentialData, isValidateSchema } = payload || {};
 
       if (payload.credentialType === IssueCredentialType.INDY) {
-        const schemaResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
-          credentialDefinitionId
-        );
+        const schemaResponse: SchemaDetails =
+          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
         if (schemaResponse?.attributes) {
           const schemaResponseError = [];
           const attributesArray: IAttributes[] = JSON.parse(schemaResponse.attributes);
@@ -258,7 +258,6 @@ export class IssuanceService {
           }
         }
 
-        await this.delay(500);
         return this._sendCredentialCreateOffer(issueData, url, orgId);
       });
 
@@ -349,9 +348,8 @@ export class IssuanceService {
         isValidateSchema
       } = payload;
       if (credentialType === IssueCredentialType.INDY) {
-        const schemadetailsResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
-          credentialDefinitionId
-        );
+        const schemadetailsResponse: SchemaDetails =
+          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
 
         if (schemadetailsResponse?.attributes) {
           const schemadetailsResponseError = [];
@@ -559,7 +557,7 @@ export class IssuanceService {
     try {
       const pattern = { cmd: 'agent-send-credential-create-offer' };
       const payload: ISendOfferNatsPayload = { issueData, url, orgId };
-      return await this.natsCallAgent(pattern, payload);
+      return await this.issuanceWork.offer(() => this.natsCallAgent(pattern, payload));
     } catch (error) {
       this.logger.error(
         `[_sendCredentialCreateOffer] [NATS call]- error in create credentials : ${JSON.stringify(error)}`
@@ -798,9 +796,8 @@ export class IssuanceService {
       }
 
       if (IssueCredentialType.INDY === credentialType) {
-        const schemaResponse: SchemaDetails = await this.issuanceRepository.getCredentialDefinitionDetails(
-          credentialDefinitionId
-        );
+        const schemaResponse: SchemaDetails =
+          await this.issuanceRepository.getCredentialDefinitionDetails(credentialDefinitionId);
 
         this.logger.debug(
           'Schema details for indy based credential received:',
@@ -917,7 +914,6 @@ export class IssuanceService {
           sendEmailCredentialOffer['emailId'] = iterator.emailId;
           sendEmailCredentialOffer['index'] = index;
 
-          await this.delay(500); // Wait for 0.5 seconds
           this.logger.debug(`Sending offer number: index: ${index}, iterator: ${iterator}`);
           const sendOobOffer = await this.sendEmailForCredentialOffer(sendEmailCredentialOffer);
           arraycredentialOfferResponse.push(sendOobOffer);
@@ -1069,18 +1065,20 @@ export class IssuanceService {
         errors.push(new NotFoundException(ResponseMessages.issuance.error.platformConfigNotFound));
         return false;
       }
-      this.emailData.emailFrom = platformConfigData?.emailFrom;
-      this.emailData.emailTo = iterator?.emailId ?? emailId;
+      // Each overlapping issuance must own its email payload.
+      const emailData = Object.assign(new EmailDto(), this.emailData);
+      emailData.emailFrom = platformConfigData?.emailFrom;
+      emailData.emailTo = iterator?.emailId ?? emailId;
       const platform = platformName || process.env.PLATFORM_NAME;
-      this.emailData.emailSubject = `${platform} Platform: Issuance of Your Credential`;
-      this.emailData.emailHtml = this.outOfBandIssuance.outOfBandIssuance(
+      emailData.emailSubject = `${platform} Platform: Issuance of Your Credential`;
+      emailData.emailHtml = this.outOfBandIssuance.outOfBandIssuance(
         emailId,
         organizationDetails.name,
         deepLinkURL,
         platformName,
         organizationLogoUrl
       );
-      this.emailData.emailAttachments = [
+      emailData.emailAttachments = [
         {
           filename: 'qrcode.png',
           content: outOfBandIssuanceQrCode.split(';base64,')[1],
@@ -1090,7 +1088,7 @@ export class IssuanceService {
       ];
       this.logger.debug('Invitation url and deeplink created successfully. Sending email');
 
-      const isEmailSent = await this.emailService.sendEmail(this.emailData);
+      const isEmailSent = await this.emailService.sendEmail(emailData);
 
       this.logger.log(`isEmailSent ::: ${JSON.stringify(isEmailSent)}-${this.counter}`);
       this.counter++;
@@ -1158,7 +1156,7 @@ export class IssuanceService {
       this.logger.debug('Issuance service call to the agent controller for creating an OOB offer');
       const pattern = { cmd: 'agent-out-of-band-credential-offer' };
       const payload = { outOfBandIssuancePayload, url, orgId };
-      const result = await this.natsCall(pattern, payload);
+      const result = await this.issuanceWork.offer(() => this.natsCall(pattern, payload));
       this.logger.debug('Success: Issuance service call to the agent controller for creating an OOB offer');
       return result;
     } catch (error) {
@@ -1409,10 +1407,11 @@ export class IssuanceService {
         let filteredData = parsedData;
         if (previewRequest.searchByText) {
           const searchTerm = previewRequest.searchByText.toLowerCase();
-          filteredData = parsedData.filter(
-            (item) =>
+          filteredData = parsedData.filter((item) => {
+            return (
               item.email_identifier.toLowerCase().includes(searchTerm) || item.name.toLowerCase().includes(searchTerm)
-          );
+            );
+          });
         }
 
         // Apply pagination to the filtered data
@@ -1533,7 +1532,6 @@ export class IssuanceService {
     const delay = (ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms));
     const batchSize = CommonConstants.ISSUANCE_BATCH_SIZE; // initial 1000
     const uniqueJobId = uuidv4();
-    const limit = pLimit(CommonConstants.ISSUANCE_MAX_CONCURRENT_OPERATIONS);
 
     // Generator function to yield batches
     // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -1575,8 +1573,6 @@ export class IssuanceService {
 
       this.logger.log(`Processing batch ${batchIndex + 1} with ${batch.length} items.`);
 
-      // Execute the batched jobs with limited concurrency
-      await Promise.all(queueJobsArray.map((job) => limit(() => job)));
       return queueJobsArray;
     };
 
@@ -1585,7 +1581,7 @@ export class IssuanceService {
     for (const batch of createBatches(bulkPayload, batchSize)) {
       const resolvedBatchJobs = await processBatch(batch, batchIndex);
 
-      this.logger.log('Adding resolved jobs to the queue:', resolvedBatchJobs);
+      this.logger.log(`Adding ${resolvedBatchJobs.length} issuance jobs to the queue`);
       await this.bulkIssuanceQueue.addBulk(resolvedBatchJobs);
 
       batchIndex++;
@@ -1697,7 +1693,9 @@ export class IssuanceService {
           width: clientDetails?.width
         };
 
-        this.processInBatches(bulkPayload, bulkPayloadDetails);
+        void this.processInBatches(bulkPayload, bulkPayloadDetails).catch(() => {
+          this.logger.error('Bulk issuance enqueue failed; review the persisted file before retrying');
+        });
       } catch (error) {
         this.logger.error(`Error processing issuance data: ${error}`);
       }
@@ -1733,6 +1731,11 @@ export class IssuanceService {
         throw new BadRequestException(`${errorMessage}`);
       }
 
+      await this.issuanceWork.assertRetryable(
+        orgId,
+        fileId,
+        bulkpayloadRetry.map((row) => row.id)
+      );
       try {
         const bulkPayloadDetails: BulkPayloadDetails = {
           clientId: clientDetails.clientId,
@@ -1747,7 +1750,9 @@ export class IssuanceService {
           height: clientDetails?.height,
           width: clientDetails?.width
         };
-        this.processInBatches(bulkpayloadRetry, bulkPayloadDetails);
+        void this.processInBatches(bulkpayloadRetry, bulkPayloadDetails).catch(() => {
+          this.logger.error('Bulk issuance retry enqueue failed; review the persisted file before retrying');
+        });
       } catch (error) {
         this.logger.error(`Error processing issuance data: ${error}`);
       }
@@ -1759,16 +1764,22 @@ export class IssuanceService {
   }
 
   async processIssuanceData(jobDetails: IQueuePayload): Promise<boolean> {
-    const { jobId, totalJobs } = jobDetails;
-    if (!this.processedJobsCounters[jobId]) {
-      this.processedJobsCounters[jobId] = 0;
-    }
-    this.processedJobsCounters[jobId] += 1;
-    if (this.processedJobsCounters[jobId] === totalJobs) {
-      jobDetails.isLastData = true;
-      delete this.processedJobsCounters[jobId];
-    }
+    const succeeded = await this.issuanceWork.bulkRow(jobDetails.orgId, jobDetails.fileUploadId, jobDetails.id, () => {
+      return this.processBulkRow(jobDetails);
+    });
+    await this.completeBulkRow(jobDetails, succeeded);
+    return succeeded;
+  }
 
+  private async processBulkRow(jobDetails: IQueuePayload): Promise<boolean> {
+    const currentRow = await this.issuanceRepository.getFileDataForProcessing(
+      jobDetails.id,
+      jobDetails.fileUploadId,
+      jobDetails.orgId
+    );
+    if (!currentRow) {
+      throw new Error('Issuance row does not belong to the requested file and organization');
+    }
     const fileUploadData: FileUploadData = {
       fileUpload: '',
       fileRow: '',
@@ -1788,76 +1799,88 @@ export class IssuanceService {
     fileUploadData.jobId = jobDetails.id;
     const { orgId } = jobDetails;
 
-    const agentDetails = await this.issuanceRepository.getAgentEndPoint(orgId);
-    const { organisation, orgDid } = agentDetails;
-    let prettyVc;
     let isErrorOccurred = false;
-    try {
-      let oobIssuancepayload;
-      if (jobDetails.credentialType === SchemaType.INDY) {
-        oobIssuancepayload = {
-          credentialDefinitionId: jobDetails.credentialDefinitionId,
-          orgId: jobDetails.orgId,
-          label: organisation?.name,
-          attributes: [],
-          emailId: jobDetails?.credential_data?.email_identifier,
-          credentialType: IssueCredentialType.INDY,
-          isReuseConnection: true
-        };
-        for (const key in jobDetails?.credential_data) {
-          if (jobDetails.credential_data.hasOwnProperty(key) && TemplateIdentifier.EMAIL_COLUMN !== key) {
-            const value = jobDetails?.credential_data[key];
-            oobIssuancepayload.attributes.push({ name: key, value });
-          }
+    if (!currentRow.status) {
+      try {
+        const agentDetails = await this.issuanceRepository.getAgentEndPoint(orgId);
+        if (!agentDetails) {
+          throw new Error('Issuance agent is unavailable');
         }
-      } else if (jobDetails.credentialType === SchemaType.W3C_Schema) {
-        const schemaDetails = await this.issuanceRepository.getSchemaDetailsBySchemaIdentifier(
-          jobDetails.schemaLedgerId
+        const { organisation, orgDid } = agentDetails;
+        let prettyVc;
+        let oobIssuancepayload;
+        if (jobDetails.credentialType === SchemaType.INDY) {
+          oobIssuancepayload = {
+            credentialDefinitionId: jobDetails.credentialDefinitionId,
+            orgId: jobDetails.orgId,
+            label: organisation?.name,
+            attributes: [],
+            emailId: jobDetails?.credential_data?.email_identifier,
+            credentialType: IssueCredentialType.INDY,
+            isReuseConnection: true
+          };
+          for (const key in jobDetails?.credential_data) {
+            if (jobDetails.credential_data.hasOwnProperty(key) && TemplateIdentifier.EMAIL_COLUMN !== key) {
+              const value = jobDetails?.credential_data[key];
+              oobIssuancepayload.attributes.push({ name: key, value });
+            }
+          }
+        } else if (jobDetails.credentialType === SchemaType.W3C_Schema) {
+          const schemaDetails = await this.issuanceRepository.getSchemaDetailsBySchemaIdentifier(
+            jobDetails.schemaLedgerId
+          );
+          const { name, schemaLedgerId } = schemaDetails;
+          const JsonldCredentialDetails: IJsonldCredential = {
+            schemaName: name,
+            schemaLedgerId,
+            credentialData: jobDetails.credential_data,
+            orgDid,
+            orgId,
+            isReuseConnection: true
+          };
+
+          prettyVc = {
+            certificate: jobDetails?.certificate,
+            size: jobDetails?.size,
+            orientation: jobDetails?.orientation,
+            height: jobDetails?.height,
+            width: jobDetails?.width
+          };
+
+          oobIssuancepayload = await createOobJsonldIssuancePayload(JsonldCredentialDetails, prettyVc);
+          oobIssuancepayload.isValidateSchema = jobDetails?.isValidateSchema;
+        }
+
+        const oobCredentials = await this.outOfBandCredentialOffer(
+          oobIssuancepayload,
+          jobDetails?.platformName,
+          jobDetails?.organizationLogoUrl,
+          prettyVc
         );
-        const { name, schemaLedgerId } = schemaDetails;
-        const JsonldCredentialDetails: IJsonldCredential = {
-          schemaName: name,
-          schemaLedgerId,
-          credentialData: jobDetails.credential_data,
-          orgDid,
-          orgId,
-          isReuseConnection: true
-        };
-
-        prettyVc = {
-          certificate: jobDetails?.certificate,
-          size: jobDetails?.size,
-          orientation: jobDetails?.orientation,
-          height: jobDetails?.height,
-          width: jobDetails?.width
-        };
-
-        oobIssuancepayload = await createOobJsonldIssuancePayload(JsonldCredentialDetails, prettyVc);
-        oobIssuancepayload.isValidateSchema = jobDetails?.isValidateSchema;
-      }
-
-      const oobCredentials = await this.outOfBandCredentialOffer(
-        oobIssuancepayload,
-        jobDetails?.platformName,
-        jobDetails?.organizationLogoUrl,
-        prettyVc
-      );
-      if (oobCredentials) {
+        if (!oobCredentials) {
+          throw new Error('Credential offer or delivery did not complete');
+        }
         await this.issuanceRepository.deleteFileDataByJobId(jobDetails.id);
+      } catch (error) {
+        this.logger.error('Bulk issuance row failed; details are recorded on the file row');
+        fileUploadData.isError = true;
+        fileUploadData.error = JSON.stringify(error.error) ? JSON.stringify(error.error) : JSON.stringify(error);
+        fileUploadData.detailError = `${JSON.stringify(error)}`;
+        if (!isErrorOccurred) {
+          isErrorOccurred = true;
+        }
       }
-    } catch (error) {
-      this.logger.error(`error in issuanceBulkCredential for data : ${JSON.stringify(error)}`);
-      fileUploadData.isError = true;
-      fileUploadData.error = JSON.stringify(error.error) ? JSON.stringify(error.error) : JSON.stringify(error);
-      fileUploadData.detailError = `${JSON.stringify(error)}`;
-      if (!isErrorOccurred) {
-        isErrorOccurred = true;
-      }
+      await this.issuanceRepository.updateFileUploadData(fileUploadData);
     }
-    await this.issuanceRepository.updateFileUploadData(fileUploadData);
+    return !isErrorOccurred;
+  }
 
+  private async completeBulkRow(jobDetails: IQueuePayload, succeeded: boolean): Promise<void> {
+    const { jobId, totalJobs } = jobDetails;
+    let isErrorOccurred = !succeeded;
+    const isLastData = await this.issuanceWork.completedRow(jobId, jobDetails.id, totalJobs);
     try {
-      if (jobDetails.isLastData) {
+      if (isLastData) {
         const socket = await io(`${process.env.SOCKET_HOST}`, {
           reconnection: true,
           reconnectionDelay: 5000,
@@ -1867,6 +1890,11 @@ export class IssuanceService {
         });
         const errorCount = await this.issuanceRepository.countErrorsForFile(jobDetails.fileUploadId);
         const status = 0 === errorCount ? FileUploadStatus.completed : FileUploadStatus.partially_completed;
+
+        await this.issuanceRepository.updateFileUploadDetails(jobDetails.fileUploadId, {
+          status,
+          lastChangedDateTime: new Date()
+        });
 
         if (!jobDetails.isRetry) {
           socket.emit('bulk-issuance-process-completed', {
@@ -1878,18 +1906,13 @@ export class IssuanceService {
             host: process.env.REDIS_HOST,
             port: Number(process.env.REDIS_PORT)
           });
-          store.del(jobDetails.cacheId);
+          await store.del(jobDetails.cacheId);
         } else {
           socket.emit('bulk-issuance-process-retry-completed', {
             clientId: jobDetails.clientId,
             fileUploadId: jobDetails.fileUploadId
           });
         }
-
-        await this.issuanceRepository.updateFileUploadDetails(jobDetails.fileUploadId, {
-          status,
-          lastChangedDateTime: new Date()
-        });
       }
     } catch (error) {
       this.logger.error(`Error in completing bulk issuance process: ${error}`);
@@ -1910,7 +1933,6 @@ export class IssuanceService {
       }
       throw error;
     }
-    return true;
   }
 
   async splitIntoBatches<T>(array: T[], batchSize: number): Promise<T[][]> {
@@ -2015,8 +2037,8 @@ export class IssuanceService {
         const batchStartTime = Date.now();
 
         // Create an array of limited promises for the current batch
-        const saveFileDetailsPromises = batch.map((element) =>
-          limit(() => {
+        const saveFileDetailsPromises = batch.map((element) => {
+          return limit(() => {
             const credentialPayload = {
               credential_data: element,
               schemaId: parsedFileDetails.schemaLedgerId,
@@ -2028,8 +2050,8 @@ export class IssuanceService {
               credentialType: parsedFileDetails.credentialType
             };
             return this.issuanceRepository.saveFileDetails(credentialPayload, userId);
-          })
-        );
+          });
+        });
 
         this.logger.log(`Processing batch ${index + 1} with ${batch.length} elements...`);
 
