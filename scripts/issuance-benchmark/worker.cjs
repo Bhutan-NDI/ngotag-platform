@@ -12,14 +12,17 @@ serviceModule.loaded = true;
 require.cache[servicePath] = serviceModule;
 const { BulkIssuanceProcessor } = require('../../apps/issuance/src/issuance.processor.ts');
 const [mode, prefix] = process.argv.slice(2);
-if (!['before', 'after', 'crash'].includes(mode) || !/^issuance-benchmark-[a-f0-9-]+$/.test(prefix))
+if (
+  !['before', 'after', 'crash', 'crash-prepare', 'crash-persist'].includes(mode) ||
+  !/^issuance-benchmark-[a-f0-9-]+$/.test(prefix)
+)
   throw Error('Invalid fixture arguments');
 const queue = new Queue('bulk-issuance', {
   redis: localRedis(),
   prefix,
   settings: {
     maxStalledCount: 0,
-    ...(mode === 'crash' ? { lockDuration: 500, lockRenewTime: 200, stalledInterval: 250 } : {})
+    ...(mode.startsWith('crash') ? { lockDuration: 500, lockRenewTime: 200, stalledInterval: 250 } : {})
   }
 });
 const coordinator = new IssuanceWorkCoordinator(queue);
@@ -45,7 +48,18 @@ const service = {
   processIssuanceData: (data) =>
     mode === 'before'
       ? operation(data)
-      : coordinator.bulkRow('synthetic', 'file', data.id, () => coordinator.offer(() => operation(data)))
+      : coordinator.bulkRow('synthetic', 'file', data.id, async () => {
+          if (mode === 'crash-prepare') {
+            await queue.client.set(`${prefix}:crash-ready`, '1');
+            await new Promise((resolve) => setTimeout(resolve, 60000));
+          }
+          const result = await coordinator.offer(() => operation(data));
+          if (mode === 'crash-persist') {
+            await queue.client.set(`${prefix}:crash-ready`, '1');
+            await new Promise((resolve) => setTimeout(resolve, 60000));
+          }
+          return result;
+        })
 };
 const processor = new BulkIssuanceProcessor(service);
 queue.process(

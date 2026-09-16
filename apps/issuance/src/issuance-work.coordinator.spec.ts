@@ -182,6 +182,97 @@ integration('distributed issuance budget with local Redis', () => {
     await expect(workers[1].assertRetryable('org', 'file', ['different-row'])).resolves.toBeUndefined();
   });
 
+  it('does not occupy global permits during row preparation or post-offer persistence', async () => {
+    let finish: () => void;
+    let prepared = 0;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const jobs = [0, 1].map((index) => {
+      return workers[index].bulkRow('org', 'file', String(index), async () => {
+        prepared++;
+        await gate;
+        await workers[index].offer(async () => true);
+        return true;
+      });
+    });
+    for (let i = 0; 2 !== prepared && 100 > i; i++) {
+      await sleep(2);
+    }
+    expect(prepared).toBe(2);
+    expect(await queues[0].client.hlen(queues[0].toKey('offer-capacity-v1'))).toBe(0);
+    await expect(workers[2].offer(async () => true)).resolves.toBe(true);
+    finish();
+    await Promise.all(jobs);
+
+    let persist: () => void;
+    let offered = false;
+    const persistence = new Promise<void>((resolve) => {
+      persist = resolve;
+    });
+    const row = workers[0].bulkRow('org', 'file', 'post-offer', async () => {
+      await workers[0].offer(async () => true);
+      offered = true;
+      await persistence;
+      return true;
+    });
+    for (let i = 0; !offered && 100 > i; i++) {
+      await sleep(2);
+    }
+    expect(offered).toBe(true);
+    expect(await queues[0].client.hlen(queues[0].toKey('offer-capacity-v1'))).toBe(0);
+    await expect(workers[1].assertRetryable('org', 'file', ['post-offer'])).rejects.toThrow('reconcile');
+    persist();
+    await row;
+  });
+
+  it('reclaims expired unactivated reservations but never expires active owners', async () => {
+    const key = queues[0].toKey('offer-capacity-v1');
+    await queues[0].client.hset(key, 'capacity', 2, 'abandoned', 'r:0', 'active-owner', 'active:0');
+    await expect(workers[1].offer(async () => true)).resolves.toBe(true);
+    expect(await queues[0].client.hget(key, 'abandoned')).toBeNull();
+    expect(await queues[0].client.hget(key, 'active-owner')).toBe('active:0');
+  });
+
+  it('fences a stale reservation before allowing remote dispatch', async () => {
+    const [{ client }] = queues;
+    const original = client.eval.bind(client);
+    const spy = jest.spyOn(client, 'eval').mockImplementation(async (...args: Parameters<typeof client.eval>) => {
+      const result = await original(...args);
+      if (String(args[0]).includes("'r:' .. (ms")) {
+        await client.hset(String(args[2]), String(args[4]), 'r:0');
+      }
+      return result;
+    });
+    const operation = jest.fn(async () => true);
+    try {
+      await expect(workers[0].offer(operation)).rejects.toThrow('reservation expired');
+      expect(operation).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('retries owner-safe release after transient Redis failures without rerunning the offer', async () => {
+    const [{ client }] = queues;
+    const original = client.eval.bind(client);
+    let failures = 0;
+    const spy = jest.spyOn(client, 'eval').mockImplementation(async (...args: Parameters<typeof client.eval>) => {
+      if (String(args[0]).startsWith("\nredis.call('HDEL'") && 2 > failures++) {
+        throw new Error('transient');
+      }
+      return original(...args);
+    });
+    const operation = jest.fn(async () => true);
+    try {
+      await expect(workers[0].offer(operation)).resolves.toBe(true);
+      expect(operation).toHaveBeenCalledTimes(1);
+      expect(await client.exists(queues[0].toKey('offer-capacity-v1'))).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('counts completed rows across replicas only once, not rows that merely started', async () => {
     await expect(workers[0].completedRow('batch', 'row-2', 3)).resolves.toBe(false);
     await expect(workers[1].completedRow('BATCH', 'ROW-2', 3)).resolves.toBe(false);

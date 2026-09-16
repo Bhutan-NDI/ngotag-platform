@@ -46,11 +46,12 @@ jobs:
           done
           exit 1
       - name: Test lifecycle, isolation and shared budget
-        run: pnpm exec jest --runInBand apps/issuance/src/issuance.processor.spec.ts apps/issuance/src/issuance-work.coordinator.spec.ts apps/issuance/src/issuance.service.lifecycle.spec.ts
+        run: pnpm exec jest --runInBand apps/issuance/src/issuance-admission.queue.spec.ts apps/issuance/src/issuance.processor.spec.ts apps/issuance/src/issuance-work.coordinator.spec.ts apps/issuance/src/issuance.service.lifecycle.spec.ts
       - name: Test three processes and crash behavior
         run: |
           node scripts/issuance-benchmark/run.cjs
           node scripts/issuance-benchmark/crash-check.cjs
+          node scripts/issuance-benchmark/permit-scope.cjs
       - name: Remove disposable fixture
         if: always()
         run: docker rm -f codex-issuance-p2-redis || true

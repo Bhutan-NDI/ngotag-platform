@@ -12,12 +12,16 @@ worker replicas.
 - The processor awaits issuance and result persistence. A persisted unsuccessful
   result fails its job; exceptions propagate. It does not automatically replay a
   side-effecting operation.
-- A shared Redis budget covers bulk row processing and both direct offer dispatch
-  paths in the issuance service. Bulk calls reuse their existing permit for nested
-  offers, avoiding a double-acquisition deadlock. Other applications calling an
+- A shared Redis budget covers actual offer dispatch in both direct paths and
+  bulk rows. Preparation, email delivery and result persistence do not hold offer
+  permits. A separate local queue bounds whole-row processing; the row guard stays
+  held throughout preparation, dispatch and persistence. Other applications calling an
   agent directly, and later DIDComm exchanges, are outside this budget.
 - A local limiter bounds Redis contenders, and a finite pending-admission limit
-  bounds the local waiting list. Redis atomically enforces the shared budget across
+  bounds each local waiting list. Expired waiters are removed immediately, freeing
+  their queue positions even while admitted work remains active. Local offer
+  contenders are limited to the smaller of the worker and global budgets. Redis
+  contention retries back off from 1 ms to 50 ms and obey the admission deadline. Redis atomically enforces the shared budget across
   participating processes using the same Bull queue namespace.
 - Capacity-wait expiry includes local waiting. Expired work cannot dispatch later.
   Once admitted, the timer is cancelled: a timeout cannot safely cancel a remote
@@ -47,12 +51,12 @@ Its primary benefit is controlled burst size and accurate lifecycle/failure trac
 Set environment variables before starting workers. All participating replicas must
 use the same global budget and Redis namespace.
 
-| Setting                       | Default | Accepted range | Meaning                                                  |
-| ----------------------------- | ------: | -------------: | -------------------------------------------------------- |
-| `ISSUANCE_GLOBAL_CONCURRENCY` |       8 |          1–128 | Shared permits for bulk rows and direct offers           |
-| `ISSUANCE_WORKER_CONCURRENCY` |       8 |          1–128 | Bull handlers and local contenders per process           |
-| `ISSUANCE_MAX_PENDING`        |    1000 |        1–10000 | Additional local admissions waiting for a contender slot |
-| `ISSUANCE_CAPACITY_WAIT_MS`   |  300000 |      1–3600000 | Admission deadline; not an execution timeout             |
+| Setting                       | Default | Accepted range | Meaning                                      |
+| ----------------------------- | ------: | -------------: | -------------------------------------------- |
+| `ISSUANCE_GLOBAL_CONCURRENCY` |       8 |          1–128 | Shared permits for actual offers only        |
+| `ISSUANCE_WORKER_CONCURRENCY` |       8 |          1–128 | Bull handlers and whole rows per process     |
+| `ISSUANCE_MAX_PENDING`        |    1000 |        1–10000 | Pending admissions per local row/offer queue |
+| `ISSUANCE_CAPACITY_WAIT_MS`   |  300000 |      1–3600000 | Admission deadline; not an execution timeout |
 
 Malformed, blank, zero, fractional and oversized settings fail rather than silently
 falling back. A full admission list or expired wait rejects before dispatch.
@@ -71,10 +75,17 @@ Bull jobs use one attempt, the processor calls `discard()`, and this queue disab
 automatic stalled-job replay (`maxStalledCount: 0`). Do not add a Bull execution
 `timeout`: Bull cannot cancel the downstream offer when that timer fires.
 
-Permits and uncertain-row guards deliberately **do not expire**. Reusing a slot
-because a timer elapsed could overlap a remote request that is still executing.
-Normal completion releases owned state. A killed worker or failed cleanup can leave
-state behind, reducing available capacity until operators reconcile it. This is an
+Unactivated reservations expire after 30 seconds using Redis server time and are
+reclaimed on subsequent acquisition. Dispatch requires an acknowledged atomic
+activation of the same unexpired owner, so a delayed worker cannot use a reclaimed
+reservation. Active permits and uncertain-row guards deliberately **do not expire**.
+Reusing an active slot because a timer elapsed could overlap a remote request still
+executing. Normal completion releases the owner; cleanup retries transient Redis
+failures three times without replaying the operation. A crash before dispatch
+activation or after offer cleanup no longer strands global capacity during unrelated
+row work. A killed worker after activation, or exhausted cleanup retries, can still
+leave state behind until operators reconcile it. Legacy numeric owners are retained
+conservatively during upgrades. This is an
 explicit availability tradeoff; alert on old active jobs, admission failures,
 stalled/failed jobs, retained permits and queue age.
 
@@ -111,19 +122,19 @@ restore premature completion and bypass these guards. This PR deploys nothing.
 
 ## Tests and measurements
 
-The scoped suite has **33 passing tests** on Node 24.21.0. It covers pending promises,
-failure propagation, persistence ordering, shared budgets, nested offers, admission
+The latency follow-up scoped suite has **39 passing tests** on Node 20.19.4. It covers pending promises,
+failure propagation, persistence ordering, shared budgets, separate row/offer scopes, expiring reservations, cleanup retries, admission
 expiry without late dispatch, tenant/UUID isolation, duplicate completion, guarded
 retries and independent email DTOs. The issuance build and targeted lint pass.
 
-The repository-wide comparison used the same locked root dependencies and Node
+The original PR repository-wide comparison used the same locked root dependencies and Node
 runtime. Untouched `develop` has 19 failed suites / five failed assertions; the
 candidate has the **same** failing suites and assertions, with 33 additional passing
 tests. No unrelated test repair or dependency/lockfile refresh is included. A
 separate PR workflow builds issuance and runs its tests, three-process checks and
 crash test without cloud credentials or deployment steps.
 
-The synthetic benchmark uses real Bull 4.16.5, Redis 7.2.5 and three separate Node
+The original PR synthetic benchmark uses real Bull 4.16.5, Redis 7.2.5 and three separate Node
 worker processes. Each run submits 120 rows whose fake downstream work waits 40 ms.
 Three repetitions alternate baseline/candidate order. Baseline reproduces the
 unawaited handler; candidate runs the actual processor and coordinator with a shared
@@ -149,7 +160,9 @@ Final raw results are in [issuance-work.json](benchmarks/issuance-work.json). Ev
 candidate run must have at most eight overlapping operations, zero premature
 completions and zero failed jobs. The baseline must reproduce premature completion.
 The crash test kills one owned local worker and verifies its job fails without replay,
-its permit remains reserved, and its row cannot be retried blindly.
+its active-offer permit remains reserved, and its row cannot be retried blindly.
+Additional kills during preparation and persistence leave no global offer permit
+behind, while retaining row guards and preventing automatic replay.
 
 Batch completion/queue-age increases in the timer fixture are expected: the old
 path overlaps almost all timers and reports success before they finish. Worker CPU
@@ -157,6 +170,34 @@ and memory measurements are included, but they are not RDS savings measurements.
 Before sizing production, compare equivalent traffic: queue age and completion time,
 throughput, errors, active work, application CPU/memory, and database CPU/AAS and
 latency. No account-specific information is published in these results.
+
+## Follow-up latency measurement
+
+The additional [permit-scope fixture](../scripts/issuance-benchmark/permit-scope.cjs)
+compares whole-row and offer-only ownership using the same updated coordinator and
+isolated Redis. Three clients in one process submit 24 rows with a global cap of two;
+each row simulates 20 ms preparation, 5 ms offer and 20 ms persistence. Alternating
+three trials, median p95 row latency falls from 620.15 ms to 134.58 ms (78.3%) and
+median batch time from 621.68 ms to 137.02 ms (78.0%). All 24 rows complete and actual
+offer overlap stays at two. [Raw results](benchmarks/issuance-permit-scope.json).
+
+An initial experiment with fixed 50 ms acquisition polling showed essentially no
+improvement (approximately 621 ms p95 in both modes). Bounded local contention and
+early exponential retry reduce that artificial wait. This fixture isolates the
+mechanism; it neither compares released production versions nor measures network,
+cryptography, database or email latency. It does not demonstrate a 99.9% reduction.
+
+The follow-up also reran the [three-process regression](benchmarks/issuance-work-latency-followup.json):
+all three candidate trials stayed at eight active operations with zero premature
+completions and zero failed jobs. The cap still increases total batch time compared
+with the unsafe unbounded baseline. [Three-phase crash results](benchmarks/issuance-crash-phases.json).
+
+Whole-row preparation and persistence are now bounded **per process**, not by the
+global offer budget: up to worker concurrency times replica count can run. This
+improves overlap but can increase platform database/email pressure relative to the
+initial whole-row cap. Keep the existing budgets until representative production
+measurements justify changes. Credo dispatch remains globally bounded; no SQL count
+or database-size reduction is claimed by this follow-up.
 
 ## Reproduce locally
 
@@ -172,9 +213,10 @@ ln -s /tmp/issuance-test-dependencies/node_modules node_modules
 pnpm exec prisma generate --schema=libs/prisma-service/prisma/schema.prisma
 pnpm run build issuance
 docker run --rm -d --name codex-issuance-p2-redis -p 127.0.0.1::6379 redis:7.2.5
-RUN_ISSUANCE_REDIS_TESTS=1 pnpm exec jest --runInBand apps/issuance/src/issuance.processor.spec.ts apps/issuance/src/issuance-work.coordinator.spec.ts apps/issuance/src/issuance.service.lifecycle.spec.ts
+RUN_ISSUANCE_REDIS_TESTS=1 pnpm exec jest --runInBand apps/issuance/src/issuance-admission.queue.spec.ts apps/issuance/src/issuance.processor.spec.ts apps/issuance/src/issuance-work.coordinator.spec.ts apps/issuance/src/issuance.service.lifecycle.spec.ts
 node scripts/issuance-benchmark/run.cjs
 node scripts/issuance-benchmark/crash-check.cjs
+node scripts/issuance-benchmark/permit-scope.cjs
 ```
 
 Wait for Redis readiness before testing. Fixtures reject non-local Docker contexts
