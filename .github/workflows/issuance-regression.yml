@@ -1,0 +1,59 @@
+name: Issuance regression checks
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'apps/issuance/**'
+      - 'libs/context/**'
+      - 'libs/common/src/NATSClient*'
+      - 'scripts/issuance-benchmark/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/issuance-regression.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  issuance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      RUN_ISSUANCE_REDIS_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.21.0'
+      - name: Install locked dependencies as in the Docker build
+        shell: bash
+        run: |
+          npm install -g pnpm@9.15.3 --ignore-scripts
+          task_deps="$RUNNER_TEMP/issuance-dependencies"
+          mkdir -p "$task_deps"
+          cp package.json pnpm-lock.yaml pnpm-workspace.yaml "$task_deps/"
+          pnpm --dir "$task_deps" install --frozen-lockfile --ignore-scripts
+          ln -s "$task_deps/node_modules" node_modules
+          pnpm exec prisma generate --schema=libs/prisma-service/prisma/schema.prisma
+      - name: Build issuance
+        run: pnpm run build issuance
+      - name: Start isolated Redis fixture
+        run: |
+          docker run --rm -d --name codex-issuance-p2-redis -p 127.0.0.1::6379 redis:7.2.5
+          for attempt in {1..30}; do
+            if docker exec codex-issuance-p2-redis redis-cli ping | grep -q PONG; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Test lifecycle, isolation and shared budget
+        run: pnpm exec jest --runInBand libs/context/src/issuanceDeadline.spec.ts libs/common/src/NATSClient.deadline.spec.ts apps/issuance/src/issuance-admission.queue.spec.ts apps/issuance/src/issuance.processor.spec.ts apps/issuance/src/issuance-work.coordinator.spec.ts apps/issuance/src/issuance.service.lifecycle.spec.ts
+      - name: Test three processes and crash behavior
+        run: |
+          node scripts/issuance-benchmark/run.cjs
+          node scripts/issuance-benchmark/crash-check.cjs
+          node scripts/issuance-benchmark/permit-scope.cjs
+      - name: Remove disposable fixture
+        if: always()
+        run: docker rm -f codex-issuance-p2-redis || true

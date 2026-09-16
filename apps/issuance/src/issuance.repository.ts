@@ -551,6 +551,13 @@ export class IssuanceRepository {
     }
   }
 
+  async getFileDataForProcessing(id: string, fileUploadId: string, orgId: string): Promise<{ status: boolean } | null> {
+    return this.prisma.file_data.findFirst({
+      where: { id, fileUploadId, fileUpload: { orgId } },
+      select: { status: true }
+    });
+  }
+
   async updateFileUploadData(fileUploadData: FileUploadData): Promise<file_data> {
     try {
       const { jobId, fileUpload, isError, referenceId, error, detailError } = fileUploadData;

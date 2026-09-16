@@ -19,14 +19,19 @@ import {
 
 import { Controller, Logger } from '@nestjs/common';
 import { IssuanceService } from './issuance.service';
-import { MessagePattern } from '@nestjs/microservices';
+import { Ctx, MessagePattern, NatsContext } from '@nestjs/microservices';
+import { IssuanceWorkCoordinator } from './issuance-work.coordinator';
+import { readIssuanceDeadline } from '../../../libs/context/src/issuanceDeadline';
 import { OOBIssueCredentialDto } from 'apps/api-gateway/src/issuance/dtos/issuance.dto';
 import { user } from '@prisma/client';
 
 @Controller()
 export class IssuanceController {
   private readonly logger = new Logger('IssueCredentialController');
-  constructor(private readonly issuanceService: IssuanceService) {}
+  constructor(
+    private readonly issuanceService: IssuanceService,
+    private readonly issuanceWork: IssuanceWorkCoordinator
+  ) {}
 
   @MessagePattern({ cmd: 'get-issuance-records' })
   async getIssuanceRecordsByOrgId(payload: { orgId: string; userId: string }): Promise<number> {
@@ -35,13 +40,20 @@ export class IssuanceController {
   }
 
   @MessagePattern({ cmd: 'send-credential-create-offer' })
-  async sendCredentialCreateOffer(payload: IIssuance): Promise<ICredentialOfferResponse> {
-    return this.issuanceService.sendCredentialCreateOffer(payload);
+  async sendCredentialCreateOffer(payload: IIssuance, @Ctx() context: NatsContext): Promise<ICredentialOfferResponse> {
+    return this.issuanceWork.interactive(readIssuanceDeadline(context.getHeaders()), () => {
+      return this.issuanceService.sendCredentialCreateOffer(payload);
+    });
   }
 
   @MessagePattern({ cmd: 'send-credential-create-offer-oob' })
-  async sendCredentialOutOfBand(payload: OOBIssueCredentialDto): Promise<{ response: object }> {
-    return this.issuanceService.sendCredentialOutOfBand(payload);
+  async sendCredentialOutOfBand(
+    payload: OOBIssueCredentialDto,
+    @Ctx() context: NatsContext
+  ): Promise<{ response: object }> {
+    return this.issuanceWork.interactive(readIssuanceDeadline(context.getHeaders()), () => {
+      return this.issuanceService.sendCredentialOutOfBand(payload);
+    });
   }
 
   @MessagePattern({ cmd: 'get-all-issued-credentials' })
@@ -62,10 +74,12 @@ export class IssuanceController {
   }
 
   @MessagePattern({ cmd: 'out-of-band-credential-offer' })
-  async outOfBandCredentialOffer(payload: OutOfBandCredentialOffer): Promise<boolean> {
+  async outOfBandCredentialOffer(payload: OutOfBandCredentialOffer, @Ctx() context: NatsContext): Promise<boolean> {
     const { outOfBandCredentialDto } = payload;
     this.logger.debug('Request reached issuance microservice controller, issuing oob credential');
-    return this.issuanceService.outOfBandCredentialOffer(outOfBandCredentialDto);
+    return this.issuanceWork.interactive(readIssuanceDeadline(context.getHeaders()), () => {
+      return this.issuanceService.outOfBandCredentialOffer(outOfBandCredentialDto);
+    });
   }
 
   @MessagePattern({ cmd: 'download-csv-template-for-bulk-operation' })
