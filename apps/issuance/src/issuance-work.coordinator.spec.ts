@@ -273,6 +273,50 @@ integration('distributed issuance budget with local Redis', () => {
     }
   });
 
+  it('rejects expired requests before preparation and after slow preparation', async () => {
+    const prepare = jest.fn(async () => true);
+    await expect(workers[0].interactive(Date.now() - 1, prepare)).rejects.toThrow('expired');
+    expect(prepare).not.toHaveBeenCalled();
+    const dispatch = jest.fn(async () => true);
+    await expect(
+      workers[0].interactive(Date.now() + 15, async () => {
+        await sleep(25);
+        return workers[0].offer(dispatch);
+      })
+    ).rejects.toThrow('no offer was dispatched');
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('expires an interactive waiter without cancelling an already dispatched offer', async () => {
+    let finish: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let started = 0;
+    const active = [0, 1].map((index) => {
+      return workers[index].interactive(Date.now() + 100, () => {
+        return workers[index].offer(async () => {
+          started++;
+          await gate;
+          return true;
+        });
+      });
+    });
+    for (let i = 0; 2 > started && 100 > i; i++) {
+      await sleep(1);
+    }
+    expect(started).toBe(2);
+    const late = jest.fn(async () => true);
+    await expect(workers[2].interactive(Date.now() + 20, () => workers[2].offer(late))).rejects.toThrow(
+      'no offer was dispatched'
+    );
+    await sleep(110);
+    expect(await queues[0].client.hlen(queues[0].toKey('offer-capacity-v1'))).toBe(3);
+    finish();
+    await Promise.all(active);
+    expect(late).not.toHaveBeenCalled();
+  });
+
   it('counts completed rows across replicas only once, not rows that merely started', async () => {
     await expect(workers[0].completedRow('batch', 'row-2', 3)).resolves.toBe(false);
     await expect(workers[1].completedRow('BATCH', 'ROW-2', 3)).resolves.toBe(false);

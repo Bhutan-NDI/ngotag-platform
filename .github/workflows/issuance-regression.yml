@@ -5,6 +5,8 @@ on:
     branches: [develop]
     paths:
       - 'apps/issuance/**'
+      - 'libs/context/**'
+      - 'libs/common/src/NATSClient*'
       - 'scripts/issuance-benchmark/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -46,7 +48,7 @@ jobs:
           done
           exit 1
       - name: Test lifecycle, isolation and shared budget
-        run: pnpm exec jest --runInBand apps/issuance/src/issuance-admission.queue.spec.ts apps/issuance/src/issuance.processor.spec.ts apps/issuance/src/issuance-work.coordinator.spec.ts apps/issuance/src/issuance.service.lifecycle.spec.ts
+        run: pnpm exec jest --runInBand libs/context/src/issuanceDeadline.spec.ts libs/common/src/NATSClient.deadline.spec.ts apps/issuance/src/issuance-admission.queue.spec.ts apps/issuance/src/issuance.processor.spec.ts apps/issuance/src/issuance-work.coordinator.spec.ts apps/issuance/src/issuance.service.lifecycle.spec.ts
       - name: Test three processes and crash behavior
         run: |
           node scripts/issuance-benchmark/run.cjs

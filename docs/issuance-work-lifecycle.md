@@ -51,12 +51,12 @@ Its primary benefit is controlled burst size and accurate lifecycle/failure trac
 Set environment variables before starting workers. All participating replicas must
 use the same global budget and Redis namespace.
 
-| Setting                       | Default | Accepted range | Meaning                                      |
-| ----------------------------- | ------: | -------------: | -------------------------------------------- |
-| `ISSUANCE_GLOBAL_CONCURRENCY` |       8 |          1–128 | Shared permits for actual offers only        |
-| `ISSUANCE_WORKER_CONCURRENCY` |       8 |          1–128 | Bull handlers and whole rows per process     |
-| `ISSUANCE_MAX_PENDING`        |    1000 |        1–10000 | Pending admissions per local row/offer queue |
-| `ISSUANCE_CAPACITY_WAIT_MS`   |  300000 |      1–3600000 | Admission deadline; not an execution timeout |
+| Setting                       | Default | Accepted range | Meaning                                                |
+| ----------------------------- | ------: | -------------: | ------------------------------------------------------ |
+| `ISSUANCE_GLOBAL_CONCURRENCY` |       8 |          1–128 | Shared permits for actual offers only                  |
+| `ISSUANCE_WORKER_CONCURRENCY` |       8 |          1–128 | Bull handlers and whole rows per process               |
+| `ISSUANCE_MAX_PENDING`        |    1000 |        1–10000 | Pending admissions per local row/offer queue           |
+| `ISSUANCE_CAPACITY_WAIT_MS`   |  300000 |      1–3600000 | Bulk admission deadline; interactive waits are shorter |
 
 Malformed, blank, zero, fractional and oversized settings fail rather than silently
 falling back. A full admission list or expired wait rejects before dispatch.
@@ -230,3 +230,38 @@ matches the Docker build without rewriting lockfiles or relaxing frozen installa
 
 Bull's [reference](https://github.com/OptimalBits/bull/blob/v4.16.5/REFERENCE.md)
 describes promise completion, per-worker concurrency, retries and stalled jobs.
+
+## Interactive request admission deadline
+
+Interactive offer requests now carry an internal `issuance-admission-deadline` NATS
+header from the API gateway's existing request context. The gateway creates it from
+server receipt time; public client headers and payloads cannot extend it. The three
+interactive issuance entrypoints validate it before preparation and the coordinator
+checks the remaining monotonic budget again immediately before dispatch.
+
+- The gateway admission budget is ten seconds, including authentication/guard time,
+  NATS delivery, preparation and waiting. Expired or malformed deadlines fail before
+  dispatch; distant peer deadlines are clamped to the local ten-second maximum.
+- Individual interactive offer admission waits are capped at one second (or a lower
+  `ISSUANCE_CAPACITY_WAIT_MS`), within the original request budget. The five-minute
+  bulk setting no longer controls synchronous offer waits.
+- Bulk rows retain `ISSUANCE_CAPACITY_WAIT_MS` and their durable job lifecycle. No
+  execution timer releases a permit while a downstream side effect is still active.
+- A legacy internal sender without a deadline receives a ten-second budget at the
+  receiving service; this cannot account for time spent before that service. Roll
+  out gateway and issuance together using the previously documented drain procedure.
+  Cross-host absolute deadline propagation requires synchronized clocks.
+
+The observed ingress idle timeout is sixty seconds. A ten-second **latest admission**
+budget leaves time for downstream work, but is not a guarantee of completion within
+sixty seconds. Already-dispatched requests can remain uncertain on connection loss;
+no automatic replay was added. Shorter admission improves overload behavior, not the
+latency of successful cryptography, database work or user-wallet interaction. It can
+increase overload responses versus a long queue; measure successes and failures
+separately and size capacity to keep expected traffic within its latency target.
+
+Focused tests exercise expired requests before preparation, expiry during preparation
+and queueing, original-deadline propagation, bulk compatibility, and active offers
+remaining owned after their admission deadline passes. The API gateway and issuance
+builds are both validated. This change introduces no public request schema or database
+migration and adds no infrastructure.

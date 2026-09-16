@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from 'async_hooks';
 import { createHash, randomUUID } from 'crypto';
 import { performance } from 'perf_hooks';
 import { IssuanceAdmissionQueue } from './issuance-admission.queue';
+import { issuanceDeadline, ISSUANCE_INTERACTIVE_QUEUE_MS } from '../../../libs/context/src/issuanceDeadline';
 
 export function positiveIntegerSetting(name: string, fallback: number, maximum: number): number {
   const raw = process.env[name];
@@ -68,9 +69,15 @@ export class IssuanceWorkCoordinator {
     this.maxPending
   );
   private readonly rows = new IssuanceAdmissionQueue(ISSUANCE_WORKER_CONCURRENCY, this.maxPending);
+  private readonly requestDeadline = new AsyncLocalStorage<number>();
   private readonly bulkContext = new AsyncLocalStorage<{ dispatched: boolean }>();
 
   constructor(@InjectQueue('bulk-issuance') private readonly queue: Queue) {}
+
+  async interactive<T>(deadline: unknown, operation: () => Promise<T>): Promise<T> {
+    const remaining = issuanceDeadline(deadline) - Date.now();
+    return this.requestDeadline.run(performance.now() + remaining, operation);
+  }
 
   async offer<T>(operation: () => Promise<T>): Promise<T> {
     return this.withPermit(async () => {
@@ -83,7 +90,9 @@ export class IssuanceWorkCoordinator {
   }
 
   private async withPermit<T>(operation: () => Promise<T>): Promise<T> {
-    const deadline = performance.now() + this.waitMs;
+    const isBulk = Boolean(this.bulkContext.getStore());
+    const wait = isBulk ? this.waitMs : Math.min(this.waitMs, ISSUANCE_INTERACTIVE_QUEUE_MS);
+    const deadline = Math.min(performance.now() + wait, this.requestDeadline.getStore() ?? Infinity);
     return this.offers.run(() => this.acquireAndRun(operation, deadline), deadline);
   }
 
