@@ -17,6 +17,7 @@ import { ContextInterceptorModule } from '@credebl/context/contextInterceptorMod
 import { LoggerModule } from '@credebl/logger/logger.module';
 import { GlobalConfigModule } from '@credebl/config/global-config.module';
 import { NATSClient } from '@credebl/common/NATSClient';
+import { ProofResponseCodeService } from './response-code/proof-response-code.service';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { NATSClient } from '@credebl/common/NATSClient';
     OutOfBandVerification,
     EmailDto,
     NATSClient,
+    ProofResponseCodeService,
     {
       provide: MICRO_SERVICE_NAME,
       useValue: 'Verification-Service'
