@@ -250,6 +250,7 @@ export interface IInvitation {
   proofRecordThId?: string;
   invitationUrl?: string;
   deepLinkURL?: string;
+  returnUrl?: string;
 }
 
 export interface IProofRequestData {

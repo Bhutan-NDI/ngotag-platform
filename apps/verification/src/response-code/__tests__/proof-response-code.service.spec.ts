@@ -1,7 +1,8 @@
 import {
-  PENDING_TTL_SECONDS,
+  DEFAULT_PENDING_TTL_SECONDS,
   ProofResponseCodeService,
-  RESULT_READY_TTL_SECONDS
+  RESULT_READY_TTL_SECONDS,
+  resolvePendingTtlSeconds
 } from '../proof-response-code.service';
 import { ResponseCodeStatus } from '../response-code.interface';
 
@@ -41,7 +42,7 @@ describe('ProofResponseCodeService', () => {
         `verification:response-code:${token}`,
         expect.any(String),
         'EX',
-        PENDING_TTL_SECONDS
+        DEFAULT_PENDING_TTL_SECONDS
       );
       expect(fake.store.get('verification:idx:thread:thread-1')).toBe(token);
       expect(await service.getSession(token)).toMatchObject({
@@ -117,12 +118,43 @@ describe('ProofResponseCodeService', () => {
         const service = new ProofResponseCodeService();
         const token = await service.createSession('org-1', 'thread-1', 'https://rp.example.com/return');
 
-        jest.advanceTimersByTime((PENDING_TTL_SECONDS + 1) * 1000);
+        jest.advanceTimersByTime((DEFAULT_PENDING_TTL_SECONDS + 1) * 1000);
 
         expect(await service.getSession(token)).toBeNull();
       } finally {
         jest.useRealTimers();
       }
+    });
+  });
+
+  describe('pending TTL configuration', () => {
+    const original = process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS;
+    afterEach(() => {
+      if (undefined === original) {
+        delete process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS;
+      } else {
+        process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS = original;
+      }
+    });
+
+    it('defaults when unset or invalid', () => {
+      expect(resolvePendingTtlSeconds(undefined)).toBe(DEFAULT_PENDING_TTL_SECONDS);
+      expect(resolvePendingTtlSeconds('')).toBe(DEFAULT_PENDING_TTL_SECONDS);
+      expect(resolvePendingTtlSeconds('abc')).toBe(DEFAULT_PENDING_TTL_SECONDS);
+      expect(resolvePendingTtlSeconds('0')).toBe(DEFAULT_PENDING_TTL_SECONDS);
+      expect(resolvePendingTtlSeconds('-5')).toBe(DEFAULT_PENDING_TTL_SECONDS);
+      expect(resolvePendingTtlSeconds('12.5')).toBe(DEFAULT_PENDING_TTL_SECONDS);
+    });
+
+    it('uses PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS for new sessions', async () => {
+      process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS = '900';
+      const service = new ProofResponseCodeService();
+      const fake = makeFakeRedis();
+      (service as unknown as { client: unknown }).client = fake.client;
+
+      await service.createSession('org-1', 'thread-1', 'https://rp.example.com/return');
+
+      expect(fake.client.set).toHaveBeenCalledWith(expect.any(String), expect.any(String), 'EX', 900);
     });
   });
 });

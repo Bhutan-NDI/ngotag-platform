@@ -55,6 +55,7 @@ import { EmailService } from '@credebl/common/email.service';
 import { ProofResponseCodeService } from './response-code/proof-response-code.service';
 import {
   appendReturnUrl,
+  buildReturnUrl,
   isRedirectUriAllowed,
   parseRedirectUriAllowlist,
   toTerminalResponseCodeStatus
@@ -568,6 +569,9 @@ export class VerificationService {
         if (!presentationProof) {
           throw new Error(ResponseMessages.verification.error.proofPresentationNotFound);
         }
+        if (!presentationProof.deepLinkURL && process.env.DEEPLINK_DOMAIN) {
+          presentationProof.deepLinkURL = convertUrlToDeepLinkUrl(presentationProof.invitationUrl);
+        }
         if (redirectUri) {
           await this.attachRedirect(presentationProof, user.orgId, redirectUri);
         }
@@ -596,8 +600,10 @@ export class VerificationService {
       this.logger.error(`[attachRedirect] - failed to create response_code session: ${error?.message}`);
       return;
     }
-    const deepLinkURL = presentationProof.deepLinkURL || convertUrlToDeepLinkUrl(presentationProof.invitationUrl);
-    presentationProof.deepLinkURL = appendReturnUrl(deepLinkURL, redirectUri, responseCode);
+    presentationProof.returnUrl = buildReturnUrl(redirectUri, responseCode);
+    if (presentationProof.deepLinkURL) {
+      presentationProof.deepLinkURL = appendReturnUrl(presentationProof.deepLinkURL, presentationProof.returnUrl);
+    }
   }
 
   private async updateResponseCodeSession({ proofPresentationPayload }: IProofPresentation): Promise<void> {
