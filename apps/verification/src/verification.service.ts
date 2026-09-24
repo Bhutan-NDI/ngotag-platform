@@ -56,6 +56,8 @@ import { ProofResponseCodeService } from './response-code/proof-response-code.se
 import {
   appendReturnUrl,
   buildReturnUrl,
+  hasAllowedRedirectProtocol,
+  isHttpRedirectUriAllowed,
   isRedirectUriAllowed,
   parseRedirectUriAllowlist,
   toTerminalResponseCodeStatus
@@ -485,7 +487,7 @@ export class VerificationService {
           throw new BadRequestException(ResponseMessages.verification.error.redirectUriWithEmail);
         }
         const allowlist = parseRedirectUriAllowlist(getAgentDetails?.redirectUriAllowlist);
-        if (!isRedirectUriAllowed(outOfBandRequestProof.redirectUri, allowlist)) {
+        if (!isRedirectUriAllowed(outOfBandRequestProof.redirectUri, allowlist, isHttpRedirectUriAllowed())) {
           throw new BadRequestException(ResponseMessages.verification.error.redirectUriNotAllowed);
         }
       }
@@ -607,7 +609,7 @@ export class VerificationService {
   }
 
   private async updateResponseCodeSession({ proofPresentationPayload }: IProofPresentation): Promise<void> {
-    const { threadId, state, isVerified, presentationId, errorMessage } = proofPresentationPayload ?? {};
+    const { threadId, state, isVerified, presentationId } = proofPresentationPayload ?? {};
     const status = toTerminalResponseCodeStatus(state, isVerified);
     if (!threadId || !status) {
       return;
@@ -616,8 +618,7 @@ export class VerificationService {
       await this.proofResponseCodeService.markTerminalByThreadId(threadId, status, {
         state,
         isVerified: Boolean(isVerified),
-        presentationId,
-        errorMessage
+        presentationId
       });
     } catch (error) {
       this.logger.error(`[updateResponseCodeSession] - error for threadId ${threadId}: ${error?.message}`);
@@ -645,8 +646,12 @@ export class VerificationService {
 
   async setRedirectUris(orgId: string, redirectUris: string[], userId: string): Promise<string[]> {
     try {
-      await this.verificationRepository.getAgentEndPoint(orgId);
       const normalized = [...new Set(redirectUris.map((uri) => uri.trim()))];
+      const allowHttp = isHttpRedirectUriAllowed();
+      if (!normalized.every((uri) => hasAllowedRedirectProtocol(uri, allowHttp))) {
+        throw new BadRequestException(ResponseMessages.verification.error.redirectUriHttpsRequired);
+      }
+      await this.verificationRepository.getAgentEndPoint(orgId);
       const updated = await this.verificationRepository.updateRedirectUriAllowlist(orgId, normalized.join(','), userId);
       return parseRedirectUriAllowlist(updated.redirectUriAllowlist);
     } catch (error) {

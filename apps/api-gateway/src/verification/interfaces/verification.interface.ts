@@ -90,6 +90,5 @@ export interface IProofCallbackResult {
     state: string;
     isVerified: boolean;
     presentationId?: string;
-    errorMessage?: string;
   };
 }

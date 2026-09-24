@@ -571,6 +571,7 @@ export const ResponseMessages = {
       uniqueAttributes: 'Please provide unique attribute names',
       redirectUriNotAllowed: 'redirectUri is not registered for this organization',
       redirectUriWithEmail: 'redirectUri cannot be combined with emailId',
+      redirectUriHttpsRequired: 'Redirect URIs must use https',
       responseCodeExpired: 'response_code is unknown, expired or already used'
     }
   },

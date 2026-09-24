@@ -399,10 +399,12 @@ export class SendProofRequestPayload {
         requested_attributes: {
           verifynameAddress: {
             names: ['name', 'address'],
+            // eslint-disable-next-line camelcase
             restrictions: [{ schema_id: 'KU583UbI4yAKfaBTSz1rqG:2:National ID:1.0.0' }]
           },
           verifyBirthPlace: {
             name: 'Place',
+            // eslint-disable-next-line camelcase
             restrictions: [{ schema_id: 'KU583UbI4yAKfaBTSz1rqG:2:Birth Certificate:1.0.0' }]
           }
         },
@@ -503,7 +505,7 @@ export class SendProofRequestPayload {
   @ApiPropertyOptional({
     example: 'https://relying-party.example/return',
     description:
-      "Where the wallet returns the holder after a same-device proof. Must match one of the org's registered redirect URIs."
+      'Where the wallet returns the holder after a same-device proof. Must match a redirect URI registered for the organization.'
   })
   @IsOptional()
   @Transform(({ value }) => trim(value))
