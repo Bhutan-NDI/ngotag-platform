@@ -9,7 +9,6 @@ export interface IResponseCodeResult {
   state: string;
   isVerified: boolean;
   presentationId?: string;
-  errorMessage?: string;
 }
 
 export interface IResponseCodeSession {

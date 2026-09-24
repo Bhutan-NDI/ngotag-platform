@@ -21,11 +21,13 @@ function makeService(redirectUriAllowlist: string | null = REDIRECT_URI): {
   service: VerificationService;
   responseCodes: ProofResponseCodeService;
   natsSend: jest.Mock;
+  verificationRepository: Record<string, jest.Mock>;
 } {
   const verificationRepository = {
     getAgentEndPoint: jest.fn(async () => ({ agentEndPoint: 'https://agent.example', redirectUriAllowlist })),
     getOrganization: jest.fn(async () => ({ name: 'RP Org' })),
-    storeProofPresentation: jest.fn(async () => ({ id: 'presentation-row' }))
+    storeProofPresentation: jest.fn(async () => ({ id: 'presentation-row' })),
+    updateRedirectUriAllowlist: jest.fn(async (_orgId: string, value: string) => ({ redirectUriAllowlist: value }))
   };
   const natsSend = jest.fn(async () => ({
     invitationUrl: INVITATION_URL,
@@ -45,7 +47,7 @@ function makeService(redirectUriAllowlist: string | null = REDIRECT_URI): {
     {} as never,
     responseCodes
   );
-  return { service, responseCodes, natsSend };
+  return { service, responseCodes, natsSend, verificationRepository };
 }
 
 function sendOob(service: VerificationService, redirectUri?: string, extra: object = {}): Promise<unknown> {
@@ -156,7 +158,7 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
     expect(await service.getProofCallbackResult(responseCode)).toEqual({
       status: ResponseCodeStatus.VERIFIED,
       threadId: THREAD_ID,
-      result: { state: 'done', isVerified: true, presentationId: 'pres-1', errorMessage: undefined }
+      result: { state: 'done', isVerified: true, presentationId: 'pres-1' }
     });
     expect(await service.getProofCallbackResult(responseCode)).toEqual({ status: ResponseCodeStatus.EXPIRED });
   });
@@ -201,5 +203,44 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
     expect(result.invitationUrl).toBe(INVITATION_URL);
     expect(result.deepLinkURL).toBe(`${DEEPLINK_DOMAIN}${INVITATION_URL}`);
     expect(result.returnUrl).toBeUndefined();
+  });
+
+  describe('https-only redirect URIs', () => {
+    const original = process.env.REDIRECT_URI_ALLOW_HTTP;
+    afterEach(() => {
+      if (undefined === original) {
+        delete process.env.REDIRECT_URI_ALLOW_HTTP;
+      } else {
+        process.env.REDIRECT_URI_ALLOW_HTTP = original;
+      }
+    });
+
+    it('rejects registering an http redirect URI by default', async () => {
+      delete process.env.REDIRECT_URI_ALLOW_HTTP;
+      const { service, verificationRepository } = makeService();
+
+      await expect(
+        service.setRedirectUris(ORG_ID, ['https://rp.example.com/return', 'http://localhost:3000/return'], 'user-1')
+      ).rejects.toMatchObject({ error: expect.objectContaining({ statusCode: 400 }) });
+      expect(verificationRepository.updateRedirectUriAllowlist).not.toHaveBeenCalled();
+    });
+
+    it('allows registering an http redirect URI when REDIRECT_URI_ALLOW_HTTP=true', async () => {
+      process.env.REDIRECT_URI_ALLOW_HTTP = 'true';
+      const { service } = makeService();
+      const redirectUris = ['http://localhost:3000/return'];
+
+      await expect(service.setRedirectUris(ORG_ID, redirectUris, 'user-1')).resolves.toEqual(redirectUris);
+    });
+
+    it('stops honouring a previously registered http entry once http is disallowed', async () => {
+      delete process.env.REDIRECT_URI_ALLOW_HTTP;
+      const { service, natsSend } = makeService('http://localhost:3000/return');
+
+      await expect(sendOob(service, 'http://localhost:3000/return')).rejects.toMatchObject({
+        error: expect.objectContaining({ statusCode: 400 })
+      });
+      expect(natsSend).not.toHaveBeenCalled();
+    });
   });
 });

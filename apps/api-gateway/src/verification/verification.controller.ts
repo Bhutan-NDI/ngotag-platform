@@ -645,6 +645,7 @@ export class VerificationController {
   @ApiResponse({ status: HttpStatus.GONE, description: 'Unknown, expired or already used response_code' })
   async getProofCallbackResult(@Query('response_code') responseCode: string, @Res() res: Response): Promise<Response> {
     const callbackResult = await this.verificationService.getProofCallbackResult(responseCode?.trim());
+    res.setHeader('Cache-Control', 'no-store');
     if ('expired' === callbackResult.status) {
       return res.status(HttpStatus.GONE).json({
         statusCode: HttpStatus.GONE,

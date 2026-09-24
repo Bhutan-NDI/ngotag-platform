@@ -31,14 +31,25 @@ export function matchesAllowlistEntry(target: URL, allowed: string): boolean {
   return targetPath === allowedPath || targetPath.startsWith(`${allowedPath}/`);
 }
 
-/** Fails closed on an empty allowlist or an unparseable redirectUri. */
-export function isRedirectUriAllowed(redirectUri: string, allowlist: string[]): boolean {
-  let target: URL;
+export function isHttpRedirectUriAllowed(): boolean {
+  return 'true' === process.env.REDIRECT_URI_ALLOW_HTTP;
+}
+
+export function hasAllowedRedirectProtocol(uri: string, allowHttp: boolean): boolean {
   try {
-    target = new URL(redirectUri);
+    const { protocol } = new URL(uri);
+    return 'https:' === protocol || (allowHttp && 'http:' === protocol);
   } catch {
     return false;
   }
+}
+
+/** Fails closed on an empty allowlist, an unparseable redirectUri or a disallowed scheme. */
+export function isRedirectUriAllowed(redirectUri: string, allowlist: string[], allowHttp: boolean): boolean {
+  if (!hasAllowedRedirectProtocol(redirectUri, allowHttp)) {
+    return false;
+  }
+  const target = new URL(redirectUri);
   return allowlist.some((allowed) => matchesAllowlistEntry(target, allowed));
 }
 
