@@ -67,12 +67,19 @@ export class WebhookRepository {
           }
         });
       } else if (tenantId && 'default' !== tenantId && orgId) {
-        // orgId fallback: cloud-wallet holder tenantIds have no org_agents row of their own
-        webhookUrlInfo = await this.prisma.org_agents.findFirstOrThrow({
-          where: {
-            OR: [{ tenantId }, { orgId }]
-          }
-        });
+        // Tenant first: shared-agent tenants share the base wallet's orgId, so a single OR query can resolve that org.
+        // orgId fallback only for cloud-wallet holder tenantIds, which have no org_agents row of their own.
+        webhookUrlInfo =
+          (await this.prisma.org_agents.findFirst({
+            where: {
+              tenantId
+            }
+          })) ??
+          (await this.prisma.org_agents.findFirstOrThrow({
+            where: {
+              orgId
+            }
+          }));
       }
 
       // TEMP DIAGNOSTIC: confirm the OR fallback isn't resolving a different org than requested
