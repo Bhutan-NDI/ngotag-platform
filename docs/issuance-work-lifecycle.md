@@ -30,6 +30,13 @@ worker replicas.
   failures. Duplicate row completion does not increment the count. Final file
   status is persisted before the completion notification. Notification delivery
   remains asynchronous; this is not an exactly-once notification protocol.
+- Unexpected row/admission/persistence errors mark an active file in the owning
+  organization `PROCESS_INTERRUPTED` before emitting the existing error event.
+  They do not count an unpersisted or still-owned row as complete and do not clear
+  its guard. Other rows can still be running: interruption is not cancellation.
+  Reconcile uncertain outcomes before retrying. If the database is unavailable,
+  the job still fails and a diagnostic is logged; file persistence cannot be
+  guaranteed during that outage.
 - A successful stored row is not issued again. A row guard prevents simultaneous
   processing or replay after an uncertain dispatch outcome. UUID case variations
   share the same guard. Pre-dispatch failures can use the explicit retry flow;
@@ -237,14 +244,25 @@ Interactive offer requests now carry an internal `issuance-admission-deadline` N
 header from the API gateway's existing request context. The gateway creates it from
 server receipt time; public client headers and payloads cannot extend it. The three
 interactive issuance entrypoints validate it before preparation and the coordinator
-checks the remaining monotonic budget again immediately before dispatch.
+checks the remaining monotonic budget again immediately before the first dispatch.
 
 - The gateway admission budget is ten seconds, including authentication/guard time,
   NATS delivery, preparation and waiting. Expired or malformed deadlines fail before
-  dispatch; distant peer deadlines are clamped to the local ten-second maximum.
-- Individual interactive offer admission waits are capped at one second (or a lower
-  `ISSUANCE_CAPACITY_WAIT_MS`), within the original request budget. The five-minute
-  bulk setting no longer controls synchronous offer waits.
+  the first dispatch; distant peer deadlines are clamped to the local ten-second maximum.
+- First dispatch admits the request, including its later recipients. Execution and
+  email time do not make later recipients expire against the original admission
+  deadline. This state is isolated to that request; it cannot admit another request.
+- Direct multi-recipient requests schedule at most the smaller of the worker and
+  global budgets at once. Recipients waiting within that request do not start
+  their capacity-wait timer until scheduled. Existing per-recipient results and
+  ordering are preserved.
+- Every offer, including later recipients, still obtains its own Redis permit and
+  has at most a one-second capacity wait (or a lower `ISSUANCE_CAPACITY_WAIT_MS`).
+  Before first dispatch, the original request deadline also applies. Preparation,
+  email and persistence stay outside permits; bulk keeps its existing wait budget.
+  Admission is not a reservation for the whole array: other traffic or downstream
+  failures can still produce partial results. Multi-recipient requests are not
+  atomic or automatically replayable.
 - Bulk rows retain `ISSUANCE_CAPACITY_WAIT_MS` and their durable job lifecycle. No
   execution timer releases a permit while a downstream side effect is still active.
 - A legacy internal sender without a deadline receives a ten-second budget at the
@@ -253,8 +271,8 @@ checks the remaining monotonic budget again immediately before dispatch.
   Cross-host absolute deadline propagation requires synchronized clocks.
 
 The observed ingress idle timeout is sixty seconds. A ten-second **latest admission**
-budget leaves time for downstream work, but is not a guarantee of completion within
-sixty seconds. Already-dispatched requests can remain uncertain on connection loss;
+budget for the first offer leaves time for downstream work, but is not a guarantee
+that every recipient completes within sixty seconds. Already-dispatched requests can remain uncertain on connection loss;
 no automatic replay was added. Shorter admission improves overload behavior, not the
 latency of successful cryptography, database work or user-wallet interaction. It can
 increase overload responses versus a long queue; measure successes and failures

@@ -425,6 +425,18 @@ export class IssuanceRepository {
     }
   }
 
+  async interruptFileUpload(fileId: string, orgId: string): Promise<boolean> {
+    const result = await this.prisma.file_upload.updateMany({
+      where: {
+        id: fileId,
+        orgId,
+        status: { in: [FileUploadStatus.started, FileUploadStatus.retry] }
+      },
+      data: { status: FileUploadStatus.interrupted }
+    });
+    return 0 < result.count;
+  }
+
   async countErrorsForFile(fileUploadId: string): Promise<number> {
     try {
       const errorCount = await this.prisma.file_data.count({

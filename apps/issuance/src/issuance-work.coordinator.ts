@@ -64,23 +64,25 @@ export class IssuanceWorkCoordinator {
   private readonly capacity = positiveIntegerSetting('ISSUANCE_GLOBAL_CONCURRENCY', 8, 128);
   private readonly waitMs = positiveIntegerSetting('ISSUANCE_CAPACITY_WAIT_MS', 300000, 3600000);
   private readonly maxPending = positiveIntegerSetting('ISSUANCE_MAX_PENDING', 1000, 10000);
-  private readonly offers = new IssuanceAdmissionQueue(
-    Math.min(ISSUANCE_WORKER_CONCURRENCY, this.capacity),
-    this.maxPending
-  );
+  readonly offerConcurrency = Math.min(ISSUANCE_WORKER_CONCURRENCY, this.capacity);
+  private readonly offers = new IssuanceAdmissionQueue(this.offerConcurrency, this.maxPending);
   private readonly rows = new IssuanceAdmissionQueue(ISSUANCE_WORKER_CONCURRENCY, this.maxPending);
-  private readonly requestDeadline = new AsyncLocalStorage<number>();
+  private readonly requestContext = new AsyncLocalStorage<{ deadline: number; dispatched: boolean }>();
   private readonly bulkContext = new AsyncLocalStorage<{ dispatched: boolean }>();
 
   constructor(@InjectQueue('bulk-issuance') private readonly queue: Queue) {}
 
   async interactive<T>(deadline: unknown, operation: () => Promise<T>): Promise<T> {
     const remaining = issuanceDeadline(deadline) - Date.now();
-    return this.requestDeadline.run(performance.now() + remaining, operation);
+    return this.requestContext.run({ deadline: performance.now() + remaining, dispatched: false }, operation);
   }
 
   async offer<T>(operation: () => Promise<T>): Promise<T> {
     return this.withPermit(async () => {
+      const request = this.requestContext.getStore();
+      if (request) {
+        request.dispatched = true;
+      }
       const context = this.bulkContext.getStore();
       if (context) {
         context.dispatched = true;
@@ -92,7 +94,11 @@ export class IssuanceWorkCoordinator {
   private async withPermit<T>(operation: () => Promise<T>): Promise<T> {
     const isBulk = Boolean(this.bulkContext.getStore());
     const wait = isBulk ? this.waitMs : Math.min(this.waitMs, ISSUANCE_INTERACTIVE_QUEUE_MS);
-    const deadline = Math.min(performance.now() + wait, this.requestDeadline.getStore() ?? Infinity);
+    const request = this.requestContext.getStore();
+    // The gateway deadline admits the request once. Later recipients still acquire
+    // their own permits, but execution time must not expire their request admission.
+    const admissionDeadline = request && !request.dispatched ? request.deadline : Infinity;
+    const deadline = Math.min(performance.now() + wait, admissionDeadline);
     return this.offers.run(() => this.acquireAndRun(operation, deadline), deadline);
   }
 

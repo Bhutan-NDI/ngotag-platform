@@ -197,68 +197,73 @@ export class IssuanceService {
         await validateAndUpdateIssuanceDates(credentialData);
       }
 
-      const issuancePromises = credentialData.map(async (credentials) => {
-        const { connectionId, attributes, credential, options } = credentials;
-        let issueData;
+      // Start each recipient only when a local offer slot is available, so this
+      // request does not exhaust its own short capacity-wait budget.
+      const limit = pLimit(this.issuanceWork.offerConcurrency);
+      const issuancePromises = credentialData.map((credentials) => {
+        return limit(async () => {
+          const { connectionId, attributes, credential, options } = credentials;
+          let issueData;
 
-        if (payload.credentialType === IssueCredentialType.INDY) {
-          issueData = {
-            protocolVersion: payload.protocolVersion || 'v1',
-            connectionId,
-            credentialFormats: {
-              indy: {
-                // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                attributes: attributes.map(({ isRequired, ...rest }) => rest),
-                credentialDefinitionId
+          if (payload.credentialType === IssueCredentialType.INDY) {
+            issueData = {
+              protocolVersion: payload.protocolVersion || 'v1',
+              connectionId,
+              credentialFormats: {
+                indy: {
+                  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                  attributes: attributes.map(({ isRequired, ...rest }) => rest),
+                  credentialDefinitionId
+                }
+              },
+              autoAcceptCredential: payload.autoAcceptCredential || 'always',
+              comment
+            };
+          } else if (payload.credentialType === IssueCredentialType.JSONLD) {
+            const schemaIds = credentialData?.map((item) => {
+              const context: string[] = item?.credential?.['@context'];
+              return Array.isArray(context) && 1 < context.length ? context[1] : undefined;
+            });
+
+            const schemaDetails = await this._getSchemaDetails(schemaIds);
+
+            const ledgerIds = schemaDetails?.map((item) => item?.ledgerId);
+
+            for (const ledgerId of ledgerIds) {
+              if (agentDetails?.ledgerId !== ledgerId) {
+                throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
               }
-            },
-            autoAcceptCredential: payload.autoAcceptCredential || 'always',
-            comment
-          };
-        } else if (payload.credentialType === IssueCredentialType.JSONLD) {
-          const schemaIds = credentialData?.map((item) => {
-            const context: string[] = item?.credential?.['@context'];
-            return Array.isArray(context) && 1 < context.length ? context[1] : undefined;
-          });
+            }
 
-          const schemaDetails = await this._getSchemaDetails(schemaIds);
+            issueData = {
+              protocolVersion: payload.protocolVersion || 'v2',
+              connectionId,
+              parentThreadId: payload.parentThreadId || undefined,
+              credentialFormats: {
+                jsonld: {
+                  credential,
+                  options
+                }
+              },
+              autoAcceptCredential: payload.autoAcceptCredential || 'always',
+              comment: comment || ''
+            };
+            const payloadAttributes = issueData?.credentialFormats?.jsonld?.credential?.credentialSubject;
 
-          const ledgerIds = schemaDetails?.map((item) => item?.ledgerId);
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { id, ...filteredIssuanceAttributes } = payloadAttributes;
 
-          for (const ledgerId of ledgerIds) {
-            if (agentDetails?.ledgerId !== ledgerId) {
-              throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
+            const schemaServerUrl = issueData?.credentialFormats?.jsonld?.credential?.['@context']?.[1];
+
+            const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl);
+
+            if (isValidateSchema) {
+              validateW3CSchemaAttributes(filteredIssuanceAttributes, schemaUrlAttributes, this.logger);
             }
           }
 
-          issueData = {
-            protocolVersion: payload.protocolVersion || 'v2',
-            connectionId,
-            parentThreadId: payload.parentThreadId || undefined,
-            credentialFormats: {
-              jsonld: {
-                credential,
-                options
-              }
-            },
-            autoAcceptCredential: payload.autoAcceptCredential || 'always',
-            comment: comment || ''
-          };
-          const payloadAttributes = issueData?.credentialFormats?.jsonld?.credential?.credentialSubject;
-
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { id, ...filteredIssuanceAttributes } = payloadAttributes;
-
-          const schemaServerUrl = issueData?.credentialFormats?.jsonld?.credential?.['@context']?.[1];
-
-          const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl);
-
-          if (isValidateSchema) {
-            validateW3CSchemaAttributes(filteredIssuanceAttributes, schemaUrlAttributes, this.logger);
-          }
-        }
-
-        return this._sendCredentialCreateOffer(issueData, url, orgId);
+          return this._sendCredentialCreateOffer(issueData, url, orgId);
+        });
       });
 
       const results = await Promise.allSettled(issuancePromises);
@@ -1764,11 +1769,44 @@ export class IssuanceService {
   }
 
   async processIssuanceData(jobDetails: IQueuePayload): Promise<boolean> {
-    const succeeded = await this.issuanceWork.bulkRow(jobDetails.orgId, jobDetails.fileUploadId, jobDetails.id, () => {
-      return this.processBulkRow(jobDetails);
-    });
-    await this.completeBulkRow(jobDetails, succeeded);
-    return succeeded;
+    try {
+      const succeeded = await this.issuanceWork.bulkRow(
+        jobDetails.orgId,
+        jobDetails.fileUploadId,
+        jobDetails.id,
+        () => {
+          return this.processBulkRow(jobDetails);
+        }
+      );
+      await this.completeBulkRow(jobDetails, succeeded);
+      return succeeded;
+    } catch (error) {
+      // A thrown row has no trustworthy persisted result. In particular, a held
+      // guard must not be counted complete while its owner may still be issuing.
+      try {
+        const interrupted = await this.issuanceRepository.interruptFileUpload(
+          jobDetails.fileUploadId,
+          jobDetails.orgId
+        );
+        if (interrupted) {
+          const socket = io(`${process.env.SOCKET_HOST}`, {
+            reconnection: true,
+            reconnectionDelay: 5000,
+            reconnectionAttempts: Infinity,
+            autoConnect: true,
+            transports: ['websocket']
+          });
+          socket.emit('error-in-bulk-issuance-process', {
+            clientId: jobDetails.clientId,
+            fileUploadId: jobDetails.fileUploadId,
+            error: 'Bulk issuance interrupted; reconcile row outcomes before retrying'
+          });
+        }
+      } catch {
+        this.logger.error('Unable to persist or notify bulk issuance interruption; reconcile the failed job and file');
+      }
+      throw error;
+    }
   }
 
   private async processBulkRow(jobDetails: IQueuePayload): Promise<boolean> {

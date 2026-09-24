@@ -317,6 +317,49 @@ integration('distributed issuance budget with local Redis', () => {
     expect(late).not.toHaveBeenCalled();
   });
 
+  it('continues an admitted request after execution passes its deadline, without admitting a new request', async () => {
+    const later = jest.fn(async () => true);
+    await expect(
+      workers[0].interactive(Date.now() + 100, async () => {
+        await workers[0].offer(async () => {
+          await sleep(120);
+        });
+        return workers[0].offer(later);
+      })
+    ).resolves.toBe(true);
+    expect(later).toHaveBeenCalledTimes(1);
+    const separate = jest.fn(async () => true);
+    await expect(
+      workers[0].interactive(Date.now() + 20, async () => {
+        await sleep(30);
+        return workers[0].offer(separate);
+      })
+    ).rejects.toThrow('no offer was dispatched');
+    expect(separate).not.toHaveBeenCalled();
+  });
+
+  it('still bounds capacity waits for later recipients in an admitted request', async () => {
+    process.env.ISSUANCE_CAPACITY_WAIT_MS = '20';
+    const worker = new IssuanceWorkCoordinator(queues[0]);
+    const later = jest.fn(async () => true);
+    await expect(
+      worker.interactive(Date.now() + 100, async () => {
+        await worker.offer(async () => true);
+        await queues[0].client.hset(
+          queues[0].toKey('offer-capacity-v1'),
+          'capacity',
+          2,
+          'owner-a',
+          'active:1',
+          'owner-b',
+          'active:1'
+        );
+        return worker.offer(later);
+      })
+    ).rejects.toThrow('no offer was dispatched');
+    expect(later).not.toHaveBeenCalled();
+  });
+
   it('counts completed rows across replicas only once, not rows that merely started', async () => {
     await expect(workers[0].completedRow('batch', 'row-2', 3)).resolves.toBe(false);
     await expect(workers[1].completedRow('BATCH', 'ROW-2', 3)).resolves.toBe(false);
