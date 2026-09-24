@@ -1,5 +1,6 @@
 import {
   appendReturnUrl,
+  buildReturnUrl,
   isRedirectUriAllowed,
   parseRedirectUriAllowlist,
   toTerminalResponseCodeStatus
@@ -68,25 +69,30 @@ describe('isRedirectUriAllowed', () => {
 
 describe('appendReturnUrl', () => {
   const deepLink = 'https://link.example.id?url=https://short.example/abc';
+  const returnUrl = 'https://rp.example.com/return?response_code=tok_123';
 
-  it('appends an encoded returnUrl carrying the response_code as the last parameter', () => {
-    const result = appendReturnUrl(deepLink, 'https://rp.example.com/return', 'tok_123');
-    expect(result).toBe(
-      `${deepLink}&returnUrl=${encodeURIComponent('https://rp.example.com/return?response_code=tok_123')}`
+  it('appends the encoded returnUrl as the last parameter', () => {
+    expect(appendReturnUrl(deepLink, returnUrl)).toBe(`${deepLink}&returnUrl=${encodeURIComponent(returnUrl)}`);
+  });
+
+  it('keeps the invitation url recoverable the way the wallet reads it (between url= and &returnUrl)', () => {
+    const result = appendReturnUrl(deepLink, returnUrl);
+    const start = result.indexOf('url=') + 4;
+    expect(result.substring(start, result.indexOf('&returnUrl'))).toBe('https://short.example/abc');
+  });
+});
+
+describe('buildReturnUrl', () => {
+  it('adds response_code as a query parameter', () => {
+    expect(buildReturnUrl('https://rp.example.com/return', 'tok_123')).toBe(
+      'https://rp.example.com/return?response_code=tok_123'
     );
   });
 
   it('uses & when the redirectUri already has a query string', () => {
-    const result = appendReturnUrl(deepLink, 'https://rp.example.com/return?a=1', 'tok_123');
-    expect(decodeURIComponent(result.split('&returnUrl=')[1])).toBe(
+    expect(buildReturnUrl('https://rp.example.com/return?a=1', 'tok_123')).toBe(
       'https://rp.example.com/return?a=1&response_code=tok_123'
     );
-  });
-
-  it('keeps the invitation url recoverable the way the wallet reads it (between url= and &returnUrl)', () => {
-    const result = appendReturnUrl(deepLink, 'https://rp.example.com/return', 'tok_123');
-    const start = result.indexOf('url=') + 4;
-    expect(result.substring(start, result.indexOf('&returnUrl'))).toBe('https://short.example/abc');
   });
 });
 

@@ -42,14 +42,17 @@ export function isRedirectUriAllowed(redirectUri: string, allowlist: string[]): 
   return allowlist.some((allowed) => matchesAllowlistEntry(target, allowed));
 }
 
+export function buildReturnUrl(redirectUri: string, responseCode: string): string {
+  const separator = redirectUri.includes('?') ? '&' : '?';
+  return `${redirectUri}${separator}response_code=${responseCode}`;
+}
+
 /**
  * The wallet reads the invitation as everything between `url=` and `&returnUrl`,
  * so the return target must be appended last, exactly in this form.
  */
-export function appendReturnUrl(deepLinkUrl: string, redirectUri: string, responseCode: string): string {
-  const separator = redirectUri.includes('?') ? '&' : '?';
-  const returnTarget = `${redirectUri}${separator}response_code=${responseCode}`;
-  return `${deepLinkUrl}&returnUrl=${encodeURIComponent(returnTarget)}`;
+export function appendReturnUrl(deepLinkUrl: string, returnUrl: string): string {
+  return `${deepLinkUrl}&returnUrl=${encodeURIComponent(returnUrl)}`;
 }
 
 export function toTerminalResponseCodeStatus(

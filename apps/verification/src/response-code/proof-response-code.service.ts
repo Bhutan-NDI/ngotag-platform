@@ -5,8 +5,13 @@ import { IResponseCodeResult, IResponseCodeSession, ResponseCodeStatus } from '.
 
 const KEY_PREFIX = 'verification:response-code:';
 const THREAD_INDEX_PREFIX = 'verification:idx:thread:';
-export const PENDING_TTL_SECONDS = 300;
+export const DEFAULT_PENDING_TTL_SECONDS = 600;
 export const RESULT_READY_TTL_SECONDS = 60;
+
+export function resolvePendingTtlSeconds(value?: string): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && 0 < parsed ? parsed : DEFAULT_PENDING_TTL_SECONDS;
+}
 
 interface MemoryEntry {
   value: string;
@@ -25,6 +30,7 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
   private readonly memory = new Map<string, MemoryEntry>();
   private sweepTimer?: NodeJS.Timeout;
   private lastFallbackLogAt = 0;
+  private readonly pendingTtlSeconds = resolvePendingTtlSeconds(process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS);
 
   onModuleInit(): void {
     this.client = new Redis({
@@ -65,8 +71,8 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
       status: ResponseCodeStatus.PENDING,
       createdAt: new Date().toISOString()
     };
-    await this.kvSet(this.tokenKey(token), JSON.stringify(session), PENDING_TTL_SECONDS);
-    await this.kvSet(this.threadIndexKey(threadId), token, PENDING_TTL_SECONDS);
+    await this.kvSet(this.tokenKey(token), JSON.stringify(session), this.pendingTtlSeconds);
+    await this.kvSet(this.threadIndexKey(threadId), token, this.pendingTtlSeconds);
     if (!this.redisReady()) {
       this.logger.warn(
         `response_code session for threadId ${threadId} stored in the in-memory fallback (Redis unavailable); it is NOT visible to other replicas`

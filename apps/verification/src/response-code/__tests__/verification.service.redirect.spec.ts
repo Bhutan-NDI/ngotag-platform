@@ -13,6 +13,9 @@ const ORG_ID = 'org-1';
 const THREAD_ID = 'thread-1';
 const REDIRECT_URI = 'https://rp.example.com/return';
 const INVITATION_URL = 'https://short.example/abc';
+const DEEPLINK_DOMAIN = 'https://link.example.id?url=';
+
+type OobResult = { invitationUrl: string; deepLinkURL?: string; returnUrl?: string };
 
 function makeService(redirectUriAllowlist: string | null = REDIRECT_URI): {
   service: VerificationService;
@@ -57,26 +60,40 @@ function sendOob(service: VerificationService, redirectUri?: string, extra: obje
   );
 }
 
-function responseCodeFrom(deepLinkURL: string): string {
-  const returnUrl = new URL(decodeURIComponent(deepLinkURL.split('&returnUrl=')[1]));
-  return returnUrl.searchParams.get('response_code');
+function responseCodeFrom(returnUrl: string): string {
+  return new URL(returnUrl).searchParams.get('response_code');
+}
+
+function setDeepLinkDomain(value: string | undefined): void {
+  if (undefined === value) {
+    delete process.env.DEEPLINK_DOMAIN;
+  } else {
+    process.env.DEEPLINK_DOMAIN = value;
+  }
 }
 
 describe('VerificationService — DIDComm redirect / response_code', () => {
   const originalDeepLinkDomain = process.env.DEEPLINK_DOMAIN;
-  beforeAll(() => {
-    process.env.DEEPLINK_DOMAIN = 'https://link.example.id?url=';
-  });
-  afterAll(() => {
-    process.env.DEEPLINK_DOMAIN = originalDeepLinkDomain;
-  });
+  beforeEach(() => setDeepLinkDomain(DEEPLINK_DOMAIN));
+  afterAll(() => setDeepLinkDomain(originalDeepLinkDomain));
 
-  it('leaves the OOB response untouched when no redirectUri is supplied', async () => {
+  it('returns a plain deepLinkURL and no returnUrl when no redirectUri is supplied', async () => {
     const { service } = makeService();
 
-    const result = (await sendOob(service)) as { deepLinkURL?: string };
+    const result = (await sendOob(service)) as OobResult;
+
+    expect(result.deepLinkURL).toBe(`${DEEPLINK_DOMAIN}${INVITATION_URL}`);
+    expect(result.returnUrl).toBeUndefined();
+  });
+
+  it('omits deepLinkURL without failing when DEEPLINK_DOMAIN is not configured', async () => {
+    setDeepLinkDomain(undefined);
+    const { service } = makeService();
+
+    const result = (await sendOob(service, REDIRECT_URI)) as OobResult;
 
     expect(result.deepLinkURL).toBeUndefined();
+    expect(result.returnUrl).toMatch(/^https:\/\/rp\.example\.com\/return\?response_code=[A-Za-z0-9_-]{43}$/);
   });
 
   it('rejects a redirectUri the org has not registered, before creating an invitation', async () => {
@@ -116,9 +133,10 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
   it('runs the full flow: deeplink carries response_code -> pending -> webhook -> terminal read once -> expired', async () => {
     const { service } = makeService();
 
-    const { deepLinkURL } = (await sendOob(service, REDIRECT_URI)) as { deepLinkURL: string };
-    expect(deepLinkURL.startsWith(`https://link.example.id?url=${INVITATION_URL}&returnUrl=`)).toBe(true);
-    const responseCode = responseCodeFrom(deepLinkURL);
+    const { deepLinkURL, returnUrl } = (await sendOob(service, REDIRECT_URI)) as OobResult;
+    expect(returnUrl.startsWith(`${REDIRECT_URI}?response_code=`)).toBe(true);
+    expect(deepLinkURL).toBe(`${DEEPLINK_DOMAIN}${INVITATION_URL}&returnUrl=${encodeURIComponent(returnUrl)}`);
+    const responseCode = responseCodeFrom(returnUrl);
     expect(responseCode).toBeTruthy();
 
     expect(await service.getProofCallbackResult(responseCode)).toEqual({ status: ResponseCodeStatus.PENDING });
@@ -145,16 +163,14 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
 
   it('marks an abandoned proof as failed', async () => {
     const { service } = makeService();
-    const { deepLinkURL } = (await sendOob(service, REDIRECT_URI)) as { deepLinkURL: string };
+    const { returnUrl } = (await sendOob(service, REDIRECT_URI)) as OobResult;
 
     await service.webhookProofPresentation({
       orgId: ORG_ID,
       proofPresentationPayload: { threadId: THREAD_ID, state: 'abandoned', isVerified: false } as never
     });
 
-    expect((await service.getProofCallbackResult(responseCodeFrom(deepLinkURL))).status).toBe(
-      ResponseCodeStatus.FAILED
-    );
+    expect((await service.getProofCallbackResult(responseCodeFrom(returnUrl))).status).toBe(ResponseCodeStatus.FAILED);
   });
 
   it('returns expired for an unknown or empty response_code', async () => {
@@ -180,9 +196,10 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
     const { service, responseCodes } = makeService();
     jest.spyOn(responseCodes, 'createSession').mockRejectedValue(new Error('boom'));
 
-    const result = (await sendOob(service, REDIRECT_URI)) as { invitationUrl: string; deepLinkURL?: string };
+    const result = (await sendOob(service, REDIRECT_URI)) as OobResult;
 
     expect(result.invitationUrl).toBe(INVITATION_URL);
-    expect(result.deepLinkURL).toBeUndefined();
+    expect(result.deepLinkURL).toBe(`${DEEPLINK_DOMAIN}${INVITATION_URL}`);
+    expect(result.returnUrl).toBeUndefined();
   });
 });
