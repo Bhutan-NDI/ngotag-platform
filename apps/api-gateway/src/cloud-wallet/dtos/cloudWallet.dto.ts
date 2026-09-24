@@ -316,11 +316,14 @@ export class ExportCloudWalletDto {
   @MinLength(16, { message: 'passKey must be at least 16 characters' })
   passKey: string;
 
-  // No walletID field — agent-controller's export endpoint (PR #72) takes the tenant id from the
-  // path (server already knows it from cloud_wallet_user_info.tenantId) and only { passKey } in
-  // the body. walletID had no counterpart on the agent side and was never read anywhere on the
-  // platform side either — a required field forcing the client to send data the server owns.
-  // See the #71 review's "DTO doesn't match agent-controller PR #72's export contract".
+  // Profile agent-controller packages the export under, for mobile's import to match.
+  @ApiPropertyOptional({ example: 'JohnDoe' })
+  @IsOptional()
+  @Transform(({ value }) => trim(value))
+  @IsNotEmpty({ message: 'walletID cannot be empty' })
+  @IsString({ message: 'walletID must be in string format.' })
+  @MaxLength(256, { message: 'walletID must be at most 256 characters' })
+  walletID?: string;
 
   email: string;
 
