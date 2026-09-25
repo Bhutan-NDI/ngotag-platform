@@ -35,6 +35,7 @@ export interface DbState {
   id: number;
   name: string;
   isoCode: string;
+  countryId: number;
 }
 
 export interface DbCity {
@@ -46,7 +47,7 @@ export interface DbCity {
 }
 
 export interface BhutanSyncPlan {
-  stateUpdates: { id: number; name: string; isoCode: string }[];
+  stateUpdates: { id: number; name: string; isoCode: string; countryId: number }[];
   stateCreates: Dzongkhag[];
   stateDeletes: number[];
   cityUpdates: { id: number; name: string; stateId: number; stateCode: string }[];
@@ -84,8 +85,8 @@ export function planBhutanSync(
     if (state) {
       stateIdByDzongkhag.set(dz.dzongkhagId, state.id);
       unmatchedStates.delete(state.id);
-      if (state.name !== dz.dzongkhagName || state.isoCode !== dz.dzongkhagId) {
-        plan.stateUpdates.push({ id: state.id, name: dz.dzongkhagName, isoCode: dz.dzongkhagId });
+      if (state.name !== dz.dzongkhagName || state.isoCode !== dz.dzongkhagId || state.countryId !== countryId) {
+        plan.stateUpdates.push({ id: state.id, name: dz.dzongkhagName, isoCode: dz.dzongkhagId, countryId });
       }
     }
   };
@@ -124,8 +125,10 @@ export function planBhutanSync(
 }
 
 /**
- * Rewrites Bhutan's states/cities to match the address master. Organisations pointing at a deleted
- * state/city have that reference cleared by the FK (ON DELETE SET NULL).
+ * Rewrites Bhutan's states/cities to match the address master. Rows are selected by country_code,
+ * not country_id, which is shifted on databases seeded from the legacy CSVs. Organisations pointing
+ * at a deleted state/city have that reference cleared here, since organisation has no geo FKs
+ * (dropped in 20260527100000_drop_geo_fk_constraints).
  */
 export async function syncBhutanAddress(prisma: PrismaClient, { dryRun = false } = {}): Promise<BhutanSyncPlan> {
   const log = (msg: string): void => console.log(`[BHUTAN-ADDRESS] ${msg}`);
@@ -137,11 +140,11 @@ export async function syncBhutanAddress(prisma: PrismaClient, { dryRun = false }
   }
 
   const states = await prisma.states.findMany({
-    where: { countryId: country.id },
-    select: { id: true, name: true, isoCode: true }
+    where: { countryCode: BHUTAN_COUNTRY_CODE },
+    select: { id: true, name: true, isoCode: true, countryId: true }
   });
   const cities = await prisma.cities.findMany({
-    where: { OR: [{ countryId: country.id }, { stateId: { in: states.map((s) => s.id) } }] },
+    where: { OR: [{ countryCode: BHUTAN_COUNTRY_CODE }, { stateId: { in: states.map((s) => s.id) } }] },
     select: { id: true, name: true, stateId: true, stateCode: true, countryId: true }
   });
   const plan = planBhutanSync(loadDzongkhags(), country.id, states, cities);
@@ -165,7 +168,10 @@ export async function syncBhutanAddress(prisma: PrismaClient, { dryRun = false }
   await prisma.$transaction(
     async (tx) => {
       for (const s of plan.stateUpdates) {
-        await tx.states.update({ where: { id: s.id }, data: { name: s.name, isoCode: s.isoCode } });
+        await tx.states.update({
+          where: { id: s.id },
+          data: { name: s.name, isoCode: s.isoCode, countryId: s.countryId }
+        });
       }
       const createdStateIds = new Map<string, number>();
       for (const dz of plan.stateCreates) {
@@ -179,6 +185,8 @@ export async function syncBhutanAddress(prisma: PrismaClient, { dryRun = false }
         });
         createdStateIds.set(dz.dzongkhagId, created.id);
       }
+      await tx.organisation.updateMany({ where: { cityId: { in: plan.cityDeletes } }, data: { cityId: null } });
+      await tx.organisation.updateMany({ where: { stateId: { in: plan.stateDeletes } }, data: { stateId: null } });
       await tx.cities.deleteMany({ where: { id: { in: plan.cityDeletes } } });
       await tx.states.deleteMany({ where: { id: { in: plan.stateDeletes } } });
       for (const c of plan.cityUpdates) {
