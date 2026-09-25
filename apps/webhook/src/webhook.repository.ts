@@ -1,10 +1,11 @@
 /* eslint-disable camelcase */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
 import { ICreateWebhookUrl, IGetWebhookUrl } from '../interfaces/webhook.interfaces';
 import { org_agents } from '@prisma/client';
 import { IWebhookUrl } from '@credebl/common/interfaces/webhook.interface';
 import { encryptClientCredential } from '@credebl/common/cast.helper';
+import { CloudWalletType } from '@credebl/enum/enum';
 @Injectable()
 export class WebhookRepository {
   constructor(
@@ -67,15 +68,38 @@ export class WebhookRepository {
           }
         });
       } else if (tenantId && 'default' !== tenantId && orgId) {
-        // orgId fallback: cloud-wallet holder tenantIds have no org_agents row of their own
-        webhookUrlInfo = await this.prisma.org_agents.findFirstOrThrow({
+        // Tenant first: shared-agent tenants arrive on the base wallet's orgId path, so orgId alone resolves the wrong org.
+        webhookUrlInfo = await this.prisma.org_agents.findFirst({
           where: {
-            OR: [{ tenantId }, { orgId }]
+            tenantId
           }
         });
+
+        if (!webhookUrlInfo) {
+          // orgId fallback only for cloud-wallet holders; an unknown shared tenant would otherwise resolve to the platform-admin org.
+          const cloudWalletHolder = await this.prisma.cloud_wallet_user_info.findFirst({
+            where: {
+              tenantId,
+              type: CloudWalletType.SUB_WALLET
+            },
+            select: {
+              id: true
+            }
+          });
+
+          if (!cloudWalletHolder) {
+            throw new NotFoundException(`No org agent or cloud wallet found for tenantId ${tenantId}`);
+          }
+
+          webhookUrlInfo = await this.prisma.org_agents.findFirstOrThrow({
+            where: {
+              orgId
+            }
+          });
+        }
       }
 
-      // TEMP DIAGNOSTIC: confirm the OR fallback isn't resolving a different org than requested
+      // TEMP DIAGNOSTIC: confirm the lookup resolves the requested org; remove after QA verification
       this.logger.error(
         `[getWebhookUrl] queried tenantId=${tenantId} orgId=${orgId} -> resolved orgId=${webhookUrlInfo?.orgId} tenantId=${webhookUrlInfo?.tenantId} webhookUrl=${webhookUrlInfo?.webhookUrl}`
       );
