@@ -8,6 +8,7 @@ jest.mock(
 import { VerificationService } from '../../verification.service';
 import { ProofResponseCodeService } from '../proof-response-code.service';
 import { ResponseCodeStatus } from '../response-code.interface';
+import { FakeRedis } from './fake-redis';
 
 const ORG_ID = 'org-1';
 const THREAD_ID = 'thread-1';
@@ -35,6 +36,7 @@ function makeService(redirectUriAllowlist: string | null = REDIRECT_URI): {
     outOfBandRecord: { id: 'oob-1' }
   }));
   const responseCodes = new ProofResponseCodeService();
+  (responseCodes as unknown as { client: FakeRedis }).client = new FakeRedis();
   const service = new VerificationService(
     {} as never,
     verificationRepository as never,
@@ -203,6 +205,15 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
     expect(result.invitationUrl).toBe(INVITATION_URL);
     expect(result.deepLinkURL).toBe(`${DEEPLINK_DOMAIN}${INVITATION_URL}`);
     expect(result.returnUrl).toBeUndefined();
+  });
+
+  it('returns 503, not expired, when the response_code store is unavailable', async () => {
+    const { service, responseCodes } = makeService();
+    jest.spyOn(responseCodes, 'getSession').mockRejectedValue(new Error('redis down'));
+
+    await expect(service.getProofCallbackResult('some-code')).rejects.toMatchObject({
+      error: expect.objectContaining({ statusCode: 503 })
+    });
   });
 
   describe('https-only redirect URIs', () => {

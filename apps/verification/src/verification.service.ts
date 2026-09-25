@@ -6,7 +6,8 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
-  NotFoundException
+  NotFoundException,
+  ServiceUnavailableException
 } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import {
@@ -630,18 +631,26 @@ export class VerificationService {
     if (!responseCode) {
       return expired;
     }
-    const session = await this.proofResponseCodeService.getSession(responseCode);
-    if (!session) {
-      return expired;
+    try {
+      const session = await this.proofResponseCodeService.getSession(responseCode);
+      if (!session) {
+        return expired;
+      }
+      if (ResponseCodeStatus.PENDING === session.status) {
+        return { status: ResponseCodeStatus.PENDING };
+      }
+      const consumed = await this.proofResponseCodeService.consume(responseCode, session.threadId);
+      if (!consumed) {
+        return expired;
+      }
+      return { status: session.status, threadId: session.threadId, result: session.result };
+    } catch (error) {
+      // Not "expired": the code may still be valid once the store is reachable again.
+      this.logger.error(`[getProofCallbackResult] - response_code store unavailable: ${error?.message}`);
+      throw new RpcException(
+        new ServiceUnavailableException(ResponseMessages.verification.error.responseCodeUnavailable).getResponse()
+      );
     }
-    if (ResponseCodeStatus.PENDING === session.status) {
-      return { status: ResponseCodeStatus.PENDING };
-    }
-    const consumed = await this.proofResponseCodeService.consume(responseCode, session.threadId);
-    if (!consumed) {
-      return expired;
-    }
-    return { status: session.status, threadId: session.threadId, result: session.result };
   }
 
   async setRedirectUris(orgId: string, redirectUris: string[], userId: string): Promise<string[]> {

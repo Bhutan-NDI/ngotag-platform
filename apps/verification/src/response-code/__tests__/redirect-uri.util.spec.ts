@@ -126,6 +126,20 @@ describe('appendReturnUrl', () => {
 });
 
 describe('buildReturnUrl', () => {
+  it('puts response_code in the query, not the fragment', () => {
+    const url = new URL(buildReturnUrl('https://rp.example.com/return#section', 'tok_123'));
+
+    expect(url.searchParams.get('response_code')).toBe('tok_123');
+    expect(url.hash).toBe('#section');
+  });
+
+  it('keeps existing query parameters and replaces an existing response_code', () => {
+    const url = new URL(buildReturnUrl('https://rp.example.com/return?a=1&response_code=old', 'tok_123'));
+
+    expect(url.searchParams.get('a')).toBe('1');
+    expect(url.searchParams.getAll('response_code')).toEqual(['tok_123']);
+  });
+
   it('adds response_code as a query parameter', () => {
     expect(buildReturnUrl('https://rp.example.com/return', 'tok_123')).toBe(
       'https://rp.example.com/return?response_code=tok_123'
