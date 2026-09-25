@@ -173,6 +173,7 @@ export interface ISendProofRequestPayload {
   reuseConnection?: boolean;
   recipientKey?: string;
   invitationDid?: string;
+  redirectUri?: string;
 }
 
 export interface IWSendProofRequestPayload {
@@ -249,6 +250,7 @@ export interface IInvitation {
   proofRecordThId?: string;
   invitationUrl?: string;
   deepLinkURL?: string;
+  returnUrl?: string;
 }
 
 export interface IProofRequestData {

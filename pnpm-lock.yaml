@@ -276,6 +276,9 @@ importers:
       html-to-image:
         specifier: ^1.11.13
         version: 1.11.13
+      ioredis:
+        specifier: ^5.10.1
+        version: 5.10.1
       json2csv:
         specifier: ^5.0.7
         version: 5.0.7

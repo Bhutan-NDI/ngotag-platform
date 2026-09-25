@@ -27,6 +27,7 @@ import {
   BadRequestException,
   ParseUUIDPipe,
   Delete,
+  Patch,
   Version
 } from '@nestjs/common';
 import { ApiResponseDto } from '../dtos/apiResponse.dto';
@@ -46,6 +47,7 @@ import { WebhookPresentationProofDto } from './dto/webhook-proof.dto';
 import { CustomExceptionFilter } from 'apps/api-gateway/common/exception-handler';
 import { User } from '../authz/decorators/user.decorator';
 import { GetAllProofRequestsDto } from './dto/get-all-proof-requests.dto';
+import { RedirectUrisDto } from './dto/redirect-uris.dto';
 import { IProofRequestSearchCriteria } from './interfaces/verification.interface';
 import { API_Version, ProofRequestType, SortFields } from './enum/verification.enum';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -525,6 +527,138 @@ export class VerificationController {
         );
       });
     return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
+
+  @Post('/verification/orgs/:orgId/redirect-uris')
+  @ApiOperation({
+    summary: 'Register redirect URIs',
+    description:
+      'Register the URIs a same-device out-of-band proof request may return the holder to (redirectUri). Replaces any existing list.'
+  })
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
+  @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
+  @ApiBearerAuth()
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  async registerRedirectUris(
+    @Param(
+      'orgId',
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    orgId: string,
+    @Body() redirectUrisDto: RedirectUrisDto,
+    @User() user: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const redirectUris = await this.verificationService.setRedirectUris(orgId, redirectUrisDto.redirectUris, user.id);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.CREATED,
+      message: ResponseMessages.verification.success.redirectUrisRegistered,
+      data: { redirectUris }
+    };
+    return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
+
+  @Patch('/verification/orgs/:orgId/redirect-uris')
+  @ApiOperation({
+    summary: 'Update redirect URIs',
+    description: 'Replace the registered redirect URIs for the organization.'
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
+  @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
+  @ApiBearerAuth()
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  async updateRedirectUris(
+    @Param(
+      'orgId',
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    orgId: string,
+    @Body() redirectUrisDto: RedirectUrisDto,
+    @User() user: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const redirectUris = await this.verificationService.setRedirectUris(orgId, redirectUrisDto.redirectUris, user.id);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.redirectUrisUpdated,
+      data: { redirectUris }
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  @Get('/verification/orgs/:orgId/redirect-uris')
+  @ApiOperation({
+    summary: 'Get redirect URIs',
+    description: 'Get the redirect URIs registered for the organization.'
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
+  @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
+  @ApiBearerAuth()
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  async getRedirectUris(
+    @Param(
+      'orgId',
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    orgId: string,
+    @Res() res: Response
+  ): Promise<Response> {
+    const redirectUris = await this.verificationService.getRedirectUris(orgId);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.redirectUrisFetched,
+      data: { redirectUris }
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  /**
+   * Unauthenticated by design: possession of the single-use, short-lived response_code
+   * is the authorization.
+   */
+  @Get('/verification/callback-result')
+  @ApiOperation({
+    summary: 'Get proof result by response_code',
+    description:
+      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof completes; a terminal result can be read once.'
+  })
+  @ApiQuery({ name: 'response_code', required: true })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Pending, verified or failed', type: ApiResponseDto })
+  @ApiResponse({ status: HttpStatus.GONE, description: 'Unknown, expired or already used response_code' })
+  async getProofCallbackResult(@Query('response_code') responseCode: string, @Res() res: Response): Promise<Response> {
+    const callbackResult = await this.verificationService.getProofCallbackResult(responseCode?.trim());
+    res.setHeader('Cache-Control', 'no-store');
+    if ('expired' === callbackResult.status) {
+      return res.status(HttpStatus.GONE).json({
+        statusCode: HttpStatus.GONE,
+        message: ResponseMessages.verification.error.responseCodeExpired,
+        data: callbackResult
+      });
+    }
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.callbackResultFetched,
+      data: callbackResult
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**

@@ -6,7 +6,8 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
-  NotFoundException
+  NotFoundException,
+  ServiceUnavailableException
 } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import {
@@ -52,6 +53,17 @@ import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { ISchemaDetail } from '@credebl/common/interfaces/schema.interface';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { EmailService } from '@credebl/common/email.service';
+import { ProofResponseCodeService } from './response-code/proof-response-code.service';
+import {
+  appendReturnUrl,
+  buildReturnUrl,
+  hasAllowedRedirectProtocol,
+  isHttpRedirectUriAllowed,
+  isRedirectUriAllowed,
+  parseRedirectUriAllowlist,
+  toTerminalResponseCodeStatus
+} from './response-code/redirect-uri.util';
+import { IProofCallbackResult, ResponseCodeStatus } from './response-code/response-code.interface';
 
 @Injectable()
 export class VerificationService {
@@ -68,7 +80,8 @@ export class VerificationService {
     // TODO: Remove duplicate, unused variable
     @Inject(CACHE_MANAGER) private readonly cacheService: Cache,
     private readonly natsClient: NATSClient,
-    private readonly emailService: EmailService
+    private readonly emailService: EmailService,
+    private readonly proofResponseCodeService: ProofResponseCodeService
   ) {}
 
   /**
@@ -445,6 +458,7 @@ export class VerificationService {
   async webhookProofPresentation(proofPresentationPayload: IProofPresentation): Promise<presentations> {
     try {
       const proofPresentation = await this.verificationRepository.storeProofPresentation(proofPresentationPayload);
+      await this.updateResponseCodeSession(proofPresentationPayload);
       return proofPresentation;
     } catch (error) {
       this.logger.error(`[webhookProofPresentation] - error in webhook proof presentation : ${JSON.stringify(error)}`);
@@ -469,6 +483,16 @@ export class VerificationService {
         this.verificationRepository.getOrganization(user.orgId)
       ]);
 
+      if (outOfBandRequestProof.redirectUri) {
+        if (outOfBandRequestProof.emailId) {
+          throw new BadRequestException(ResponseMessages.verification.error.redirectUriWithEmail);
+        }
+        const allowlist = parseRedirectUriAllowlist(getAgentDetails?.redirectUriAllowlist);
+        if (!isRedirectUriAllowed(outOfBandRequestProof.redirectUri, allowlist, isHttpRedirectUriAllowed())) {
+          throw new BadRequestException(ResponseMessages.verification.error.redirectUriNotAllowed);
+        }
+      }
+
       const label = getOrganization?.name;
 
       if (getOrganization?.logoUrl) {
@@ -480,7 +504,8 @@ export class VerificationService {
       const url = getAgentUrl(getAgentDetails?.agentEndPoint, CommonConstants.CREATE_OUT_OF_BAND_PROOF_PRESENTATION);
 
       // Destructuring 'outOfBandRequestProof' to remove emailId, as it is not used while agent operation
-      const { isShortenUrl, emailId, type, reuseConnection, ...updateOutOfBandRequestProof } = outOfBandRequestProof;
+      const { isShortenUrl, emailId, type, reuseConnection, redirectUri, ...updateOutOfBandRequestProof } =
+        outOfBandRequestProof;
       let invitationDid: string | undefined;
       if (true === reuseConnection) {
         const invitation: agent_invitations = await this.verificationRepository.getInvitationDidByOrgId(user.orgId);
@@ -547,11 +572,110 @@ export class VerificationService {
         if (!presentationProof) {
           throw new Error(ResponseMessages.verification.error.proofPresentationNotFound);
         }
+        if (!presentationProof.deepLinkURL && process.env.DEEPLINK_DOMAIN) {
+          presentationProof.deepLinkURL = convertUrlToDeepLinkUrl(presentationProof.invitationUrl);
+        }
+        if (redirectUri) {
+          await this.attachRedirect(presentationProof, user.orgId, redirectUri);
+        }
         return presentationProof;
       }
     } catch (error) {
       this.logger.error(`[sendOutOfBandPresentationRequest] - error in out of band proof request : ${error.message}`);
+      if (error instanceof BadRequestException) {
+        throw new RpcException(error.getResponse());
+      }
       this.verificationErrorHandling(error);
+    }
+  }
+
+  private async attachRedirect(presentationProof: IInvitation, orgId: string, redirectUri: string): Promise<void> {
+    const threadId = presentationProof.proofRecordThId;
+    if (!threadId) {
+      this.logger.warn(`[attachRedirect] - no proofRecordThId returned by the agent; skipping redirect`);
+      return;
+    }
+    let responseCode: string;
+    try {
+      responseCode = await this.proofResponseCodeService.createSession(orgId, threadId, redirectUri);
+    } catch (error) {
+      // The invitation already exists; return it without redirect rather than failing the request.
+      this.logger.error(`[attachRedirect] - failed to create response_code session: ${error?.message}`);
+      return;
+    }
+    presentationProof.returnUrl = buildReturnUrl(redirectUri, responseCode);
+    if (presentationProof.deepLinkURL) {
+      presentationProof.deepLinkURL = appendReturnUrl(presentationProof.deepLinkURL, presentationProof.returnUrl);
+    }
+  }
+
+  private async updateResponseCodeSession({ proofPresentationPayload }: IProofPresentation): Promise<void> {
+    const { threadId, state, isVerified, presentationId } = proofPresentationPayload ?? {};
+    const status = toTerminalResponseCodeStatus(state, isVerified);
+    if (!threadId || !status) {
+      return;
+    }
+    try {
+      await this.proofResponseCodeService.markTerminalByThreadId(threadId, status, {
+        state,
+        isVerified: Boolean(isVerified),
+        presentationId
+      });
+    } catch (error) {
+      this.logger.error(`[updateResponseCodeSession] - error for threadId ${threadId}: ${error?.message}`);
+    }
+  }
+
+  async getProofCallbackResult(responseCode: string): Promise<IProofCallbackResult> {
+    const expired: IProofCallbackResult = { status: ResponseCodeStatus.EXPIRED };
+    if (!responseCode) {
+      return expired;
+    }
+    try {
+      const session = await this.proofResponseCodeService.getSession(responseCode);
+      if (!session) {
+        return expired;
+      }
+      if (ResponseCodeStatus.PENDING === session.status) {
+        return { status: ResponseCodeStatus.PENDING };
+      }
+      const consumed = await this.proofResponseCodeService.consume(responseCode, session.threadId);
+      if (!consumed) {
+        return expired;
+      }
+      return { status: session.status, threadId: session.threadId, result: session.result };
+    } catch (error) {
+      // Not "expired": the code may still be valid once the store is reachable again.
+      this.logger.error(`[getProofCallbackResult] - response_code store unavailable: ${error?.message}`);
+      throw new RpcException(
+        new ServiceUnavailableException(ResponseMessages.verification.error.responseCodeUnavailable).getResponse()
+      );
+    }
+  }
+
+  async setRedirectUris(orgId: string, redirectUris: string[], userId: string): Promise<string[]> {
+    try {
+      const normalized = [...new Set(redirectUris.map((uri) => uri.trim()))];
+      const allowHttp = isHttpRedirectUriAllowed();
+      if (!normalized.every((uri) => hasAllowedRedirectProtocol(uri, allowHttp))) {
+        throw new BadRequestException(ResponseMessages.verification.error.redirectUriHttpsRequired);
+      }
+      await this.verificationRepository.getAgentEndPoint(orgId);
+      const updated = await this.verificationRepository.updateRedirectUriAllowlist(orgId, normalized.join(','), userId);
+      return parseRedirectUriAllowlist(updated.redirectUriAllowlist);
+    } catch (error) {
+      this.logger.error(`[setRedirectUris] - error: ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
+    }
+  }
+
+  async getRedirectUris(orgId: string): Promise<string[]> {
+    try {
+      const orgAgent = await this.verificationRepository.getAgentEndPoint(orgId);
+      return parseRedirectUriAllowlist(orgAgent.redirectUriAllowlist);
+    } catch (error) {
+      this.logger.error(`[getRedirectUris] - error: ${JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
     }
   }
 
