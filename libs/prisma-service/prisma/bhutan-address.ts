@@ -144,7 +144,8 @@ export async function syncBhutanAddress(prisma: PrismaClient, { dryRun = false }
     select: { id: true, name: true, isoCode: true, countryId: true }
   });
   const cities = await prisma.cities.findMany({
-    where: { OR: [{ countryCode: BHUTAN_COUNTRY_CODE }, { stateId: { in: states.map((s) => s.id) } }] },
+    // Not by state_id: on legacy DBs some other countries' cities still point at Bhutan states.
+    where: { countryCode: BHUTAN_COUNTRY_CODE },
     select: { id: true, name: true, stateId: true, stateCode: true, countryId: true }
   });
   const plan = planBhutanSync(loadDzongkhags(), country.id, states, cities);

@@ -1,5 +1,11 @@
 import { State } from 'country-state-city';
-import { DbCity, DbState, loadDzongkhags, planBhutanSync } from '../libs/prisma-service/prisma/bhutan-address';
+import {
+  DbCity,
+  DbState,
+  loadDzongkhags,
+  planBhutanSync,
+  syncBhutanAddress
+} from '../libs/prisma-service/prisma/bhutan-address';
 
 const BT = 26;
 const dzongkhags = loadDzongkhags();
@@ -166,5 +172,32 @@ describe('syncing leaves exactly the dzongkhags and gewogs in the address JSON',
     expect(
       actual(applyPlan(...(Object.values(applyPlan(legacyStates, legacyCities)) as [DbState[], DbCity[]])))
     ).toEqual(expected);
+  });
+});
+
+describe('syncBhutanAddress', () => {
+  it("reads and deletes only Bhutan rows, even when another country's city points at a Bhutan state", async () => {
+    const states = [{ id: 438, name: 'Bumthang District', isoCode: '33', countryId: BT }];
+    // Legacy-DB city of another country whose state_id is shifted onto a Bhutan state
+    const cities = [
+      { id: 1, name: 'Jakar', stateId: 438, stateCode: '33', countryId: BT, countryCode: 'BT' },
+      { id: 2, name: 'Skopje', stateId: 438, stateCode: '85', countryId: 150, countryCode: 'MK' }
+    ];
+    const prisma = {
+      countries: { findFirst: jest.fn().mockResolvedValue({ id: BT, isoCode: 'BT' }) },
+      states: { findMany: jest.fn().mockResolvedValue(states) },
+      cities: {
+        findMany: jest.fn(({ where }) => Promise.resolve(cities.filter((c) => c.countryCode === where.countryCode)))
+      },
+      organisation: { count: jest.fn().mockResolvedValue(0) }
+    };
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const plan = await syncBhutanAddress(prisma as any, { dryRun: true });
+
+    expect(prisma.states.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { countryCode: 'BT' } }));
+    expect(prisma.cities.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { countryCode: 'BT' } }));
+    expect(plan.cityDeletes).toEqual([1]);
   });
 });
