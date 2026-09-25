@@ -187,7 +187,8 @@
     "testEnvironment": "node",
     "roots": [
       "<rootDir>/apps/",
-      "<rootDir>/libs/"
+      "<rootDir>/libs/",
+      "<rootDir>/scripts/"
     ],
     "moduleNameMapper": {
       "@credebl/common/(.*)": "<rootDir>/libs/common/src/$1",

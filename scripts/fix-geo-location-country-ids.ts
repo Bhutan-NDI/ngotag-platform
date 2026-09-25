@@ -1,45 +1,12 @@
 /* eslint-disable camelcase */
 /* eslint-disable no-console */
-// One-off corrective data fix for environments seeded before commit a04f80ed
-// ("fix: replace broken geo CSV data with country-state-city npm package seed").
+// One-off repair for environments seeded from the legacy geo CSVs, whose states/cities
+// country_id and cities.state_id are corrupted. The seed skips non-empty tables, so
+// re-seeding can't fix them. Updates rows in place (ids unchanged); idempotent.
 //
-// The legacy `geo-location-master-data/states.csv` / `cities.csv` files were corrupted:
-//   - `states.country_id` / `cities.country_id` were shifted relative to `country_code`
-//     for the large majority of rows (e.g. Bosnia and Herzegovina's cantons were stored
-//     under Bhutan's country id).
-//   - `cities.state_id` pointed at a state in a *different* country for ~93% of rows
-//     (e.g. every Bhutan city had state_id=1146, El Salvador's Cuscatlán Department).
-// `seedGeoLocationData` in `libs/prisma-service/prisma/seed.ts` only seeds a database
-// that has zero countries, so any environment already seeded from the old CSVs never
-// gets corrected by re-running the seed.
-//
-// This script repairs an already-seeded environment in place, without truncating or
-// re-inserting any row:
-//   1. countries: backfills `iso_code` (matched to country-state-city by name, with an
-//      alias map for the few countries whose legacy name differs).
-//   2. states: re-points `country_id` by `country_code`, and backfills `iso_code` by
-//      matching each state name to country-state-city within its country.
-//   3. cities: re-points `country_id` by `country_code`, and re-points `state_id` to the
-//      correct state of the same country. The legacy `cities.state_code` values are
-//      country-state-city state iso codes, so they're resolved through the package to a
-//      state name and from there to the DB state. Where the package no longer has that
-//      state code (its state list differs from the legacy one for a few countries, e.g.
-//      Spain's provinces vs autonomous communities), it falls back to looking the city
-//      name up in the package, then to the state most of the city's `state_code` group
-//      resolved to, then to a DB state named after one of the group's cities (a
-//      province named after its capital). Cities that still can't be resolved are left
-//      unchanged and reported.
-//
-// Row ids are never changed, so it is safe to run even though `organisation.countryId/
-// stateId/cityId` are no longer enforced as DB foreign keys (see migration
-// 20260527100000_drop_geo_fk_constraints). Idempotent — re-running only touches rows that
-// are still wrong. Not wired into `prisma migrate deploy` — run manually, once, against
-// each affected environment.
-//
-// Usage:
-//   DATABASE_URL=... npx ts-node scripts/fix-geo-location-country-ids.ts [--dry-run]
+// Usage: DATABASE_URL=... npx ts-node scripts/fix-geo-location-country-ids.ts [--dry-run]
 
-import { City, Country, State } from 'country-state-city';
+import { City, Country, IState, State } from 'country-state-city';
 import { PrismaClient } from '@prisma/client';
 
 const log = (msg: string): void => console.log(`[GEO-FIX] ${msg}`);
@@ -52,8 +19,15 @@ const COUNTRY_NAME_ALIASES: Record<string, string> = {
   TL: 'timor-leste'
 };
 
-// Minimum similarity for the last-resort fuzzy state name match (e.g. PL "Mazovia" ↔
-// "Masovian Voivodeship"). Only considered between states still unmatched in the same country.
+// country code → state iso code → legacy DB state name, where name matching can't link them: English
+// names unlike the package's (PL "Upper Silesia" is Opole Voivodeship), or a state the package
+// doesn't list (HU Komárom-Esztergom, whose cities would otherwise go to its capital Tatabánya).
+const STATE_NAME_ALIASES: Record<string, Record<string, string>> = {
+  HU: { KE: 'Komárom-Esztergom' },
+  PL: { OP: 'Upper Silesia', PK: 'Subcarpathia', SK: 'Holy Cross' }
+};
+
+// Minimum similarity for the fuzzy state name match (e.g. PL "Mazovia" ↔ "Masovian Voivodeship").
 const FUZZY_STATE_MATCH_THRESHOLD = 0.75;
 
 const UPDATE_CHUNK_SIZE = 1000;
@@ -78,7 +52,7 @@ export interface CityStatePlan {
   stateIsoBackfills: Map<number, string>;
   // DB city id → correct DB state id, for cities whose `state_id` is wrong
   cityStateUpdates: Map<number, number>;
-  resolvedBy: { stateCode: number; cityName: number; groupVote: number; capitalName: number };
+  resolvedBy: { stateCode: number; groupVote: number; capitalName: number };
   unmatchedStates: GeoState[];
   unresolvedCities: GeoCity[];
 }
@@ -94,6 +68,9 @@ const normalize = (s: string): string => {
 
 const STATE_NAME_NOISE =
   /\b(district|province|region|governorate|county|department|municipality|parish|prefecture|state|oblast|voivodeship|canton|autonomous|city|of|the|division|island|islands|territory|republic)\b/g;
+
+// Word order ignored, for names like legacy city "Coruña A" vs state "A Coruña".
+const wordSetKey = (s: string): string => normalize(s).split(' ').sort().join(' ');
 
 const looseNormalize = (s: string): string => normalize(s).replace(STATE_NAME_NOISE, '').replace(/\s+/g, ' ').trim();
 
@@ -148,12 +125,12 @@ export function planCityStateRepair(states: GeoState[], cities: GeoCity[]): City
       }
     }
 
-    const matchPass = (matches: (pkgName: string, dbName: string) => boolean): void => {
+    const matchPass = (matches: (pkg: IState, dbName: string) => boolean): void => {
       for (const s of countryStates) {
         if (stateIsoById.has(s.id)) {
           continue;
         }
-        const candidates = pkgStates.filter((p) => !usedIso.has(p.isoCode) && matches(p.name, s.name));
+        const candidates = pkgStates.filter((p) => !usedIso.has(p.isoCode) && matches(p, s.name));
         if (1 === candidates.length) {
           stateIsoById.set(s.id, candidates[0].isoCode);
           stateIsoBackfills.set(s.id, candidates[0].isoCode);
@@ -161,8 +138,10 @@ export function planCityStateRepair(states: GeoState[], cities: GeoCity[]): City
         }
       }
     };
-    matchPass((pkgName, dbName) => normalize(pkgName) === normalize(dbName));
-    matchPass((pkgName, dbName) => '' !== looseNormalize(dbName) && looseNormalize(pkgName) === looseNormalize(dbName));
+    const aliases = STATE_NAME_ALIASES[countryCode] ?? {};
+    matchPass((pkg, dbName) => normalize(aliases[pkg.isoCode] ?? '') === normalize(dbName));
+    matchPass((pkg, dbName) => normalize(pkg.name) === normalize(dbName));
+    matchPass((pkg, dbName) => '' !== looseNormalize(dbName) && looseNormalize(pkg.name) === looseNormalize(dbName));
 
     for (const s of countryStates) {
       if (stateIsoById.has(s.id)) {
@@ -208,76 +187,115 @@ export function planCityStateRepair(states: GeoState[], cities: GeoCity[]): City
     }
     return index.get(normalize(cityName));
   };
-  const resolveByCityName = (city: GeoCity): number | undefined => {
+  // A city votes for a DB state only when every package state it appears under maps to that same
+  // DB state. If one of them has no DB state (e.g. ES Catalonia, which the legacy DB splits into
+  // provinces), a same-named city in another state would otherwise look like a unique match.
+  const voteByCityName = (city: GeoCity): number | undefined => {
+    const codes = pkgStateCodesForCity(city.countryCode, city.name);
+    if (!codes) {
+      return undefined;
+    }
     const candidates = new Set<number>();
-    for (const code of pkgStateCodesForCity(city.countryCode, city.name) ?? []) {
+    for (const code of codes) {
       const id = stateIdByKey.get(`${city.countryCode}|${code}`);
-      if (id) {
-        candidates.add(id);
+      if (!id) {
+        return undefined;
       }
+      candidates.add(id);
     }
     return 1 === candidates.size ? [...candidates][0] : undefined;
   };
 
-  const resolved = new Map<number, number>();
-  const resolvedBy = { stateCode: 0, cityName: 0, groupVote: 0, capitalName: 0 };
-  const unresolvedGroups: GeoCity[][] = [];
+  // Every city in a (country_code, state_code) group belongs to the same legacy state, so each
+  // group is resolved as a whole, and a DB state is given to at most one group.
+  const groups = groupBy(cities, (c) => `${c.countryCode}|${c.stateCode}`);
+  const stateIdByGroup = new Map<string, number>();
+  const claimedStateIds = new Set<number>();
+  const resolvedBy = { stateCode: 0, groupVote: 0, capitalName: 0 };
 
-  for (const [key, group] of groupBy(cities, (c) => `${c.countryCode}|${c.stateCode}`)) {
-    const byCode = stateIdByKey.get(key);
-    if (byCode) {
-      group.forEach((c) => resolved.set(c.id, byCode));
-      resolvedBy.stateCode += group.length;
-      continue;
+  const assign = (assignments: Map<string, number>, method: keyof typeof resolvedBy): void => {
+    const groupsPerState = new Map<number, number>();
+    for (const stateId of assignments.values()) {
+      groupsPerState.set(stateId, (groupsPerState.get(stateId) ?? 0) + 1);
     }
-
-    const votes = new Map<number, number>();
-    const pending: GeoCity[] = [];
-    for (const c of group) {
-      const id = resolveByCityName(c);
-      if (id) {
-        resolved.set(c.id, id);
-        votes.set(id, (votes.get(id) ?? 0) + 1);
-        resolvedBy.cityName++;
-      } else {
-        pending.push(c);
+    for (const [key, stateId] of assignments) {
+      // Several groups picking the same state (e.g. ES Alicante, Castellón and Valencia all voting
+      // for DB "Valencia", matched to the package's whole Valencian Community) means none of them
+      // is a reliable match — leave them all for the next step.
+      if (1 === groupsPerState.get(stateId) && !claimedStateIds.has(stateId)) {
+        stateIdByGroup.set(key, stateId);
+        claimedStateIds.add(stateId);
+        resolvedBy[method] += groups.get(key)?.length ?? 0;
       }
     }
+  };
+  const pendingGroups = (): [string, GeoCity[]][] => [...groups].filter(([key]) => !stateIdByGroup.has(key));
 
-    const totalVotes = group.length - pending.length;
-    const [winner] = [...votes].sort((a, b) => b[1] - a[1]);
-    if (winner && 0.5 < winner[1] / totalVotes) {
-      pending.forEach((c) => resolved.set(c.id, winner[0]));
-      resolvedBy.groupVote += pending.length;
-    } else if (pending.length) {
-      unresolvedGroups.push(pending);
-    }
-  }
-
-  // Last resort: a remaining group whose cities include one named exactly like a state of the
-  // same country that no city group has claimed yet (e.g. legacy ES province "Barcelona" for
-  // state_code "B", which country-state-city no longer lists as a state).
-  const claimedStateIds = new Set(resolved.values());
+  // 1. The legacy state_code is the package state iso code, sometimes without the package's
+  //    leading zero (PH "3" is "03" Central Luzon, IR "5" is "05" Kermanshah).
   const statesByCountry = groupBy(states, (s) => s.countryCode);
-  const unresolvedCities: GeoCity[] = [];
-  for (const group of unresolvedGroups) {
-    const cityNames = new Set(group.map((c) => normalize(c.name)));
-    const candidates = (statesByCountry.get(group[0].countryCode) ?? []).filter(
-      (s) => !claimedStateIds.has(s.id) && cityNames.has(normalize(s.name))
-    );
-    if (1 === candidates.length) {
-      group.forEach((c) => resolved.set(c.id, candidates[0].id));
-      claimedStateIds.add(candidates[0].id);
-      resolvedBy.capitalName += group.length;
-    } else {
-      unresolvedCities.push(...group);
+  const byStateCode = new Map<string, number>();
+  for (const [key, [{ countryCode, stateCode }]] of groups) {
+    const alias = STATE_NAME_ALIASES[countryCode]?.[stateCode];
+    const stateId =
+      stateIdByKey.get(key) ??
+      stateIdByKey.get(`${countryCode}|${stateCode.padStart(2, '0')}`) ??
+      (alias && statesByCountry.get(countryCode)?.find((s) => normalize(s.name) === normalize(alias))?.id);
+    if (stateId) {
+      byStateCode.set(key, stateId);
     }
   }
+  assign(byStateCode, 'stateCode');
+
+  // 2. The state most of the group's cities are found under in the package, by city name. The
+  //    winner must cover a majority of the whole group, not just of the cities that voted.
+  const byVote = new Map<string, number>();
+  for (const [key, group] of pendingGroups()) {
+    const votes = new Map<number, number>();
+    for (const c of group) {
+      const stateId = voteByCityName(c);
+      if (stateId) {
+        votes.set(stateId, (votes.get(stateId) ?? 0) + 1);
+      }
+    }
+    const [winner] = [...votes].sort((a, b) => b[1] - a[1]);
+    if (winner && group.length < 2 * winner[1]) {
+      byVote.set(key, winner[0]);
+    }
+  }
+  assign(byVote, 'groupVote');
+
+  // 3. An unclaimed state of the same country named after one of the group's cities — a province
+  //    named after its capital (e.g. ES state_code "B" → "Barcelona"). Each round assigns exact
+  //    names first, so a prefix match (e.g. "CS" → "Castellón" via "Castellón de la Plana") can't
+  //    block one. Rounds repeat until nothing changes, since claiming a state can leave another
+  //    group with a single candidate (ES "V" also has a town named "Alicante").
+  const capitalPass = (matches: (cityName: string, stateName: string) => boolean): void => {
+    const byCapital = new Map<string, number>();
+    for (const [key, group] of pendingGroups()) {
+      const candidates = (statesByCountry.get(group[0].countryCode) ?? []).filter(
+        (s) => !claimedStateIds.has(s.id) && group.some((c) => matches(c.name, s.name))
+      );
+      if (1 === candidates.length) {
+        byCapital.set(key, candidates[0].id);
+      }
+    }
+    assign(byCapital, 'capitalName');
+  };
+  let claimedBefore: number;
+  do {
+    claimedBefore = claimedStateIds.size;
+    capitalPass((cityName, stateName) => wordSetKey(cityName) === wordSetKey(stateName));
+    capitalPass((cityName, stateName) => normalize(cityName).startsWith(`${normalize(stateName)} `));
+  } while (claimedStateIds.size > claimedBefore);
 
   const cityStateUpdates = new Map<number, number>();
+  const unresolvedCities: GeoCity[] = [];
   for (const c of cities) {
-    const stateId = resolved.get(c.id);
-    if (stateId && stateId !== c.stateId) {
+    const stateId = stateIdByGroup.get(`${c.countryCode}|${c.stateCode}`);
+    if (!stateId) {
+      unresolvedCities.push(c);
+    } else if (stateId !== c.stateId) {
       cityStateUpdates.set(c.id, stateId);
     }
   }
@@ -403,9 +421,7 @@ async function main(): Promise<void> {
     log(`cities.country_id corrected:   ${citiesFixed}`);
     log(`cities.state_id corrected:     ${plan.cityStateUpdates.size}`);
     const by = plan.resolvedBy;
-    log(
-      `  resolved via state_code=${by.stateCode}, city name=${by.cityName}, group vote=${by.groupVote}, capital name=${by.capitalName}`
-    );
+    log(`  resolved via state_code=${by.stateCode}, group vote=${by.groupVote}, capital name=${by.capitalName}`);
     if (0 < plan.unmatchedStates.length) {
       log(`States with no country-state-city match (${plan.unmatchedStates.length}) — iso_code left empty:`);
       log(`  ${plan.unmatchedStates.map((s) => `${s.countryCode}:${s.name}`).join(', ')}`);
@@ -416,6 +432,7 @@ async function main(): Promise<void> {
         .join(', ');
       log(`Cities whose state could not be resolved (${plan.unresolvedCities.length}) — state_id left unchanged:`);
       log(`  by country_code:state_code: ${groups}`);
+      process.exitCode = 1;
     }
     if (0 < unmatched.length) {
       log(`Countries from country-state-city with no matching DB row (${unmatched.length}), review manually:`);
