@@ -1,10 +1,11 @@
 /* eslint-disable camelcase */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
 import { ICreateWebhookUrl, IGetWebhookUrl } from '../interfaces/webhook.interfaces';
 import { org_agents } from '@prisma/client';
 import { IWebhookUrl } from '@credebl/common/interfaces/webhook.interface';
 import { encryptClientCredential } from '@credebl/common/cast.helper';
+import { CloudWalletType } from '@credebl/enum/enum';
 @Injectable()
 export class WebhookRepository {
   constructor(
@@ -68,18 +69,37 @@ export class WebhookRepository {
         });
       } else if (tenantId && 'default' !== tenantId && orgId) {
         // Tenant first: shared-agent tenants share the base wallet's orgId, so a single OR query can resolve that org.
-        // orgId fallback only for cloud-wallet holder tenantIds, which have no org_agents row of their own.
-        webhookUrlInfo =
-          (await this.prisma.org_agents.findFirst({
+        webhookUrlInfo = await this.prisma.org_agents.findFirst({
+          where: {
+            tenantId
+          }
+        });
+
+        if (!webhookUrlInfo) {
+          // orgId fallback only for cloud-wallet holder tenantIds, which have no org_agents row of their own.
+          // Any other unknown tenantId (e.g. a shared org whose row was deleted or whose tenantId was cleared)
+          // arrives on the platform-admin org's webhook path, so falling back would deliver its events to the
+          // platform admin's webhookUrl — throw instead, as before #91.
+          const cloudWalletHolder = await this.prisma.cloud_wallet_user_info.findFirst({
             where: {
-              tenantId
+              tenantId,
+              type: CloudWalletType.SUB_WALLET
+            },
+            select: {
+              id: true
             }
-          })) ??
-          (await this.prisma.org_agents.findFirstOrThrow({
+          });
+
+          if (!cloudWalletHolder) {
+            throw new NotFoundException(`No org agent or cloud wallet found for tenantId ${tenantId}`);
+          }
+
+          webhookUrlInfo = await this.prisma.org_agents.findFirstOrThrow({
             where: {
               orgId
             }
-          }));
+          });
+        }
       }
 
       // TEMP DIAGNOSTIC: confirm the OR fallback isn't resolving a different org than requested
