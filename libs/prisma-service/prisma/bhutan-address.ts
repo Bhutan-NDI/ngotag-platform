@@ -57,7 +57,7 @@ export interface BhutanSyncPlan {
 }
 
 /**
- * Matches existing Bhutan states to dzongkhags (by iso_code, then by name) and existing cities to
+ * Matches existing Bhutan states to dzongkhags by name and existing cities to
  * gewogs of the same dzongkhag (by name). Anything unmatched is deleted. Pure — no database access.
  */
 export function planBhutanSync(
@@ -90,7 +90,7 @@ export function planBhutanSync(
       }
     }
   };
-  dzongkhags.forEach((dz) => claimState(dz, (s) => s.isoCode === dz.dzongkhagId));
+  // By name only: legacy iso codes overlap dzongkhag ids (Paro District is "11", Samdrupjongkhar's id).
   dzongkhags.forEach((dz) => claimState(dz, (s) => stateKey(s.name) === normalize(dz.dzongkhagName)));
   plan.stateDeletes = [...unmatchedStates.keys()];
 

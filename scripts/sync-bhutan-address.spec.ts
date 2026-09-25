@@ -1,3 +1,4 @@
+import { State } from 'country-state-city';
 import { DbCity, DbState, loadDzongkhags, planBhutanSync } from '../libs/prisma-service/prisma/bhutan-address';
 
 const BT = 26;
@@ -38,6 +39,26 @@ describe('planBhutanSync', () => {
     expect(plan.cityDeletes).toEqual([1]);
     const gewogCount = dzongkhags.reduce((n, dz) => n + dz.gewogs.length, 0);
     expect(plan.cityCreates).toHaveLength(gewogCount - 1);
+  });
+
+  it('maps every legacy package state to its own dzongkhag, though legacy iso codes overlap dzongkhag ids', () => {
+    const pkgStates: DbState[] = [
+      ...State.getStatesOfCountry('BT'),
+      { name: 'Trashiyangtse District', isoCode: 'TY' }
+    ].map((st, i) => ({ id: i + 1, name: st.name, isoCode: st.isoCode, countryId: BT }));
+    const full = planBhutanSync(dzongkhags, BT, pkgStates, []);
+    expect(full.stateDeletes).toEqual([]);
+    expect(full.stateCreates).toEqual([]);
+    const renamed = new Map(full.stateUpdates.map((u) => [u.id, u.name]));
+    const loose = (name: string): string =>
+      name
+        .toLowerCase()
+        .replace(' district', '')
+        .replace(/[^a-z]/g, '');
+    const aliases: Record<string, string> = { lhuntse: 'lhuentse' };
+    for (const st of pkgStates) {
+      expect(loose(renamed.get(st.id))).toBe(aliases[loose(st.name)] ?? loose(st.name));
+    }
   });
 
   it('is a no-op once synced', () => {
