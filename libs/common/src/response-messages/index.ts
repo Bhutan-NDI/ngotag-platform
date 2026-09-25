@@ -572,7 +572,8 @@ export const ResponseMessages = {
       redirectUriNotAllowed: 'redirectUri is not registered for this organization',
       redirectUriWithEmail: 'redirectUri cannot be combined with emailId',
       redirectUriHttpsRequired: 'Redirect URIs must use https',
-      responseCodeExpired: 'response_code is unknown, expired or already used'
+      responseCodeExpired: 'response_code is unknown, expired or already used',
+      responseCodeUnavailable: 'Proof result is temporarily unavailable, please retry'
     }
   },
 

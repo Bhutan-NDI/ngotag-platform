@@ -53,9 +53,11 @@ export function isRedirectUriAllowed(redirectUri: string, allowlist: string[], a
   return allowlist.some((allowed) => matchesAllowlistEntry(target, allowed));
 }
 
+/** Sets response_code as a real query parameter, keeping any fragment and replacing an existing one. */
 export function buildReturnUrl(redirectUri: string, responseCode: string): string {
-  const separator = redirectUri.includes('?') ? '&' : '?';
-  return `${redirectUri}${separator}response_code=${responseCode}`;
+  const url = new URL(redirectUri);
+  url.searchParams.set('response_code', responseCode);
+  return url.toString();
 }
 
 /**

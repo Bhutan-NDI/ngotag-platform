@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomBytes } from 'crypto';
-import Redis from 'ioredis';
+import Redis, { ChainableCommander } from 'ioredis';
 import { IResponseCodeResult, IResponseCodeSession, ResponseCodeStatus } from './response-code.interface';
 
 const KEY_PREFIX = 'verification:response-code:';
@@ -8,28 +8,30 @@ const THREAD_INDEX_PREFIX = 'verification:idx:thread:';
 export const DEFAULT_PENDING_TTL_SECONDS = 600;
 export const RESULT_READY_TTL_SECONDS = 60;
 
+// Compare-and-set: writes only if the session still holds the exact value that was read, so a
+// consumed (deleted) or already-terminal session is never recreated or re-extended.
+const MARK_TERMINAL_SCRIPT = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+redis.call('EXPIRE', KEYS[2], ARGV[3])
+return 1
+`;
+
 export function resolvePendingTtlSeconds(value?: string): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && 0 < parsed ? parsed : DEFAULT_PENDING_TTL_SECONDS;
 }
 
-interface MemoryEntry {
-  value: string;
-  expiresAt: number;
-}
-
 /**
- * Single-use response_code sessions for DIDComm same-device redirects. Redis is the
- * primary store so any replica can serve the webhook or the read; a per-instance
- * in-memory fallback keeps proof requests working while Redis is down.
+ * Single-use response_code sessions for DIDComm same-device redirects. Redis is the only store,
+ * so every replica sees the same state; while it is unavailable, operations fail instead of diverging.
  */
 @Injectable()
 export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('ProofResponseCodeService');
   private client?: Redis;
-  private readonly memory = new Map<string, MemoryEntry>();
-  private sweepTimer?: NodeJS.Timeout;
-  private lastFallbackLogAt = 0;
   private readonly pendingTtlSeconds = resolvePendingTtlSeconds(process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS);
 
   onModuleInit(): void {
@@ -38,21 +40,15 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
       port: Number(process.env.REDIS_PORT),
       password: process.env.REDIS_PASSWORD || undefined,
       maxRetriesPerRequest: 1,
-      // Fail commands fast (fall back to memory) instead of queueing while disconnected.
+      // Fail commands immediately while disconnected instead of queueing them.
       enableOfflineQueue: false,
       retryStrategy: (times: number) => Math.min(times * 200, 2000)
     });
     this.client.on('ready', () => this.logger.log('Redis connection ready for response_code sessions'));
-    this.client.on('error', (err: Error) => this.logger.debug(`Redis connection error: ${err?.message}`));
-
-    this.sweepTimer = setInterval(() => this.sweepMemory(), 60_000);
-    this.sweepTimer.unref?.();
+    this.client.on('error', (err: Error) => this.logger.warn(`Redis connection error: ${err?.message}`));
   }
 
   async onModuleDestroy(): Promise<void> {
-    if (this.sweepTimer) {
-      clearInterval(this.sweepTimer);
-    }
     if (this.client) {
       try {
         await this.client.quit();
@@ -71,52 +67,82 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
       status: ResponseCodeStatus.PENDING,
       createdAt: new Date().toISOString()
     };
-    await this.kvSet(this.tokenKey(token), JSON.stringify(session), this.pendingTtlSeconds);
-    await this.kvSet(this.threadIndexKey(threadId), token, this.pendingTtlSeconds);
-    if (!this.redisReady()) {
-      this.logger.warn(
-        `response_code session for threadId ${threadId} stored in the in-memory fallback (Redis unavailable); it is NOT visible to other replicas`
-      );
-    }
+    await this.exec(
+      this.redis()
+        .multi()
+        .set(this.tokenKey(token), JSON.stringify(session), 'EX', this.pendingTtlSeconds)
+        .set(this.threadIndexKey(threadId), token, 'EX', this.pendingTtlSeconds)
+    );
     return token;
   }
 
   async getSession(token: string): Promise<IResponseCodeSession | null> {
-    const raw = await this.kvGet(this.tokenKey(token));
+    const raw = await this.redis().get(this.tokenKey(token));
     return raw ? (JSON.parse(raw) as IResponseCodeSession) : null;
   }
 
-  /** No-op when the proof has no response_code session (i.e. no redirectUri was supplied). */
+  /** No-op when the proof has no session, it was already consumed, or it is already terminal. */
   async markTerminalByThreadId(
     threadId: string,
     status: ResponseCodeStatus.VERIFIED | ResponseCodeStatus.FAILED,
     result: IResponseCodeResult
   ): Promise<void> {
-    const token = await this.kvGet(this.threadIndexKey(threadId));
+    const indexKey = this.threadIndexKey(threadId);
+    const token = await this.redis().get(indexKey);
     if (!token) {
-      if (!this.redisReady()) {
-        this.logger.warn(
-          `No response_code session for threadId ${threadId} while on the in-memory fallback — possible cross-replica miss`
-        );
-      }
       return;
     }
-    const session = await this.getSession(token);
-    if (!session) {
+    const tokenKey = this.tokenKey(token);
+    const raw = await this.redis().get(tokenKey);
+    if (!raw) {
       return;
     }
-    session.status = status;
-    session.result = result;
-    await this.kvSet(this.tokenKey(token), JSON.stringify(session), RESULT_READY_TTL_SECONDS);
-    await this.kvExpire(this.threadIndexKey(threadId), RESULT_READY_TTL_SECONDS);
-    this.logger.log(`response_code session for threadId ${threadId} set to ${status}`);
+    const session = JSON.parse(raw) as IResponseCodeSession;
+    if (ResponseCodeStatus.PENDING !== session.status) {
+      return;
+    }
+    const updated = JSON.stringify({ ...session, status, result });
+    const applied = await this.redis().eval(
+      MARK_TERMINAL_SCRIPT,
+      2,
+      tokenKey,
+      indexKey,
+      raw,
+      updated,
+      RESULT_READY_TTL_SECONDS
+    );
+    if (1 === applied) {
+      this.logger.log(`response_code session for threadId ${threadId} set to ${status}`);
+    } else {
+      this.logger.debug(`response_code session for threadId ${threadId} changed concurrently; update skipped`);
+    }
   }
 
   /** Returns false when a concurrent reader already consumed the token. */
   async consume(token: string, threadId: string): Promise<boolean> {
-    const deleted = await this.kvDel(this.tokenKey(token));
-    await this.kvDel(this.threadIndexKey(threadId));
-    return deleted;
+    const [deletedTokens] = await this.exec(
+      this.redis().multi().del(this.tokenKey(token)).del(this.threadIndexKey(threadId))
+    );
+    return 1 === deletedTokens;
+  }
+
+  private redis(): Redis {
+    if (!this.client) {
+      throw new Error('Redis client is not initialised');
+    }
+    return this.client;
+  }
+
+  private async exec(transaction: ChainableCommander): Promise<unknown[]> {
+    const results = await transaction.exec();
+    if (!results) {
+      throw new Error('Redis transaction was aborted');
+    }
+    const failed = results.find(([error]) => error);
+    if (failed) {
+      throw failed[0];
+    }
+    return results.map(([, value]) => value);
   }
 
   private tokenKey(token: string): string {
@@ -125,92 +151,5 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
 
   private threadIndexKey(threadId: string): string {
     return `${THREAD_INDEX_PREFIX}${threadId}`;
-  }
-
-  // Derived per operation rather than a sticky flag, so a transient failure self-heals.
-  private redisReady(): boolean {
-    return 'ready' === this.client?.status;
-  }
-
-  private async kvSet(key: string, value: string, ttlSeconds: number): Promise<void> {
-    if (this.redisReady()) {
-      try {
-        await this.client.set(key, value, 'EX', ttlSeconds);
-        return;
-      } catch (err) {
-        this.onRedisOpError(err);
-      }
-    }
-    const ttlMs = ttlSeconds * 1000;
-    this.memory.set(key, { value, expiresAt: Date.now() + ttlMs });
-  }
-
-  private async kvGet(key: string): Promise<string | null> {
-    if (this.redisReady()) {
-      try {
-        return await this.client.get(key);
-      } catch (err) {
-        this.onRedisOpError(err);
-      }
-    }
-    return this.memGet(key);
-  }
-
-  private async kvDel(key: string): Promise<boolean> {
-    if (this.redisReady()) {
-      try {
-        return 1 === (await this.client.del(key));
-      } catch (err) {
-        this.onRedisOpError(err);
-      }
-    }
-    const existed = null !== this.memGet(key);
-    this.memory.delete(key);
-    return existed;
-  }
-
-  private async kvExpire(key: string, ttlSeconds: number): Promise<void> {
-    if (this.redisReady()) {
-      try {
-        await this.client.expire(key, ttlSeconds);
-        return;
-      } catch (err) {
-        this.onRedisOpError(err);
-      }
-    }
-    const entry = this.memory.get(key);
-    if (entry) {
-      const ttlMs = ttlSeconds * 1000;
-      entry.expiresAt = Date.now() + ttlMs;
-    }
-  }
-
-  private onRedisOpError(err: unknown): void {
-    const now = Date.now();
-    if (30_000 < now - this.lastFallbackLogAt) {
-      this.lastFallbackLogAt = now;
-      this.logger.warn(`Redis command failed; used in-memory fallback for this operation: ${(err as Error)?.message}`);
-    }
-  }
-
-  private memGet(key: string): string | null {
-    const entry = this.memory.get(key);
-    if (!entry) {
-      return null;
-    }
-    if (Date.now() > entry.expiresAt) {
-      this.memory.delete(key);
-      return null;
-    }
-    return entry.value;
-  }
-
-  private sweepMemory(): void {
-    const now = Date.now();
-    for (const [key, entry] of this.memory.entries()) {
-      if (now > entry.expiresAt) {
-        this.memory.delete(key);
-      }
-    }
   }
 }
