@@ -68,7 +68,7 @@ export class WebhookRepository {
           }
         });
       } else if (tenantId && 'default' !== tenantId && orgId) {
-        // Tenant first: shared-agent tenants share the base wallet's orgId, so a single OR query can resolve that org.
+        // Tenant first: shared-agent tenants arrive on the base wallet's orgId path, so orgId alone resolves the wrong org.
         webhookUrlInfo = await this.prisma.org_agents.findFirst({
           where: {
             tenantId
@@ -76,10 +76,7 @@ export class WebhookRepository {
         });
 
         if (!webhookUrlInfo) {
-          // orgId fallback only for cloud-wallet holder tenantIds, which have no org_agents row of their own.
-          // Any other unknown tenantId (e.g. a shared org whose row was deleted or whose tenantId was cleared)
-          // arrives on the platform-admin org's webhook path, so falling back would deliver its events to the
-          // platform admin's webhookUrl — throw instead, as before #91.
+          // orgId fallback only for cloud-wallet holders; an unknown shared tenant would otherwise resolve to the platform-admin org.
           const cloudWalletHolder = await this.prisma.cloud_wallet_user_info.findFirst({
             where: {
               tenantId,
@@ -102,7 +99,7 @@ export class WebhookRepository {
         }
       }
 
-      // TEMP DIAGNOSTIC: confirm the OR fallback isn't resolving a different org than requested
+      // TEMP DIAGNOSTIC: confirm the lookup resolves the requested org; remove after QA verification
       this.logger.error(
         `[getWebhookUrl] queried tenantId=${tenantId} orgId=${orgId} -> resolved orgId=${webhookUrlInfo?.orgId} tenantId=${webhookUrlInfo?.tenantId} webhookUrl=${webhookUrlInfo?.webhookUrl}`
       );
