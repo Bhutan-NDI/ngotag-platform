@@ -6,7 +6,8 @@ import { IResponseCodeResult, IResponseCodeSession, ResponseCodeStatus } from '.
 const KEY_PREFIX = 'verification:response-code:';
 const THREAD_INDEX_PREFIX = 'verification:idx:thread:';
 export const DEFAULT_PENDING_TTL_SECONDS = 600;
-export const RESULT_READY_TTL_SECONDS = 60;
+export const DEFAULT_RESULT_TTL_SECONDS = 60;
+export const MAX_TTL_SECONDS = 3600;
 
 // Compare-and-set: writes only if the session still holds the exact value that was read, so a
 // consumed (deleted) or already-terminal session is never recreated or re-extended.
@@ -19,9 +20,10 @@ redis.call('EXPIRE', KEYS[2], ARGV[3])
 return 1
 `;
 
-export function resolvePendingTtlSeconds(value?: string): number {
+/** Whole seconds in (0, MAX_TTL_SECONDS]; anything else falls back to `fallback`. */
+export function resolveTtlSeconds(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
-  return Number.isInteger(parsed) && 0 < parsed ? parsed : DEFAULT_PENDING_TTL_SECONDS;
+  return Number.isInteger(parsed) && 0 < parsed && MAX_TTL_SECONDS >= parsed ? parsed : fallback;
 }
 
 /**
@@ -32,7 +34,15 @@ export function resolvePendingTtlSeconds(value?: string): number {
 export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('ProofResponseCodeService');
   private client?: Redis;
-  private readonly pendingTtlSeconds = resolvePendingTtlSeconds(process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS);
+  private readonly pendingTtlSeconds = resolveTtlSeconds(
+    process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS,
+    DEFAULT_PENDING_TTL_SECONDS
+  );
+
+  private readonly resultTtlSeconds = resolveTtlSeconds(
+    process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS,
+    DEFAULT_RESULT_TTL_SECONDS
+  );
 
   onModuleInit(): void {
     this.client = new Redis({
@@ -109,7 +119,7 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
       indexKey,
       raw,
       updated,
-      RESULT_READY_TTL_SECONDS
+      this.resultTtlSeconds
     );
     if (1 === applied) {
       this.logger.log(`response_code session for threadId ${threadId} set to ${status}`);

@@ -2,7 +2,7 @@
 // uses REDIS_TEST_DB (default 15) and deletes only the keys it creates.
 import Redis from 'ioredis';
 import { randomUUID } from 'crypto';
-import { ProofResponseCodeService, RESULT_READY_TTL_SECONDS } from '../proof-response-code.service';
+import { DEFAULT_RESULT_TTL_SECONDS, ProofResponseCodeService } from '../proof-response-code.service';
 import { ResponseCodeStatus } from '../response-code.interface';
 
 const describeWithRedis = process.env.REDIS_TEST_HOST ? describe : describe.skip;
@@ -69,8 +69,8 @@ describeWithRedis('ProofResponseCodeService against Redis', () => {
     const { token, threadId } = await newSession();
 
     expect(await client.get(indexKey(threadId))).toBe(token);
-    expect(await client.ttl(tokenKey(token))).toBeGreaterThan(RESULT_READY_TTL_SECONDS);
-    expect(await client.ttl(indexKey(threadId))).toBeGreaterThan(RESULT_READY_TTL_SECONDS);
+    expect(await client.ttl(tokenKey(token))).toBeGreaterThan(DEFAULT_RESULT_TTL_SECONDS);
+    expect(await client.ttl(indexKey(threadId))).toBeGreaterThan(DEFAULT_RESULT_TTL_SECONDS);
   });
 
   it('never resurrects a session consumed while a concurrent terminal webhook is in flight', async () => {
@@ -107,6 +107,24 @@ describeWithRedis('ProofResponseCodeService against Redis', () => {
     const outcomes = await Promise.all([1, 2, 3, 4, 5].map(() => service.consume(token, threadId)));
 
     expect(outcomes.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('shares state across replicas: a webhook on one instance is visible to a read on another', async () => {
+    const replicaClient = client.duplicate();
+    await replicaClient.connect();
+    try {
+      const replica = new ProofResponseCodeService();
+      (replica as unknown as { client: Redis }).client = replicaClient;
+      const { token, threadId } = await newSession();
+
+      await replica.markTerminalByThreadId(threadId, ResponseCodeStatus.VERIFIED, VERIFIED);
+
+      expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.VERIFIED, result: VERIFIED });
+      expect(await replica.consume(token, threadId)).toBe(true);
+      expect(await service.consume(token, threadId)).toBe(false);
+    } finally {
+      await replicaClient.quit();
+    }
   });
 
   it('fails while disconnected and serves the same state after reconnecting', async () => {

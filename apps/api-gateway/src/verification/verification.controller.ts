@@ -47,7 +47,7 @@ import { WebhookPresentationProofDto } from './dto/webhook-proof.dto';
 import { CustomExceptionFilter } from 'apps/api-gateway/common/exception-handler';
 import { User } from '../authz/decorators/user.decorator';
 import { GetAllProofRequestsDto } from './dto/get-all-proof-requests.dto';
-import { RedirectUrisDto } from './dto/redirect-uris.dto';
+import { RegisterRedirectUrisDto, UpdateRedirectUrisDto } from './dto/redirect-uris.dto';
 import { IProofRequestSearchCriteria } from './interfaces/verification.interface';
 import { API_Version, ProofRequestType, SortFields } from './enum/verification.enum';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -529,11 +529,11 @@ export class VerificationController {
     return res.status(HttpStatus.CREATED).json(finalResponse);
   }
 
-  @Post('/verification/orgs/:orgId/redirect-uris')
+  @Post('/orgs/:orgId/verification/redirect-uris')
   @ApiOperation({
     summary: 'Register redirect URIs',
     description:
-      'Register the URIs a same-device out-of-band proof request may return the holder to (redirectUri). Replaces any existing list.'
+      'Register the URIs a same-device out-of-band proof request may return the holder to (redirectUri). Replaces any existing list; at least one URI is required.'
   })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
@@ -551,7 +551,7 @@ export class VerificationController {
       })
     )
     orgId: string,
-    @Body() redirectUrisDto: RedirectUrisDto,
+    @Body() redirectUrisDto: RegisterRedirectUrisDto,
     @User() user: user,
     @Res() res: Response
   ): Promise<Response> {
@@ -564,10 +564,11 @@ export class VerificationController {
     return res.status(HttpStatus.CREATED).json(finalResponse);
   }
 
-  @Patch('/verification/orgs/:orgId/redirect-uris')
+  @Patch('/orgs/:orgId/verification/redirect-uris')
   @ApiOperation({
     summary: 'Update redirect URIs',
-    description: 'Replace the registered redirect URIs for the organization.'
+    description:
+      'Replace the registered redirect URIs for the organization. An empty list disables same-device redirects: any redirectUri is then rejected with 400.'
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
   @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
@@ -585,7 +586,7 @@ export class VerificationController {
       })
     )
     orgId: string,
-    @Body() redirectUrisDto: RedirectUrisDto,
+    @Body() redirectUrisDto: UpdateRedirectUrisDto,
     @User() user: user,
     @Res() res: Response
   ): Promise<Response> {
@@ -598,7 +599,7 @@ export class VerificationController {
     return res.status(HttpStatus.OK).json(finalResponse);
   }
 
-  @Get('/verification/orgs/:orgId/redirect-uris')
+  @Get('/orgs/:orgId/verification/redirect-uris')
   @ApiOperation({
     summary: 'Get redirect URIs',
     description: 'Get the redirect URIs registered for the organization.'
@@ -638,14 +639,15 @@ export class VerificationController {
   @ApiOperation({
     summary: 'Get proof result by response_code',
     description:
-      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof completes; a terminal result can be read once.'
+      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof completes. A verified/failed result can be read only once, so read it once and keep the outcome in your own state (a retried or duplicated read gets 410).'
   })
   @ApiQuery({ name: 'response_code', required: true })
   @ApiResponse({ status: HttpStatus.OK, description: 'Pending, verified or failed', type: ApiResponseDto })
   @ApiResponse({ status: HttpStatus.GONE, description: 'Unknown, expired or already used response_code' })
   async getProofCallbackResult(@Query('response_code') responseCode: string, @Res() res: Response): Promise<Response> {
-    const callbackResult = await this.verificationService.getProofCallbackResult(responseCode?.trim());
+    // Set first so error responses (e.g. 503) are not cached either.
     res.setHeader('Cache-Control', 'no-store');
+    const callbackResult = await this.verificationService.getProofCallbackResult(responseCode?.trim());
     if ('expired' === callbackResult.status) {
       return res.status(HttpStatus.GONE).json({
         statusCode: HttpStatus.GONE,

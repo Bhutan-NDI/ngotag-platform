@@ -244,6 +244,26 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
       await expect(service.setRedirectUris(ORG_ID, redirectUris, 'user-1')).resolves.toEqual(redirectUris);
     });
 
+    it('rejects a previously valid redirectUri once the allowlist is emptied', async () => {
+      const { service, natsSend, verificationRepository } = makeService();
+      let stored = REDIRECT_URI;
+      verificationRepository.getAgentEndPoint.mockImplementation(async () => ({
+        agentEndPoint: 'https://agent.example',
+        redirectUriAllowlist: stored
+      }));
+      verificationRepository.updateRedirectUriAllowlist.mockImplementation(async (_orgId: string, value: string) => {
+        stored = value;
+        return { redirectUriAllowlist: value };
+      });
+
+      await expect(service.setRedirectUris(ORG_ID, [], 'user-1')).resolves.toEqual([]);
+
+      await expect(sendOob(service, REDIRECT_URI)).rejects.toMatchObject({
+        error: expect.objectContaining({ statusCode: 400 })
+      });
+      expect(natsSend).not.toHaveBeenCalled();
+    });
+
     it('stops honouring a previously registered http entry once http is disallowed', async () => {
       delete process.env.REDIRECT_URI_ALLOW_HTTP;
       const { service, natsSend } = makeService('http://localhost:3000/return');

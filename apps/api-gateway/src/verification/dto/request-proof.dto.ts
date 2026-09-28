@@ -505,7 +505,7 @@ export class SendProofRequestPayload {
   @ApiPropertyOptional({
     example: 'https://relying-party.example/return',
     description:
-      'Where the wallet returns the holder after a same-device proof. Must match a redirect URI registered for the organization.'
+      'Where the wallet returns the holder after a same-device proof. Must match a redirect URI registered for the organization. If the response has no returnUrl, the redirect could not be set up (for example the result store was unavailable): treat the request as cross-device.'
   })
   @IsOptional()
   @Transform(({ value }) => trim(value))

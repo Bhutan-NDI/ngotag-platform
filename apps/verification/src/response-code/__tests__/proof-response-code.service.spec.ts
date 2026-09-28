@@ -1,8 +1,9 @@
 import {
   DEFAULT_PENDING_TTL_SECONDS,
   ProofResponseCodeService,
-  RESULT_READY_TTL_SECONDS,
-  resolvePendingTtlSeconds
+  DEFAULT_RESULT_TTL_SECONDS,
+  MAX_TTL_SECONDS,
+  resolveTtlSeconds
 } from '../proof-response-code.service';
 import { ResponseCodeStatus } from '../response-code.interface';
 import { FakeRedis } from './fake-redis';
@@ -41,8 +42,8 @@ describe('ProofResponseCodeService', () => {
     await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.VERIFIED, VERIFIED);
 
     expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.VERIFIED, result: VERIFIED });
-    expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(RESULT_READY_TTL_SECONDS);
-    expect(redis.ttls.get('verification:idx:thread:thread-1')).toBe(RESULT_READY_TTL_SECONDS);
+    expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(DEFAULT_RESULT_TTL_SECONDS);
+    expect(redis.ttls.get('verification:idx:thread:thread-1')).toBe(DEFAULT_RESULT_TTL_SECONDS);
   });
 
   it('is a no-op for a proof that has no session', async () => {
@@ -133,23 +134,28 @@ describe('ProofResponseCodeService', () => {
     });
   });
 
-  describe('pending TTL configuration', () => {
-    const original = process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS;
-    afterEach(() => {
-      if (undefined === original) {
-        delete process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS;
+  describe('TTL configuration', () => {
+    const originals = {
+      pending: process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS,
+      result: process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS
+    };
+    const restore = (name: string, value: string | undefined): void => {
+      if (undefined === value) {
+        delete process.env[name];
       } else {
-        process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS = original;
+        process.env[name] = value;
       }
+    };
+    afterEach(() => {
+      restore('PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS', originals.pending);
+      restore('PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS', originals.result);
     });
 
-    it('defaults when unset or invalid', () => {
-      expect(resolvePendingTtlSeconds(undefined)).toBe(DEFAULT_PENDING_TTL_SECONDS);
-      expect(resolvePendingTtlSeconds('')).toBe(DEFAULT_PENDING_TTL_SECONDS);
-      expect(resolvePendingTtlSeconds('abc')).toBe(DEFAULT_PENDING_TTL_SECONDS);
-      expect(resolvePendingTtlSeconds('0')).toBe(DEFAULT_PENDING_TTL_SECONDS);
-      expect(resolvePendingTtlSeconds('-5')).toBe(DEFAULT_PENDING_TTL_SECONDS);
-      expect(resolvePendingTtlSeconds('12.5')).toBe(DEFAULT_PENDING_TTL_SECONDS);
+    it('falls back when unset, invalid or above the cap', () => {
+      for (const value of [undefined, '', 'abc', '0', '-5', '12.5', String(MAX_TTL_SECONDS + 1), '6000000']) {
+        expect(resolveTtlSeconds(value, 42)).toBe(42);
+      }
+      expect(resolveTtlSeconds(String(MAX_TTL_SECONDS), 42)).toBe(MAX_TTL_SECONDS);
     });
 
     it('uses PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS for new sessions', async () => {
@@ -159,6 +165,17 @@ describe('ProofResponseCodeService', () => {
       const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
 
       expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(900);
+    });
+
+    it('uses PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS for the post-result window', async () => {
+      process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS = '180';
+      const { service, redis } = makeService();
+      const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
+
+      await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.VERIFIED, VERIFIED);
+
+      expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(180);
+      expect(redis.ttls.get('verification:idx:thread:thread-1')).toBe(180);
     });
   });
 });
