@@ -5,6 +5,7 @@ import { ClsModule } from 'nestjs-cls';
 import { ContextStorageServiceKey } from './contextStorageService.interface';
 import NestjsClsContextStorageService from './nestjsClsContextStorageService';
 import { Request } from 'express';
+import { issuanceDeadline, ISSUANCE_DEADLINE_KEY } from './issuanceDeadline';
 
 @Global()
 @Module({
@@ -14,6 +15,9 @@ import { Request } from 'express';
       middleware: {
         mount: true,
         generateId: true,
+        setup: (cls) => {
+          cls.set(ISSUANCE_DEADLINE_KEY, issuanceDeadline());
+        },
         idGenerator: (req: Request) => {
           // TODO: Check if we want the x-correlation-id or the correlationId
           const contextIdHeader = req.headers['contextid'] ?? req.headers['context-id'] ?? req.headers['contextId'];

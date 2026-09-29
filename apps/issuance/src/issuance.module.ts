@@ -11,6 +11,7 @@ import { OutOfBandIssuance } from '../templates/out-of-band-issuance.template';
 import { EmailDto } from '@credebl/common/dtos/email.dto';
 import { BullModule } from '@nestjs/bull';
 import { CacheModule } from '@nestjs/cache-manager';
+import { IssuanceWorkCoordinator } from './issuance-work.coordinator';
 import { BulkIssuanceProcessor } from './issuance.processor';
 import { StorageModule } from '@credebl/storage';
 import { UserActivityRepository } from 'libs/user-activity/repositories';
@@ -49,7 +50,9 @@ import { NATSClient } from '@credebl/common/NATSClient';
       }
     }),
     BullModule.registerQueue({
-      name: 'bulk-issuance'
+      name: 'bulk-issuance',
+      defaultJobOptions: { attempts: 1 },
+      settings: { maxStalledCount: 0 }
     })
   ],
   controllers: [IssuanceController],
@@ -62,6 +65,7 @@ import { NATSClient } from '@credebl/common/NATSClient';
     OutOfBandIssuance,
     EmailDto,
     BulkIssuanceProcessor,
+    IssuanceWorkCoordinator,
     NATSClient,
     {
       provide: MICRO_SERVICE_NAME,

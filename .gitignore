@@ -12,3 +12,5 @@ nats-server.conf
 CLAUDE.md
 AGENTS.md
 .claude/
+
+/scripts/issuance-benchmark/permit-scope-results.json
