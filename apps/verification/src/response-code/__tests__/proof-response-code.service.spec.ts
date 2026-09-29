@@ -5,6 +5,7 @@ import {
   MAX_TTL_SECONDS,
   resolveTtlSeconds
 } from '../proof-response-code.service';
+import { Logger } from '@nestjs/common';
 import { ResponseCodeStatus } from '../response-code.interface';
 import { FakeRedis } from './fake-redis';
 
@@ -156,6 +157,24 @@ describe('ProofResponseCodeService', () => {
         expect(resolveTtlSeconds(value, 42)).toBe(42);
       }
       expect(resolveTtlSeconds(String(MAX_TTL_SECONDS), 42)).toBe(MAX_TTL_SECONDS);
+    });
+
+    it('warns when a TTL is set but rejected, and stays quiet for valid or unset values', () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS = '7200';
+        delete process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS;
+        makeService();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS=7200'));
+
+        warn.mockClear();
+        process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS = '120';
+        makeService();
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it('uses PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS for new sessions', async () => {

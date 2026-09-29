@@ -34,13 +34,13 @@ export function resolveTtlSeconds(value: string | undefined, fallback: number): 
 export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('ProofResponseCodeService');
   private client?: Redis;
-  private readonly pendingTtlSeconds = resolveTtlSeconds(
-    process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS,
+  private readonly pendingTtlSeconds = this.ttlFromEnv(
+    'PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS',
     DEFAULT_PENDING_TTL_SECONDS
   );
 
-  private readonly resultTtlSeconds = resolveTtlSeconds(
-    process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS,
+  private readonly resultTtlSeconds = this.ttlFromEnv(
+    'PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS',
     DEFAULT_RESULT_TTL_SECONDS
   );
 
@@ -134,6 +134,17 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
       this.redis().multi().del(this.tokenKey(token)).del(this.threadIndexKey(threadId))
     );
     return 1 === deletedTokens;
+  }
+
+  private ttlFromEnv(name: string, fallback: number): number {
+    const value = process.env[name];
+    const ttl = resolveTtlSeconds(value, fallback);
+    if (value?.trim() && ttl !== Number(value)) {
+      this.logger.warn(
+        `${name}=${value} is not a whole number of seconds in (0, ${MAX_TTL_SECONDS}]; using ${fallback}`
+      );
+    }
+    return ttl;
   }
 
   private redis(): Redis {
