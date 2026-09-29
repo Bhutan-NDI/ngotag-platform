@@ -103,6 +103,51 @@ export class VerificationController {
     return res.status(HttpStatus.OK).json(finalResponse);
   }
 
+  @Get('/orgs/:orgId/verified-proofs/threads/:threadId')
+  @ApiOperation({
+    summary: 'Get a verified proof presentation by thread ID',
+    description:
+      'Returns the raw proof format data (proofData) of a verified proof presentation, fetched live from the agent. Only proofs of this organization in state done and verified are returned; other states get 409.'
+  })
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @ApiBearerAuth()
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'No proof with this thread ID for the organization' })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'The proof is not in state done and verified' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
+  @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
+  async getProofPresentationByThreadId(
+    @Param(
+      'orgId',
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    orgId: string,
+    @Param(
+      'threadId',
+      TrimStringParamPipe,
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.verification.error.invalidThreadId);
+        }
+      })
+    )
+    threadId: string,
+    @Res() res: Response
+  ): Promise<Response> {
+    const presentation = await this.verificationService.getProofPresentationByThreadId(orgId, threadId);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.verifiedProofDetails,
+      data: presentation
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
   /**
    * Get proof presentation details by proofId
    * @param proofId The ID of the proof

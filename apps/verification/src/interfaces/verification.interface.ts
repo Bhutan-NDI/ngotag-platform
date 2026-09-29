@@ -311,3 +311,13 @@ export enum ProofRequestState {
   abandoned = 'Declined',
   presentationReceived = 'Presentation Received'
 }
+
+export interface IProofPresentationByThread {
+  threadId: string;
+  presentationId: string;
+  connectionId?: string;
+  state: string;
+  isVerified: boolean;
+  // Raw proof format data from the agent, the same shape as the webhook's `proofData`.
+  proofData: object;
+}

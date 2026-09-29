@@ -1,6 +1,7 @@
 /* eslint-disable camelcase */
 import {
   BadRequestException,
+  ConflictException,
   HttpException,
   Inject,
   Injectable,
@@ -22,7 +23,8 @@ import {
   IVerifiedProofData,
   IInvitation,
   IProofRequestData,
-  IEmailResponse
+  IEmailResponse,
+  IProofPresentationByThread
 } from './interfaces/verification.interface';
 import { VerificationRepository } from './repositories/verification.repository';
 import { ATTRIBUTE_NAME_REGEX, CommonConstants } from '@credebl/common/common.constant';
@@ -1032,6 +1034,41 @@ export class VerificationService {
       } else {
         throw new RpcException(error);
       }
+    }
+  }
+
+  /** Serves only verified proofs of this org; the data is read live from the agent, never cached. */
+  async getProofPresentationByThreadId(orgId: string, threadId: string): Promise<IProofPresentationByThread> {
+    try {
+      const presentation = await this.verificationRepository.getPresentationByThreadId(threadId);
+      if (!presentation || presentation.orgId !== orgId) {
+        throw new NotFoundException(ResponseMessages.verification.error.verifiedProofNotFound);
+      }
+      if (
+        VerificationProcessState.DONE !== presentation.state ||
+        true !== presentation.isVerified ||
+        !presentation.presentationId
+      ) {
+        throw new ConflictException(ResponseMessages.verification.error.proofNotVerified);
+      }
+      const agentDetails = await this.verificationRepository.getAgentEndPoint(orgId);
+      const url = getAgentUrl(
+        agentDetails?.agentEndPoint,
+        CommonConstants.GET_VERIFIED_PROOF,
+        presentation.presentationId
+      );
+      const proofData = await this._getVerifiedProofDetails({ orgId, url });
+      return {
+        threadId,
+        presentationId: presentation.presentationId,
+        connectionId: presentation.connectionId ?? undefined,
+        state: presentation.state,
+        isVerified: true,
+        proofData
+      };
+    } catch (error) {
+      this.logger.error(`[getProofPresentationByThreadId] - error: ${error?.message ?? JSON.stringify(error)}`);
+      throw new RpcException(error.response ? error.response : error);
     }
   }
 

@@ -556,6 +556,7 @@ export const ResponseMessages = {
       notFound: 'Organization agent not found',
       proofNotSend: 'Proof request is not sent',
       invalidProofId: 'Please provide valid proofId',
+      invalidThreadId: 'Please provide a valid threadId',
       agentUrlNotFound: 'agent url not found',
       schemaIdNotFound: 'Schema Id is required',
       predicatesValueNotNumber: 'Attribute value is not a number',
@@ -573,7 +574,8 @@ export const ResponseMessages = {
       redirectUriWithEmail: 'redirectUri cannot be combined with emailId',
       redirectUriHttpsRequired: 'Redirect URIs must use https',
       responseCodeExpired: 'response_code is unknown, expired or already used',
-      responseCodeUnavailable: 'Proof result is temporarily unavailable, please retry'
+      responseCodeUnavailable: 'Proof result is temporarily unavailable, please retry',
+      proofNotVerified: 'Proof presentation is not verified'
     }
   },
 

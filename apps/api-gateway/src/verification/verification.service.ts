@@ -146,6 +146,11 @@ export class VerificationService extends BaseService {
     }
   }
 
+  getProofPresentationByThreadId(orgId: string, threadId: string): Promise<object> {
+    const payload = { orgId, threadId };
+    return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-proof-presentation-by-thread', payload);
+  }
+
   getProofCallbackResult(responseCode: string): Promise<IProofCallbackResult> {
     const payload = { responseCode };
     return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-proof-callback-result', payload);

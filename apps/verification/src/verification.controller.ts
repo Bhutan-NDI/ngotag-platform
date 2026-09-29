@@ -2,6 +2,7 @@ import {
   IProofPresentation,
   IProofPresentationData,
   IProofRequestData,
+  IProofPresentationByThread,
   IProofRequests,
   ISendProofRequestPayload
 } from './interfaces/verification.interface';
@@ -105,6 +106,14 @@ export class VerificationController {
   async getVerifiedProofdetails(payload: IProofPresentationData): Promise<IProofPresentationDetails[]> {
     const { proofId, orgId } = payload;
     return this.verificationService.getVerifiedProofdetails(proofId, orgId);
+  }
+
+  @MessagePattern({ cmd: 'get-proof-presentation-by-thread' })
+  async getProofPresentationByThreadId(payload: {
+    orgId: string;
+    threadId: string;
+  }): Promise<IProofPresentationByThread> {
+    return this.verificationService.getProofPresentationByThreadId(payload.orgId, payload.threadId);
   }
 
   @MessagePattern({ cmd: 'get-proof-callback-result' })
