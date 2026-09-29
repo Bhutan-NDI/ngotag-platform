@@ -11,6 +11,7 @@ import {
 import {
   IPresentation,
   IProofCallbackResult,
+  IProofPresentationByThread,
   IProofRequest,
   IProofRequestSearchCriteria
 } from './interfaces/verification.interface';
@@ -146,7 +147,7 @@ export class VerificationService extends BaseService {
     }
   }
 
-  getProofPresentationByThreadId(orgId: string, threadId: string): Promise<object> {
+  getProofPresentationByThreadId(orgId: string, threadId: string): Promise<IProofPresentationByThread> {
     const payload = { orgId, threadId };
     return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-proof-presentation-by-thread', payload);
   }

@@ -92,3 +92,12 @@ export interface IProofCallbackResult {
     presentationId?: string;
   };
 }
+
+export interface IProofPresentationByThread {
+  threadId: string;
+  presentationId: string;
+  connectionId?: string;
+  state: string;
+  isVerified: boolean;
+  proofData: object;
+}

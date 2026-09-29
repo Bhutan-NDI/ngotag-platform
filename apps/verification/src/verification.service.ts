@@ -1044,12 +1044,11 @@ export class VerificationService {
       if (!presentation || presentation.orgId !== orgId) {
         throw new NotFoundException(ResponseMessages.verification.error.verifiedProofNotFound);
       }
-      if (
-        VerificationProcessState.DONE !== presentation.state ||
-        true !== presentation.isVerified ||
-        !presentation.presentationId
-      ) {
+      if (VerificationProcessState.DONE !== presentation.state || true !== presentation.isVerified) {
         throw new ConflictException(ResponseMessages.verification.error.proofNotVerified);
+      }
+      if (!presentation.presentationId) {
+        throw new ConflictException(ResponseMessages.verification.error.proofRecordNotLinked);
       }
       const agentDetails = await this.verificationRepository.getAgentEndPoint(orgId);
       const url = getAgentUrl(
@@ -1058,6 +1057,10 @@ export class VerificationService {
         presentation.presentationId
       );
       const proofData = await this._getVerifiedProofDetails({ orgId, url });
+      // Same guard as getVerifiedProofdetails: the agent may answer 200 without the record (e.g. purged).
+      if (!proofData?.presentation) {
+        throw new NotFoundException(ResponseMessages.verification.error.verifiedProofNotFound);
+      }
       return {
         threadId,
         presentationId: presentation.presentationId,

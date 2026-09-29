@@ -85,6 +85,27 @@ describe('VerificationService.getProofPresentationByThreadId', () => {
     expect(natsSend).not.toHaveBeenCalled();
   });
 
+  it('returns 409 with a distinct message when a verified row has no linked proof record', async () => {
+    const { service, natsSend } = makeService({ ...verifiedRow, presentationId: null } as unknown as Row);
+
+    await expect(service.getProofPresentationByThreadId(ORG_ID, THREAD_ID)).rejects.toMatchObject({
+      error: expect.objectContaining({
+        statusCode: 409,
+        message: 'Proof presentation is verified but has no linked agent proof record'
+      })
+    });
+    expect(natsSend).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when the agent answers without the proof record (e.g. purged)', async () => {
+    const { service, natsSend } = makeService(verifiedRow);
+    natsSend.mockResolvedValueOnce({});
+
+    await expect(service.getProofPresentationByThreadId(ORG_ID, THREAD_ID)).rejects.toMatchObject({
+      error: expect.objectContaining({ statusCode: 404 })
+    });
+  });
+
   it.each([
     ['still in progress', { state: 'request-sent', isVerified: null }],
     ['done but not verified', { state: 'done', isVerified: false }],

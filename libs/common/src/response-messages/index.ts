@@ -575,7 +575,8 @@ export const ResponseMessages = {
       redirectUriHttpsRequired: 'Redirect URIs must use https',
       responseCodeExpired: 'response_code is unknown, expired or already used',
       responseCodeUnavailable: 'Proof result is temporarily unavailable, please retry',
-      proofNotVerified: 'Proof presentation is not verified'
+      proofNotVerified: 'Proof presentation is not verified',
+      proofRecordNotLinked: 'Proof presentation is verified but has no linked agent proof record'
     }
   },
 
