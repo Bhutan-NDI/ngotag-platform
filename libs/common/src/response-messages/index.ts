@@ -546,12 +546,17 @@ export const ResponseMessages = {
       verifiedProofDetails: 'Proof presentation details fetched successfully.',
       send: 'Proof request send successfully.',
       verified: 'Proof presentation verified successfully.',
-      deleteVerificationRecord: 'Verification records deleted'
+      deleteVerificationRecord: 'Verification records deleted',
+      redirectUrisRegistered: 'Redirect URIs registered successfully',
+      redirectUrisUpdated: 'Redirect URIs updated successfully',
+      redirectUrisFetched: 'Redirect URIs fetched successfully',
+      callbackResultFetched: 'Proof result fetched successfully'
     },
     error: {
       notFound: 'Organization agent not found',
       proofNotSend: 'Proof request is not sent',
       invalidProofId: 'Please provide valid proofId',
+      invalidThreadId: 'Please provide a valid threadId',
       agentUrlNotFound: 'agent url not found',
       schemaIdNotFound: 'Schema Id is required',
       predicatesValueNotNumber: 'Attribute value is not a number',
@@ -564,7 +569,14 @@ export const ResponseMessages = {
       emailSend: 'Unable to send email to the user',
       verificationRecordsNotFound: 'Verification records does not exists',
       removeVerificationData: 'First you have to remove verification data',
-      uniqueAttributes: 'Please provide unique attribute names'
+      uniqueAttributes: 'Please provide unique attribute names',
+      redirectUriNotAllowed: 'redirectUri is not registered for this organization',
+      redirectUriWithEmail: 'redirectUri cannot be combined with emailId',
+      redirectUriHttpsRequired: 'Redirect URIs must use https',
+      responseCodeExpired: 'response_code is unknown, expired or already used',
+      responseCodeUnavailable: 'Proof result is temporarily unavailable, please retry',
+      proofNotVerified: 'Proof presentation is not verified',
+      proofRecordNotLinked: 'Proof presentation is verified but has no linked agent proof record'
     }
   },
 

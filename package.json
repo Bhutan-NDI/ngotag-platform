@@ -89,6 +89,7 @@
     "helmet": "^8.1.0",
     "html-pdf": "^3.0.1",
     "html-to-image": "^1.11.13",
+    "ioredis": "^5.10.1",
     "json2csv": "^5.0.7",
     "jsonwebtoken": "^9.0.3",
     "jwks-rsa": "^3.2.2",

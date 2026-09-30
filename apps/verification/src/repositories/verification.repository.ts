@@ -336,6 +336,36 @@ export class VerificationRepository {
     }
   }
 
+  // eslint-disable-next-line camelcase
+  async updateRedirectUriAllowlist(orgId: string, redirectUriAllowlist: string, userId: string): Promise<org_agents> {
+    try {
+      return await this.prisma.org_agents.update({
+        where: { orgId },
+        data: { redirectUriAllowlist, lastChangedBy: userId }
+      });
+    } catch (error) {
+      this.logger.error(`[updateRedirectUriAllowlist] - error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getPresentationByThreadId(
+    threadId: string
+  ): Promise<Pick<
+    presentations,
+    'threadId' | 'orgId' | 'state' | 'isVerified' | 'presentationId' | 'connectionId'
+  > | null> {
+    try {
+      return await this.prisma.presentations.findUnique({
+        where: { threadId },
+        select: { threadId: true, orgId: true, state: true, isVerified: true, presentationId: true, connectionId: true }
+      });
+    } catch (error) {
+      this.logger.error(`[getPresentationByThreadId] - error: ${error.message}`);
+      throw error;
+    }
+  }
+
   async saveEmail(emailList: IEmailResponse[]): Promise<void> {
     try {
       for (const { proofRecordThId, email } of emailList) {
