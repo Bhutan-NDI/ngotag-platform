@@ -8,12 +8,10 @@ export class UserRoleGuard implements CanActivate {
 
     const { user } = request;
 
-    // Reverted from realm_access.roles back to develop's userRole (the Keycloak *user attribute*
-    // jwt.strategy.ts copies onto userDetails as userDetails['userRole']) — realm_access.roles is
-    // a different, unprovisioned mechanism: nothing in this PR grants a 'holder' realm role, so
-    // every currently-working cloud-wallet endpoint (all behind this guard) would start 403ing.
-    // Also, `.roles` without the guard's own optional chaining threw a 500 for any token whose
-    // payload has no realm_access claim at all. See the #71 review.
+    // userRole is set by jwt.strategy.ts from the platform's own user_role_mapping HOLDER row.
+    // Not realm_access.roles: the 'holder' realm role is granted to every signup, so reading it
+    // here would let anyone through -- and would make OrgRolesGuard/UserAccessGuard, which do the
+    // inverse check on this same value, reject everyone.
     if (!user?.userRole) {
       throw new ForbiddenException('This role is not a holder.');
     }

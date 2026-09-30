@@ -425,6 +425,18 @@ export class UserRepository {
                 }
               }
             }
+          },
+          // Holder marker for JwtStrategy -- written at signup only for isHolder accounts. Narrowed
+          // to the enum: it is all JwtStrategy consumes, and this row crosses NATS on every
+          // authenticated request.
+          user_role_mapping: {
+            select: {
+              user_role: {
+                select: {
+                  role: true
+                }
+              }
+            }
           }
         }
       });
