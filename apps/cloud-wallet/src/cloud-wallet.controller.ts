@@ -162,7 +162,7 @@ export class CloudWalletController {
 
   @MessagePattern({ cmd: 'delete-cloud-wallet' })
   // eslint-disable-next-line camelcase
-  async deleteCloudWallet(deleteCloudWalletPayload: IDeleteCloudWallet): Promise<cloud_wallet_user_info> {
+  async deleteCloudWallet(deleteCloudWalletPayload: IDeleteCloudWallet): Promise<cloud_wallet_user_info | null> {
     return this.cloudWalletService.deleteCloudWallet(deleteCloudWalletPayload);
   }
 

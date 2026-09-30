@@ -128,9 +128,9 @@ export class CloudWalletService extends BaseService {
   async deleteCloudWallet(
     cloudWalletDetails: IDeleteCloudWallet
     // eslint-disable-next-line camelcase
-  ): Promise<cloud_wallet_user_info> {
+  ): Promise<cloud_wallet_user_info | null> {
     // eslint-disable-next-line camelcase
-    const res: cloud_wallet_user_info = await this.natsClient.sendNatsMessage(
+    const res: cloud_wallet_user_info | null = await this.natsClient.sendNatsMessage(
       this.cloudWalletServiceProxy,
       'delete-cloud-wallet',
       cloudWalletDetails
