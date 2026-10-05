@@ -6,8 +6,8 @@ import { DEFAULT_RESULT_TTL_SECONDS, ProofResponseCodeService } from '../proof-r
 import { ResponseCodeStatus } from '../response-code.interface';
 
 const describeWithRedis = process.env.REDIS_TEST_HOST ? describe : describe.skip;
-const VERIFIED = { state: 'done', isVerified: true, presentationId: 'pres-1' };
-const FAILED = { state: 'abandoned', isVerified: false };
+const COMPLETED = { state: 'done', presentationId: 'pres-1' };
+const FAILED = { state: 'abandoned' };
 
 describeWithRedis('ProofResponseCodeService against Redis', () => {
   let client: Redis;
@@ -79,7 +79,7 @@ describeWithRedis('ProofResponseCodeService against Redis', () => {
     // Webhook A has read the pending session; before it writes, webhook B completes it and the
     // browser consumes the result.
     beforeNextWriteTo(tokenKey(token), async () => {
-      await service.markTerminalByThreadId(threadId, ResponseCodeStatus.VERIFIED, VERIFIED);
+      await service.markTerminalByThreadId(threadId, ResponseCodeStatus.COMPLETED, COMPLETED);
       expect(await service.consume(token, threadId)).toBe(true);
     });
     await service.markTerminalByThreadId(threadId, ResponseCodeStatus.FAILED, FAILED);
@@ -91,18 +91,18 @@ describeWithRedis('ProofResponseCodeService against Redis', () => {
 
   it('does not overwrite or re-extend an already terminal result', async () => {
     const { token, threadId } = await newSession();
-    await service.markTerminalByThreadId(threadId, ResponseCodeStatus.VERIFIED, VERIFIED);
+    await service.markTerminalByThreadId(threadId, ResponseCodeStatus.COMPLETED, COMPLETED);
     await client.pexpire(tokenKey(token), 5_000);
 
     await service.markTerminalByThreadId(threadId, ResponseCodeStatus.FAILED, FAILED);
 
-    expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.VERIFIED, result: VERIFIED });
+    expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.COMPLETED, result: COMPLETED });
     expect(await client.pttl(tokenKey(token))).toBeLessThanOrEqual(5_000);
   });
 
   it('lets exactly one of several concurrent readers consume a terminal result', async () => {
     const { token, threadId } = await newSession();
-    await service.markTerminalByThreadId(threadId, ResponseCodeStatus.VERIFIED, VERIFIED);
+    await service.markTerminalByThreadId(threadId, ResponseCodeStatus.COMPLETED, COMPLETED);
 
     const outcomes = await Promise.all([1, 2, 3, 4, 5].map(() => service.consume(token, threadId)));
 
@@ -117,9 +117,12 @@ describeWithRedis('ProofResponseCodeService against Redis', () => {
       (replica as unknown as { client: Redis }).client = replicaClient;
       const { token, threadId } = await newSession();
 
-      await replica.markTerminalByThreadId(threadId, ResponseCodeStatus.VERIFIED, VERIFIED);
+      await replica.markTerminalByThreadId(threadId, ResponseCodeStatus.COMPLETED, COMPLETED);
 
-      expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.VERIFIED, result: VERIFIED });
+      expect(await service.getSession(token)).toMatchObject({
+        status: ResponseCodeStatus.COMPLETED,
+        result: COMPLETED
+      });
       expect(await replica.consume(token, threadId)).toBe(true);
       expect(await service.consume(token, threadId)).toBe(false);
     } finally {

@@ -1,13 +1,13 @@
 export enum ResponseCodeStatus {
   PENDING = 'pending',
-  VERIFIED = 'verified',
+  // The proof finished; the verdict comes from the authenticated proof fetch, not from here.
+  COMPLETED = 'completed',
   FAILED = 'failed',
   EXPIRED = 'expired'
 }
 
 export interface IResponseCodeResult {
   state: string;
-  isVerified: boolean;
   presentationId?: string;
 }
 

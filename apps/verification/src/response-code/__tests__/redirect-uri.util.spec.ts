@@ -154,8 +154,8 @@ describe('buildReturnUrl', () => {
 });
 
 describe('toTerminalResponseCodeStatus', () => {
-  it('maps done + isVerified to verified', () => {
-    expect(toTerminalResponseCodeStatus('done', true)).toBe(ResponseCodeStatus.VERIFIED);
+  it('maps done + isVerified to completed', () => {
+    expect(toTerminalResponseCodeStatus('done', true)).toBe(ResponseCodeStatus.COMPLETED);
   });
 
   it('maps done without verification, declined and abandoned to failed', () => {

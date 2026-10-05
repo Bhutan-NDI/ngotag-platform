@@ -94,7 +94,7 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
   /** No-op when the proof has no session, it was already consumed, or it is already terminal. */
   async markTerminalByThreadId(
     threadId: string,
-    status: ResponseCodeStatus.VERIFIED | ResponseCodeStatus.FAILED,
+    status: ResponseCodeStatus.COMPLETED | ResponseCodeStatus.FAILED,
     result: IResponseCodeResult
   ): Promise<void> {
     const indexKey = this.threadIndexKey(threadId);
