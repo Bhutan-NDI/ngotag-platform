@@ -684,10 +684,10 @@ export class VerificationController {
   @ApiOperation({
     summary: 'Get proof result by response_code',
     description:
-      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof completes. A verified/failed result can be read only once, so read it once and keep the outcome in your own state (a retried or duplicated read gets 410).'
+      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof finishes. completed only means it finished: fetch the outcome with the authenticated proof endpoint. A completed/failed result can be read only once, so read it once and keep the outcome in your own state (a retried or duplicated read gets 410).'
   })
   @ApiQuery({ name: 'response_code', required: true })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Pending, verified or failed', type: ApiResponseDto })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Pending, completed or failed', type: ApiResponseDto })
   @ApiResponse({ status: HttpStatus.GONE, description: 'Unknown, expired or already used response_code' })
   async getProofCallbackResult(@Query('response_code') responseCode: string, @Res() res: Response): Promise<Response> {
     // Set first so error responses (e.g. 503) are not cached either.

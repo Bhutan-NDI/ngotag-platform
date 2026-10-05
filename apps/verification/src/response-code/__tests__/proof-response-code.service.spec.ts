@@ -10,8 +10,8 @@ import { ResponseCodeStatus } from '../response-code.interface';
 import { FakeRedis } from './fake-redis';
 
 const REDIRECT_URI = 'https://rp.example.com/return';
-const VERIFIED = { state: 'done', isVerified: true, presentationId: 'pres-1' };
-const FAILED = { state: 'abandoned', isVerified: false };
+const COMPLETED = { state: 'done', presentationId: 'pres-1' };
+const FAILED = { state: 'abandoned' };
 
 function makeService(redis = new FakeRedis()): { service: ProofResponseCodeService; redis: FakeRedis } {
   const service = new ProofResponseCodeService();
@@ -40,9 +40,9 @@ describe('ProofResponseCodeService', () => {
     const { service, redis } = makeService();
     const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
 
-    await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.VERIFIED, VERIFIED);
+    await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.COMPLETED, COMPLETED);
 
-    expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.VERIFIED, result: VERIFIED });
+    expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.COMPLETED, result: COMPLETED });
     expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(DEFAULT_RESULT_TTL_SECONDS);
     expect(redis.ttls.get('verification:idx:thread:thread-1')).toBe(DEFAULT_RESULT_TTL_SECONDS);
   });
@@ -58,12 +58,12 @@ describe('ProofResponseCodeService', () => {
   it('keeps the first terminal result and its TTL when a second terminal webhook arrives', async () => {
     const { service, redis } = makeService();
     const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
-    await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.VERIFIED, VERIFIED);
+    await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.COMPLETED, COMPLETED);
     redis.ttls.set(`verification:response-code:${token}`, 5);
 
     await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.FAILED, FAILED);
 
-    expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.VERIFIED, result: VERIFIED });
+    expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.COMPLETED, result: COMPLETED });
     expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(5);
   });
 
@@ -75,7 +75,7 @@ describe('ProofResponseCodeService', () => {
     jest.spyOn(redis, 'eval').mockImplementation(async (...args: Parameters<FakeRedis['eval']>) => {
       if (!interleaved) {
         interleaved = true;
-        await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.VERIFIED, VERIFIED);
+        await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.COMPLETED, COMPLETED);
         await service.consume(token, 'thread-1');
       }
       return realEval(...args);
@@ -191,7 +191,7 @@ describe('ProofResponseCodeService', () => {
       const { service, redis } = makeService();
       const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
 
-      await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.VERIFIED, VERIFIED);
+      await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.COMPLETED, COMPLETED);
 
       expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(180);
       expect(redis.ttls.get('verification:idx:thread:thread-1')).toBe(180);

@@ -71,10 +71,10 @@ export function appendReturnUrl(deepLinkUrl: string, returnUrl: string): string 
 export function toTerminalResponseCodeStatus(
   state: string,
   isVerified?: boolean
-): ResponseCodeStatus.VERIFIED | ResponseCodeStatus.FAILED | null {
+): ResponseCodeStatus.COMPLETED | ResponseCodeStatus.FAILED | null {
   switch (state) {
     case VerificationProcessState.DONE:
-      return isVerified ? ResponseCodeStatus.VERIFIED : ResponseCodeStatus.FAILED;
+      return isVerified ? ResponseCodeStatus.COMPLETED : ResponseCodeStatus.FAILED;
     case VerificationProcessState.DECLIEND:
     case VerificationProcessState.ABANDONED:
       return ResponseCodeStatus.FAILED;

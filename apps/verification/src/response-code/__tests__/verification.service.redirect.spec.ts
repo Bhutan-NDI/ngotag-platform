@@ -158,9 +158,9 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
     });
 
     expect(await service.getProofCallbackResult(responseCode)).toEqual({
-      status: ResponseCodeStatus.VERIFIED,
+      status: ResponseCodeStatus.COMPLETED,
       threadId: THREAD_ID,
-      result: { state: 'done', isVerified: true, presentationId: 'pres-1' }
+      result: { state: 'done', presentationId: 'pres-1' }
     });
     expect(await service.getProofCallbackResult(responseCode)).toEqual({ status: ResponseCodeStatus.EXPIRED });
   });

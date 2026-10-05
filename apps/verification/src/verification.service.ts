@@ -620,7 +620,6 @@ export class VerificationService {
     try {
       await this.proofResponseCodeService.markTerminalByThreadId(threadId, status, {
         state,
-        isVerified: Boolean(isVerified),
         presentationId
       });
     } catch (error) {
