@@ -2,29 +2,34 @@ import { Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nest
 import { RpcException } from '@nestjs/microservices';
 import { PrismaClientKnownRequestError, PrismaClientValidationError } from '@prisma/client/runtime/library';
 import { Observable, throwError } from 'rxjs';
+import { normaliseException, resolveHttpStatus, resolveMessage } from '@credebl/common/exception-normalisation';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger('CommonService');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/explicit-module-boundary-types
-  catch(exception: any): Observable<any> {
-    this.logger.error(`AnyExceptionFilter caught error: ${JSON.stringify(exception)}`);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  catch(rawException: any): Observable<any> {
+    // Guards against nullish/primitive rejections; exception.constructor below would throw first.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const exception = normaliseException(rawException) as any;
 
     let httpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = '';
     switch (exception.constructor) {
       case HttpException:
-        this.logger.error(`Its HttpException`);
-        httpStatus = exception.getStatus() || HttpStatus.BAD_REQUEST;
-        message = exception?.getResponse() || exception.message;
+        httpStatus = resolveHttpStatus(exception.getStatus());
+        message = resolveMessage(exception.getResponse(), exception.message) ?? 'Internal server error';
         break;
-      case RpcException:
-        this.logger.error(`Its RpcException`);
-        return throwError(() => exception.getError());
-        break;
+      case RpcException: {
+        // Already classified upstream; forward unchanged, but record the hop so it isn't silent.
+        const rpcError = exception.getError() as { code?: unknown; statusCode?: unknown; status?: unknown };
+        const rpcStatus = resolveHttpStatus(rpcError?.code, rpcError?.statusCode, rpcError?.status);
+        this.log(exception, rpcStatus, this.describe(exception, rpcError));
+        return throwError(() => rpcError);
+      }
       case PrismaClientKnownRequestError:
-        this.logger.error(`Its PrismaClientKnownRequestError`);
         switch (exception.code) {
           case 'P2002': // Unique constraint failed on the {constraint}
           case 'P2000': // The provided value for the column is too long for the column's type. Column: {column_name}
@@ -35,7 +40,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
           case 'P2011': // Null constraint violation on the {constraint}
           case 'P2017': // The records for relation {relation_name} between the {parent_name} and {child_name} models are not connected.
           case 'P2021': // The table {table} does not exist in the current database.
-          case 'P2022': // The column {column} does not exist in the current database.          
+          case 'P2022': // The column {column} does not exist in the current database.
             httpStatus = HttpStatus.BAD_REQUEST;
             message = exception?.response?.message || exception?.message;
             break;
@@ -55,18 +60,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
         }
         break;
       case PrismaClientValidationError:
-        this.logger.error(`Its PrismaClientValidationError`);
         httpStatus = HttpStatus.BAD_REQUEST;
         message = exception?.message || exception?.response?.message;
         break;
       default:
-        this.logger.error(`Its an Unknown Exception`);
         // eslint-disable-next-line no-case-declarations
-        httpStatus =
-          exception.response?.status ||
-          exception.response?.statusCode ||
-          exception.code ||
-          HttpStatus.INTERNAL_SERVER_ERROR;
+        // exception.code may be a non-HTTP value (e.g. 'ECONNREFUSED'), not a status.
+        httpStatus = resolveHttpStatus(
+          exception.response?.status,
+          exception.response?.statusCode,
+          exception.statusCode,
+          exception.code
+        );
         // eslint-disable-next-line no-case-declarations
         message =
           exception.response?.data?.message ||
@@ -74,6 +79,27 @@ export class HttpExceptionFilter implements ExceptionFilter {
           exception?.message ||
           'Internal server error';
     }
+    this.log(exception, httpStatus, this.describe(exception, message));
     return throwError(() => new RpcException({ message, code: httpStatus }));
+  }
+
+  /** Logged once per exception, at a level derived from httpStatus, so a 4xx isn't recorded as an error. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private log(exception: any, httpStatus: number, description: string): void {
+    const level = HttpStatus.INTERNAL_SERVER_ERROR <= httpStatus ? 'error' : 'warn';
+    if (exception instanceof Error) {
+      this.logger[level](`${httpStatus}: ${description}`, exception);
+    } else {
+      this.logger[level](`${httpStatus}: ${description}`);
+    }
+  }
+
+  /** Prefers the classified message; falls back to something better than '[object Object]'. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private describe(exception: any, resolved: unknown): string {
+    return (
+      resolveMessage(resolved, exception instanceof Error ? exception.message : undefined) ??
+      `unclassified ${typeof exception} exception`
+    );
   }
 }

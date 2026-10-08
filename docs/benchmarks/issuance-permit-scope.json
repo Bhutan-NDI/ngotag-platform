@@ -1,0 +1,53 @@
+{
+  "description": "Isolates permit scope with the same coordinator and Redis; models old whole-row permit ownership. Three clients in one process, 24 rows, capacity 2; 20ms preparation, 5ms offer, 20ms persistence. Not a production latency benchmark.",
+  "results": [
+    {
+      "trial": 0,
+      "mode": "whole-row",
+      "completed": 24,
+      "peak": 2,
+      "elapsedMs": 631.494566,
+      "p95Ms": 629.8395569999999
+    },
+    {
+      "trial": 0,
+      "mode": "offer-only",
+      "completed": 24,
+      "peak": 2,
+      "elapsedMs": 137.02213899999992,
+      "p95Ms": 134.57557500000007
+    },
+    {
+      "trial": 1,
+      "mode": "offer-only",
+      "completed": 24,
+      "peak": 2,
+      "elapsedMs": 137.32032600000002,
+      "p95Ms": 135.48075300000005
+    },
+    {
+      "trial": 1,
+      "mode": "whole-row",
+      "completed": 24,
+      "peak": 2,
+      "elapsedMs": 617.745793,
+      "p95Ms": 617.241976
+    },
+    {
+      "trial": 2,
+      "mode": "whole-row",
+      "completed": 24,
+      "peak": 2,
+      "elapsedMs": 621.6798729999996,
+      "p95Ms": 620.1489999999999
+    },
+    {
+      "trial": 2,
+      "mode": "offer-only",
+      "completed": 24,
+      "peak": 2,
+      "elapsedMs": 134.26602400000002,
+      "p95Ms": 133.211233
+    }
+  ]
+}

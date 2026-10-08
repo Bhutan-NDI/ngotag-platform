@@ -17,6 +17,19 @@ import { NATSClient } from '@credebl/common/NATSClient';
           process.env.API_GATEWAY_NKEY_SEED,
           process.env.NATS_CREDS_FILE
         )
+      },
+      // deleteCloudWallet's "also delete the holder user" step is a user-lifecycle operation
+      // that belongs on apps/user's queue group, not apps/cloud-wallet's — see the #71 review's
+      // "delete-user is dispatched on this.cloudWalletServiceProxy ... this would need
+      // userServiceProxy".
+      {
+        name: 'USER_NATS_CLIENT',
+        transport: Transport.NATS,
+        options: getNatsOptions(
+          CommonConstants.USER_SERVICE,
+          process.env.API_GATEWAY_NKEY_SEED,
+          process.env.NATS_CREDS_FILE
+        )
       }
     ])
   ],

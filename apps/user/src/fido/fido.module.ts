@@ -19,7 +19,6 @@ import { UserOrgRolesRepository } from 'libs/user-org-roles/repositories';
 import { UserOrgRolesService } from '@credebl/user-org-roles';
 import { UserRepository } from '../../repositories/user.repository';
 import { UserService } from '../user.service';
-import { AzureStorageService } from '@credebl/azure-storage';
 import { NATSClient } from '@credebl/common/NATSClient';
 
 @Module({
@@ -38,7 +37,6 @@ import { NATSClient } from '@credebl/common/NATSClient';
 ],
   controllers: [FidoController],
   providers: [
-    AzureStorageService,
     UserService,
     PrismaService,
     FidoService,

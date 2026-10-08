@@ -23,7 +23,6 @@ export enum CommonConstants {
   URL_CONN_ACCEPT_CONNECTION_REQUEST = '/connections/#/accept-request',
   URL_CONN_REMOVE_CONNECTION_BY_ID = '/connections/#/remove',
   URL_CONN_METADATA = '/connections/#/metadata',
-  URL_CONN_LEGACY_INVITE = '/didcomm/oob/create-legacy-invitation',
   URL_CONN_INVITE = '/didcomm/oob/create-invitation',
   URL_RECEIVE_INVITATION_URL = '/didcomm/oob/receive-invitation-url',
   URL_RECEIVE_INVITATION = '/didcomm/oob/receive-invitation',
@@ -92,6 +91,10 @@ export enum CommonConstants {
   // POLYGON BASED W3C SCHEMAS
   CREATE_POLYGON_W3C_SCHEMA = '/polygon/create-schema',
 
+  // ETHEREUM BASED W3C SCHEMAS
+  CREATE_ETHEREUM_W3C_SCHEMA = '/ethereum/create-schema',
+  MIGRATE_ETHEREUM_W3C_SCHEMA = '/ethereum/migrate-schema',
+
   // SHARED AGENT
   URL_SHAGENT_CREATE_TENANT = '/multi-tenancy/create-tenant',
   URL_SHAGENT_DELETE_SUB_WALLET = '/multi-tenancy/#',
@@ -117,6 +120,7 @@ export enum CommonConstants {
 
   // CREATE KEYS
   CREATE_POLYGON_SECP256k1_KEY = '/polygon/create-keys',
+  CREATE_ETH_KEY = '/ethereum/create-keys',
 
   // OID4VC URLs
   URL_OIDC_ISSUER_CREATE = '/openid4vc/issuer',
@@ -163,6 +167,9 @@ export enum CommonConstants {
 
   // POLYGON KEYWORDS
   POLYGON = 'polygon',
+
+  // ETHEREUM KEYWORDS
+  ETHR = 'ethr',
 
   // DOMAIN EVENTS
   DOMAIN_EVENT_SCHEMA_CREATED = 'Schema Created',
@@ -262,12 +269,12 @@ export enum CommonConstants {
 
   // delete wallet
   URL_DELETE_WALLET = '/agent/wallet',
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
-  URL_DELETE_SHARED_WALLET = '/multi-tenancy/#',
 
   // agent status
   // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
   URL_AGENT_STATUS = '/agent',
+
+  AGENT_TOKEN_PROBE_TIMEOUT_MS = 10000,
 
   // Tenant Status
   PENDING_STATE = 0,
@@ -330,6 +337,7 @@ export enum CommonConstants {
   BUILDERNET = 'buildernet',
   MAINNET = 'mainnet',
   LIVENET = 'livenet',
+  SEPOLIA = 'sepolia',
 
   // Features Id
   // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
@@ -360,13 +368,50 @@ export enum CommonConstants {
   CACHE_TTL_SECONDS = 604800,
 
   CLOUD_WALLET_GET_PROOF_REQUEST = '/didcomm/proofs',
-  CLOUD_WALLET_ACCEPT_PROOF_REQUEST = '/accept-request',
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
-  CLOUD_WALLET_CONNECTION_BY_ID = '/didcomm/connections',
-  // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
   RECEIVE_INVITATION_BY_URL = '/didcomm/oob/receive-invitation-url',
+  URL_CLOUD_WALLET_EXPORT = '/multi-tenancy/export/',
+  // Matches agent-controller's real native WalletPortabilityService route — NOT the legacy
+  // '/multi-tenancy/import-tenant/' path some older branches assumed.
+  URL_CLOUD_WALLET_IMPORT = '/multi-tenancy/import/',
+  // Suffixes only, same convention as CLOUD_WALLET_ACCEPT_PROOF_REQUEST/CLOUD_WALLET_PROOF_FORM_DATA
+  // below — used as ${CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${suffix}. Repointed from the
+  // stale /multi-tenancy/* paths (agent-controller never had those; now has real /didcomm/proofs
+  // routes instead — see agent-controller's acceptRequestWithCred/getCredentialsForRequest port).
+  CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED = '/accept-request-with-cred',
+  CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST = '/credentials-for-request',
+  CLOUD_WALLET_DELETE_BY_TENANT_ID = '/multi-tenancy/',
+  // No trailing slash: acceptProofRequest builds
+  // `${CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CLOUD_WALLET_ACCEPT_PROOF_REQUEST}` --
+  // a trailing slash here only happened to still work because agent-controller's Express app
+  // (src/server.ts) uses the framework's default (strict routing off); an implicit dependency on
+  // that default, for no benefit, on a route this PR doesn't otherwise touch. See the #71 review.
+  CLOUD_WALLET_ACCEPT_PROOF_REQUEST = '/accept-request',
+  CLOUD_WALLET_DECLINE_PROOF_REQUEST = '/decline-request',
+  CLOUD_WALLET_DID_LIST = '/multi-tenancy/dids/',
+  // These three are consumed today by cloud-wallet.service.ts (unchanged by this PR) and were
+  // repointed from /didcomm/* to nonexistent /multi-tenancy/* routes — restored to develop's
+  // working values. See the #71 review's "repointing these constants ... 404s three currently
+  // working flows".
+  CLOUD_WALLET_CONNECTION_BY_ID = '/didcomm/connections',
   CLOUD_WALLET_CREDENTIAL = '/didcomm/credentials',
+  // Matches agent-controller's real GET /didcomm/credentials/w3c and /didcomm/credentials/w3c/:id
+  // (no trailing slash, so ${CLOUD_WALLET_W3C_CREDENTIAL}/${id} concatenates cleanly).
+  CLOUD_WALLET_W3C_CREDENTIAL = '/didcomm/credentials/w3c',
+  // Suffix only — used as ${CLOUD_WALLET_CREDENTIAL}/${id}${CLOUD_WALLET_CREDENTIAL_FORMAT_DATA},
+  // matching agent-controller's real GET /didcomm/credentials/:credentialRecordId/form-data.
+  CLOUD_WALLET_CREDENTIAL_FORMAT_DATA = '/form-data',
+  // Suffix only — used as ${CLOUD_WALLET_GET_PROOF_REQUEST}/${id}${CLOUD_WALLET_PROOF_FORM_DATA},
+  // matching agent-controller's real GET /didcomm/proofs/:proofRecordId/form-data.
+  CLOUD_WALLET_PROOF_FORM_DATA = '/form-data',
+  // agent-controller now has real DELETE endpoints for both (see CredentialController.deleteById/
+  // deleteW3cById) — same base paths as CLOUD_WALLET_CREDENTIAL/CLOUD_WALLET_W3C_CREDENTIAL above,
+  // so these two are retired in favor of reusing those directly (${base}/${credentialRecordId}).
   CLOUD_WALLET_BASIC_MESSAGE = '/didcomm/basic-messages/',
+  // No trailing tenantId — agent-controller's endpoint moved off /multi-tenancy/:tenantId (only
+  // reachable with a base-wallet token) onto request.agent (POST /agent/credential/self-attested),
+  // resolved from the tenant token's own claims, matching CLOUD_WALLET_GET_PROOF_REQUEST/
+  // URL_CONN_INVITE's existing convention below. See agent-controller PR #75's review.
+  CLOUD_WALLET_SELF_ATTESTED_W3C_CREDENTIAL = '/agent/credential/self-attested',
 
   // Bulk-issuance
   BATCH_SIZE = 100,
@@ -423,7 +468,6 @@ export enum CommonConstants {
 
   //Agent URL flags
   CONNECTION_INVITATION = 'connection-invitation',
-  LEGACY_INVITATION = 'legacy-invitation',
   SIGN_DATA_FROM_AGENT = 'sign-data-from-agent',
   VERIFY_SIGNED_DATA_FROM_AGENT = 'verify-signed-data-from-agent',
   CREATE_OFFER = 'create-offer',

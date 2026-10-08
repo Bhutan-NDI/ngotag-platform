@@ -5,6 +5,7 @@ import { ClsModule } from 'nestjs-cls';
 import { ContextStorageServiceKey } from './contextStorageService.interface';
 import NestjsClsContextStorageService from './nestjsClsContextStorageService';
 import { Request } from 'express';
+import { issuanceDeadline, ISSUANCE_DEADLINE_KEY } from './issuanceDeadline';
 
 @Global()
 @Module({
@@ -14,6 +15,9 @@ import { Request } from 'express';
       middleware: {
         mount: true,
         generateId: true,
+        setup: (cls) => {
+          cls.set(ISSUANCE_DEADLINE_KEY, issuanceDeadline());
+        },
         idGenerator: (req: Request) => {
           // TODO: Check if we want the x-correlation-id or the correlationId
           const contextIdHeader = req.headers['contextid'] ?? req.headers['context-id'] ?? req.headers['contextId'];
@@ -22,14 +26,10 @@ import { Request } from 'express';
             (Array.isArray(contextIdHeader) ? contextIdHeader[0] : contextIdHeader) ??
             (Array.isArray(correlationIdHeader) ? correlationIdHeader[0] : correlationIdHeader);
 
-          if (resolvedContextId) {
-            // eslint-disable-next-line no-console
-            console.log('ContextId received in request headers::::', resolvedContextId);
-          } else {
+          if (!resolvedContextId) {
             resolvedContextId = v4();
-            // eslint-disable-next-line no-console
-            console.log('ContextId not received in request headers, generated a new one::::', resolvedContextId);
           }
+          // Not logged: correlationId already appears on every subsequent line for this request.
           return resolvedContextId;
         }
       }

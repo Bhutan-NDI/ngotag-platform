@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 
-import { AzureStorageService } from '@credebl/azure-storage';
+import { STORAGE_SERVICE, StorageService } from '@credebl/storage';
 import { BaseService } from 'libs/service/base.service';
 import { EmailDto } from '@credebl/common/dtos/email.dto';
 import { EmailService } from '@credebl/common/email.service';
@@ -16,7 +16,7 @@ export class UtilitiesService extends BaseService {
 
   constructor(
     private readonly utilitiesRepository: UtilitiesRepository,
-    private readonly azureStorageService: AzureStorageService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: StorageService,
     private readonly emailService: EmailService
   ) {
     super('UtilitiesService');
@@ -65,7 +65,7 @@ export class UtilitiesService extends BaseService {
   async storeObject(payload: { persistent: boolean; storeObj: unknown }): Promise<string> {
     try {
       const uuid = uuidv4();
-      const uploadResult = await this.azureStorageService.storeObject(
+      const uploadResult = await this.storageService.storeObject(
         payload.persistent,
         uuid,
         payload.storeObj
@@ -75,7 +75,7 @@ export class UtilitiesService extends BaseService {
     } catch (error) {
       this.logger.error(error);
       throw new Error(
-        `An error occurred while uploading data to Azure storage: ${error instanceof Error ? error?.message : error}`
+        `An error occurred while uploading data to storage: ${error instanceof Error ? error?.message : error}`
       );
     }
   }

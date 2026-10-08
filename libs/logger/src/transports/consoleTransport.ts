@@ -23,6 +23,12 @@ interface LogData {
 }
 
 export default class ConsoleTransport {
+  // No transport-level format, so the logger's own JSON format (winstonLogger) is emitted
+  // unmodified -- one object per line, queryable by field in CloudWatch Logs Insights.
+  public static createJson(): winston.transports.ConsoleTransportInstance {
+    return new winston.transports.Console();
+  }
+
   public static createColorize(): winston.transports.ConsoleTransportInstance {
     return new winston.transports.Console({
       format: winston.format.combine(

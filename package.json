@@ -89,6 +89,7 @@
     "helmet": "^8.1.0",
     "html-pdf": "^3.0.1",
     "html-to-image": "^1.11.13",
+    "ioredis": "^5.10.1",
     "json2csv": "^5.0.7",
     "jsonwebtoken": "^9.0.3",
     "jwks-rsa": "^3.2.2",
@@ -187,9 +188,11 @@
     "testEnvironment": "node",
     "roots": [
       "<rootDir>/apps/",
-      "<rootDir>/libs/"
+      "<rootDir>/libs/",
+      "<rootDir>/scripts/"
     ],
     "moduleNameMapper": {
+      "^apps/api-gateway/src/(.*)$": "<rootDir>/apps/api-gateway/src/$1",
       "@credebl/common/(.*)": "<rootDir>/libs/common/src/$1",
       "@credebl/common": "<rootDir>/libs/common/src",
       "@credebl/keycloak-url/(.*)": "<rootDir>/libs/keycloak-url/src/$1",
@@ -203,11 +206,16 @@
       "^@credebl/prisma-service(|/.*)$": "<rootDir>/libs/prisma-service/src/$1",
       "^@credebl/org-roles(|/.*)$": "<rootDir>/libs/org-roles/src/$1",
       "^@credebl/user-org-roles(|/.*)$": "<rootDir>/libs/user-org-roles/src/$1",
-      "^y/user-activity(|/.*)$": "<rootDir>/libs/user-activity/src/$1",
+      "^@credebl/user-activity(|/.*)$": "<rootDir>/libs/user-activity/src/$1",
       "^libs/user-activity/repositories$": "<rootDir>/libs/user-activity/repositories",
+      "^libs/org-roles/enums$": "<rootDir>/libs/org-roles/enums",
+      "^apps/user/repositories/user.repository$": "<rootDir>/apps/user/repositories/user.repository",
+      "^libs/service/base.service$": "<rootDir>/libs/service/base.service",
+      "^apps/api-gateway/common/exception-handler$": "<rootDir>/apps/api-gateway/common/exception-handler",
       "^@app/supabase(|/.*)$": "<rootDir>/libs/supabase/src/$1",
       "^@credebl/aws(|/.*)$": "<rootDir>/libs/aws/src/$1",
       "^@credebl/azure-storage(|/.*)$": "<rootDir>/libs/azure-storage/src/$1",
+      "^@credebl/storage(|/.*)$": "<rootDir>/libs/storage/src/$1",
       "^credebl/utility(|/.*)$": "<rootDir>/libs/utility/src/$1",
       "^@credebl/config(|/.*)$": "<rootDir>/libs/config/src/$1",
       "^@credebl/context(|/.*)$": "<rootDir>/libs/context/src/$1",

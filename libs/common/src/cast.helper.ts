@@ -36,10 +36,14 @@ export function toLowerCase(value: string): string {
   return value.toLowerCase();
 }
 
+// Non-string input is returned unchanged, not silently coerced to undefined -- the previous
+// implicit-undefined fallback let @IsOptional() treat a genuinely wrong-typed value (a boolean, a
+// number) as legitimately absent, masking it from @IsString()/@IsBoolean() validation entirely.
+// This is the root cause behind the receive-invitation-url boolean-wiping bug (#84 review):
+// pairing @Transform(trim) with a non-string field silently wiped it on every request. See the
+// #84 review's second finding.
 export function trim(value: string): string {
-  if ('string' === typeof value) {
-    return value.trim();
-  }
+  return 'string' === typeof value ? value.trim() : value;
 }
 
 export function toDate(value: string): Date {
@@ -414,6 +418,10 @@ export function checkDidLedgerAndNetwork(schemaType: string, did: string): boole
 
   if (JSONSchemaType.POLYGON_W3C === cleanSchemaType) {
     return cleanDid.includes(JSONSchemaType.POLYGON_W3C);
+  }
+
+  if (JSONSchemaType.ETHEREUM_W3C === cleanSchemaType) {
+    return cleanDid.includes(JSONSchemaType.ETHEREUM_W3C);
   }
 
   if (JSONSchemaType.LEDGER_LESS === cleanSchemaType) {

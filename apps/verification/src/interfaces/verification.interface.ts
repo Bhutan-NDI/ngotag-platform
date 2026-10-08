@@ -102,8 +102,14 @@ interface IRequestedRestriction {
 export interface ISchema {
   uri: string;
 }
+
+export interface IFilter {
+  type: string;
+  pattern: string;
+}
 export interface IFields {
   path: string[];
+  filter?: IFilter;
 }
 export interface IConstraints {
   fields: IFields[];
@@ -167,6 +173,7 @@ export interface ISendProofRequestPayload {
   reuseConnection?: boolean;
   recipientKey?: string;
   invitationDid?: string;
+  redirectUri?: string;
 }
 
 export interface IWSendProofRequestPayload {
@@ -243,6 +250,7 @@ export interface IInvitation {
   proofRecordThId?: string;
   invitationUrl?: string;
   deepLinkURL?: string;
+  returnUrl?: string;
 }
 
 export interface IProofRequestData {
@@ -302,4 +310,14 @@ export enum ProofRequestState {
   done = 'Verified',
   abandoned = 'Declined',
   presentationReceived = 'Presentation Received'
+}
+
+export interface IProofPresentationByThread {
+  threadId: string;
+  presentationId: string;
+  connectionId?: string;
+  state: string;
+  isVerified: boolean;
+  // Raw proof format data from the agent, the same shape as the webhook's `proofData`.
+  proofData: object;
 }

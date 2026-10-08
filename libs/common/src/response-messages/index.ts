@@ -53,6 +53,7 @@ export const ResponseMessages = {
       invalidInvitationStatus: 'Invalid invitation status',
       invalidKeycloakId: 'keycloakId is invalid',
       invalidEmail: 'Invalid Email Id!',
+      invalidUsername: 'Invalid username!',
       adduser: 'Unable to add user details',
       userRoleNotFound: 'User role not found',
       verifyEmail: 'The verification link has already been sent to your email address. please verify',
@@ -132,6 +133,7 @@ export const ResponseMessages = {
       invalidClient: 'Invalid client credentials',
       primaryDid: 'This DID is already set to primary DID',
       didNotFound: 'DID does not exist in organiation',
+      didIdMismatch: 'The provided id does not match the DID record for this did/orgId',
       organizationNotFound: 'Organization not found',
       MaximumOrgsLimit: 'Limit reached: You can be associated with or create maximum 10 organizations.',
       adminTokenDetails: 'Error in generating admin token details',
@@ -309,7 +311,8 @@ export const ResponseMessages = {
     success: {
       fetch: 'Schema retrieved successfully.',
       create: 'Schema created successfully.',
-      update: 'Schema updated successfully'
+      update: 'Schema updated successfully',
+      migrate: 'Schema migrated successfully.'
     },
     error: {
       invalidSchemaId: 'Please provide valid schema Id',
@@ -335,7 +338,8 @@ export const ResponseMessages = {
       W3CSchemaNotFOund: 'Error while resolving W3C schema',
       storeW3CSchema: 'Error while storing W3C schema',
       networkNotFound: 'Error while fetching network',
-      orgDidAndSchemaType: 'Organization DID and schema type does not match'
+      orgDidAndSchemaType: 'Organization DID and schema type does not match',
+      updateW3CSchema: 'Error while updating W3C schema'
     }
   },
   credentialDefinition: {
@@ -370,7 +374,19 @@ export const ResponseMessages = {
       create: 'Organization wallet created successfully',
       createWallet: 'Wallet created successfully',
       createDid: 'Did created successfully',
-      generateWebDid: 'did:web DID Document generated successfully. Host the document then call the create DID endpoint.',
+      generateWebDid:
+        'did:web DID Document generated successfully. Host the document then call the create DID endpoint.',
+      // Export/import against agent-controller's native WalletPortabilityService are async jobs —
+      // these responses mean the job was started, not that the wallet is exported/imported yet.
+      // Poll the corresponding status endpoint for actual completion.
+      exportWallet: 'Wallet export started successfully',
+      importWallet: 'Wallet import started successfully',
+      // Neutral, state-agnostic message for the export/import status-poll endpoints -- the actual
+      // state (pending/in_progress/completed/failed) is in the response body's own status field.
+      // Reusing exportWallet/importWallet's "started successfully" wording on a poll response was
+      // wrong for every state except the very first poll, and especially wrong on a failed job.
+      // See the #71/#73 reviews.
+      jobStatusFetched: 'Job status fetched successfully',
       health: 'Agent health details retrieved successfully.',
       ledgerConfig: 'Ledger config details fetched successfully.',
       sign: 'Payload signed successfully.',
@@ -379,7 +395,8 @@ export const ResponseMessages = {
       getWebhookUrl: 'Webhook Url fetched successfully',
       createKeys: 'Key-pair created successfully',
       walletDelete: 'The wallet has been deleted.',
-      webhookUrlUpdate: 'Webhook Url updated successfully'
+      webhookUrlUpdate: 'Webhook Url updated successfully',
+      dedicatedAgentToken: 'Agent token updated successfully'
     },
     error: {
       exists: 'An agent name is already exist',
@@ -413,7 +430,8 @@ export const ResponseMessages = {
       invalidTenantIdIdFormat: 'Invalid tenantId format',
       requiredTenantId: 'Tenant Id is required',
       createDid: 'Error while creating DID',
-      webDidDocumentMismatch: 'Hosted DID Document does not match the generated DID Document. Ensure you host the exact document returned by the generate endpoint.',
+      webDidDocumentMismatch:
+        'Hosted DID Document does not match the generated DID Document. Ensure you host the exact document returned by the generate endpoint.',
       webDidDomainAlreadyExists: 'A did:web DID for this domain already exists for this organization.',
       networkMismatch: 'The network is mismatched.',
       didAlreadyExist: 'DID already exist',
@@ -426,6 +444,14 @@ export const ResponseMessages = {
       failedOrganization: 'Failed to fetch organization agent type details',
       promiseReject: 'One or more promises were rejected.',
       orgAgentNotFound: 'Org agent type not found',
+      notDedicatedAgent: 'This organization does not have a dedicated agent',
+      agentEndpointMismatch: 'Agent endpoint does not match the value configured for this organization',
+      insecureAgentEndpoint: 'Refusing to send an agent credential over a non-HTTPS endpoint',
+      malformedAgentEndpoint: 'Agent endpoint is not a valid URL',
+      agentTokenRejected: 'The agent did not accept the supplied token',
+      agentTokenNoRole: 'The supplied token carries no role claim',
+      agentTokenRoleMismatch: 'The supplied token does not carry the role this organization agent requires',
+      agentRowChanged: 'The organization agent changed while the token was being verified -- please retry',
       walletDoesNotExists: 'Organization wallet does not exists',
       requiredDomain: 'Domain is required for Web method',
       requiredNetwork: 'Network is required',
@@ -520,12 +546,17 @@ export const ResponseMessages = {
       verifiedProofDetails: 'Proof presentation details fetched successfully.',
       send: 'Proof request send successfully.',
       verified: 'Proof presentation verified successfully.',
-      deleteVerificationRecord: 'Verification records deleted'
+      deleteVerificationRecord: 'Verification records deleted',
+      redirectUrisRegistered: 'Redirect URIs registered successfully',
+      redirectUrisUpdated: 'Redirect URIs updated successfully',
+      redirectUrisFetched: 'Redirect URIs fetched successfully',
+      callbackResultFetched: 'Proof result fetched successfully'
     },
     error: {
       notFound: 'Organization agent not found',
       proofNotSend: 'Proof request is not sent',
       invalidProofId: 'Please provide valid proofId',
+      invalidThreadId: 'Please provide a valid threadId',
       agentUrlNotFound: 'agent url not found',
       schemaIdNotFound: 'Schema Id is required',
       predicatesValueNotNumber: 'Attribute value is not a number',
@@ -538,7 +569,14 @@ export const ResponseMessages = {
       emailSend: 'Unable to send email to the user',
       verificationRecordsNotFound: 'Verification records does not exists',
       removeVerificationData: 'First you have to remove verification data',
-      uniqueAttributes: 'Please provide unique attribute names'
+      uniqueAttributes: 'Please provide unique attribute names',
+      redirectUriNotAllowed: 'redirectUri is not registered for this organization',
+      redirectUriWithEmail: 'redirectUri cannot be combined with emailId',
+      redirectUriHttpsRequired: 'Redirect URIs must use https',
+      responseCodeExpired: 'response_code is unknown, expired or already used',
+      responseCodeUnavailable: 'Proof result is temporarily unavailable, please retry',
+      proofNotVerified: 'Proof presentation is not verified',
+      proofRecordNotLinked: 'Proof presentation is verified but has no linked agent proof record'
     }
   },
 
@@ -632,35 +670,61 @@ export const ResponseMessages = {
   cloudWallet: {
     success: {
       create: 'Cloud wallet created successfully',
+      delete: 'Cloud wallet deleted successfully',
       receive: 'Received invitation successfully',
+      getBaseWalletInfo: 'Fetched base wallet info',
       configureBaseWallet: 'Successfully configure the base wallet.',
       acceptProofRequest: 'Proof request has been successfully accepted.',
+      // Was reusing getProofById's message ("Proof presentation has been successfully received.")
+      // -- a holder submitting a proof with their chosen credential saw a message describing an
+      // unrelated GET handler instead of confirming the accept/submit actually happened. See the
+      // #85 review.
+      acceptRequestWithCred: 'Proof request has been successfully accepted with the chosen credential.',
+      checkCloudWalletStatus: 'Cloud wallet exists',
+      declineProofRequest: 'Proof request has been successfully declined.',
       createConnection: 'Connection created successfully.',
+      createSelfAttestedW3cCredential: 'Self-attested W3C credential created successfully',
       basicMessage: 'Basic message send successfully',
       getProofById: 'Proof presentation has been successfully received.',
+      getCredentialsByProofId: 'Credentials fetch by proof request id',
       getProofPresentation: 'Proof presentations has been successfully received.',
       didList: 'DID list fetched sucessfully',
       connectionById: 'Connection record fetched successfully',
       credentials: 'Credentials fetched successfully',
       credentialByRecordId: 'Credential fetched successfully',
+      proofPresentationByRecordId: 'Proof presentation fetched successfully',
+      deleteCredential: 'Credential deleted successfully',
       connectionList: 'Connection list fetched successfully',
       basicMessageByConnectionId: 'Basic message fetched successfully'
     },
     error: {
       baseWalletNotFound: 'Base wallet configuration not found',
       createCloudWallet: 'Error while creating cloud wallet on agent',
+      BaseWalletLimitExceeded: 'Limit exceeded for base wallet to create subwallet',
       encryptCloudWalletKey: 'Error while creating encrypting wallet key',
       userExist: 'Wallet already exist for the user',
       walletNotExist: 'Wallet not exist for the user',
       agentDetails: 'Invalid agent details',
       agentNotRunning: 'Agent is not up and running',
       receiveInvitation: 'Error while receiving invitation by url',
+      exportWallet: 'Error while exporting wallet',
+      importWallet: 'Error while importing wallet',
+      jobStatusNotFound: 'Export/import job status not found',
+      defaultDidNotFound: 'No default DID found for the wallet.',
       AcceptOffer: 'Error while  invitation by url',
       notReachable: 'The agent endpoint is not reachable.',
       agentAlreadyExist: 'Agent already exist.',
       platformAdminRecordNotFound: 'Platform admin reocrd not exist.',
       notFoundBaseWallet: 'The base wallet record is missing.',
-      walletRecordNotFound: 'Wallet record not found.'
+      walletRecordNotFound: 'Wallet record not found.',
+      createSelfAttestedW3cCredential: 'Error while creating self-attested credential.',
+      deleteCloudWallet: 'Error while deleting cloud wallet',
+      checkCloudWalletStatus: 'Error while checking cloud wallet status',
+      // Used by gateway routes whose NATS pattern has no handler on this branch yet -- see the
+      // #71 review's "six gateway routes still dispatch NATS patterns that have no handler
+      // anywhere; each hangs until the NATS timeout". Returned immediately, before publishing to
+      // NATS, rather than shipping a route that reads as supported API but always times out.
+      notImplemented: 'This operation is not yet available.'
     }
   },
   oidcIssuer: {

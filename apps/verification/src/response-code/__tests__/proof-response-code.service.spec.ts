@@ -1,0 +1,200 @@
+import {
+  DEFAULT_PENDING_TTL_SECONDS,
+  ProofResponseCodeService,
+  DEFAULT_RESULT_TTL_SECONDS,
+  MAX_TTL_SECONDS,
+  resolveTtlSeconds
+} from '../proof-response-code.service';
+import { Logger } from '@nestjs/common';
+import { ResponseCodeStatus } from '../response-code.interface';
+import { FakeRedis } from './fake-redis';
+
+const REDIRECT_URI = 'https://rp.example.com/return';
+const COMPLETED = { state: 'done', presentationId: 'pres-1' };
+const FAILED = { state: 'abandoned' };
+
+function makeService(redis = new FakeRedis()): { service: ProofResponseCodeService; redis: FakeRedis } {
+  const service = new ProofResponseCodeService();
+  (service as unknown as { client: FakeRedis }).client = redis;
+  return { service, redis };
+}
+
+describe('ProofResponseCodeService', () => {
+  it('mints an opaque 256-bit token and stores the session and thread index with the pending TTL', async () => {
+    const { service, redis } = makeService();
+
+    const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
+
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(redis.store.get('verification:idx:thread:thread-1')).toBe(token);
+    expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(DEFAULT_PENDING_TTL_SECONDS);
+    expect(redis.ttls.get('verification:idx:thread:thread-1')).toBe(DEFAULT_PENDING_TTL_SECONDS);
+    expect(await service.getSession(token)).toMatchObject({
+      orgId: 'org-1',
+      threadId: 'thread-1',
+      status: ResponseCodeStatus.PENDING
+    });
+  });
+
+  it('moves a pending session to terminal and shortens both TTLs', async () => {
+    const { service, redis } = makeService();
+    const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
+
+    await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.COMPLETED, COMPLETED);
+
+    expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.COMPLETED, result: COMPLETED });
+    expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(DEFAULT_RESULT_TTL_SECONDS);
+    expect(redis.ttls.get('verification:idx:thread:thread-1')).toBe(DEFAULT_RESULT_TTL_SECONDS);
+  });
+
+  it('is a no-op for a proof that has no session', async () => {
+    const { service, redis } = makeService();
+
+    await service.markTerminalByThreadId('unknown-thread', ResponseCodeStatus.FAILED, FAILED);
+
+    expect(redis.store.size).toBe(0);
+  });
+
+  it('keeps the first terminal result and its TTL when a second terminal webhook arrives', async () => {
+    const { service, redis } = makeService();
+    const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
+    await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.COMPLETED, COMPLETED);
+    redis.ttls.set(`verification:response-code:${token}`, 5);
+
+    await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.FAILED, FAILED);
+
+    expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.COMPLETED, result: COMPLETED });
+    expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(5);
+  });
+
+  it('does not resurrect a session consumed between the webhook read and its write', async () => {
+    const { service, redis } = makeService();
+    const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
+    const realEval = redis.eval.bind(redis);
+    let interleaved = false;
+    jest.spyOn(redis, 'eval').mockImplementation(async (...args: Parameters<FakeRedis['eval']>) => {
+      if (!interleaved) {
+        interleaved = true;
+        await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.COMPLETED, COMPLETED);
+        await service.consume(token, 'thread-1');
+      }
+      return realEval(...args);
+    });
+
+    await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.FAILED, FAILED);
+
+    expect(await service.getSession(token)).toBeNull();
+    expect(await service.consume(token, 'thread-1')).toBe(false);
+  });
+
+  it('consumes exactly once and removes both keys', async () => {
+    const { service, redis } = makeService();
+    const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
+
+    expect(await service.consume(token, 'thread-1')).toBe(true);
+    expect(await service.consume(token, 'thread-1')).toBe(false);
+    expect(redis.store.size).toBe(0);
+  });
+
+  describe('when Redis is unavailable', () => {
+    it('fails session creation instead of storing it anywhere else', async () => {
+      const { service, redis } = makeService();
+      redis.connected = false;
+
+      await expect(service.createSession('org-1', 'thread-1', REDIRECT_URI)).rejects.toThrow();
+      expect(redis.store.size).toBe(0);
+    });
+
+    it('fails reads instead of reporting the code as expired, and serves it again after recovery', async () => {
+      const { service, redis } = makeService();
+      const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
+      redis.connected = false;
+
+      await expect(service.getSession(token)).rejects.toThrow();
+
+      redis.connected = true;
+      expect(await service.getSession(token)).toMatchObject({ status: ResponseCodeStatus.PENDING });
+    });
+
+    it('rejects when the create transaction is aborted, leaving no partial session', async () => {
+      const { service, redis } = makeService();
+      redis.failNextExec = true;
+
+      await expect(service.createSession('org-1', 'thread-1', REDIRECT_URI)).rejects.toThrow(
+        'Redis transaction was aborted'
+      );
+      expect(redis.store.size).toBe(0);
+    });
+
+    it('fails when the client was never initialised', async () => {
+      const service = new ProofResponseCodeService();
+
+      await expect(service.createSession('org-1', 'thread-1', REDIRECT_URI)).rejects.toThrow(
+        'Redis client is not initialised'
+      );
+    });
+  });
+
+  describe('TTL configuration', () => {
+    const originals = {
+      pending: process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS,
+      result: process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS
+    };
+    const restore = (name: string, value: string | undefined): void => {
+      if (undefined === value) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    };
+    afterEach(() => {
+      restore('PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS', originals.pending);
+      restore('PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS', originals.result);
+    });
+
+    it('falls back when unset, invalid or above the cap', () => {
+      for (const value of [undefined, '', 'abc', '0', '-5', '12.5', String(MAX_TTL_SECONDS + 1), '6000000']) {
+        expect(resolveTtlSeconds(value, 42)).toBe(42);
+      }
+      expect(resolveTtlSeconds(String(MAX_TTL_SECONDS), 42)).toBe(MAX_TTL_SECONDS);
+    });
+
+    it('warns when a TTL is set but rejected, and stays quiet for valid or unset values', () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS = '7200';
+        delete process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS;
+        makeService();
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS=7200'));
+
+        warn.mockClear();
+        process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS = '120';
+        makeService();
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('uses PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS for new sessions', async () => {
+      process.env.PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS = '900';
+      const { service, redis } = makeService();
+
+      const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
+
+      expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(900);
+    });
+
+    it('uses PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS for the post-result window', async () => {
+      process.env.PROOF_RESPONSE_CODE_RESULT_TTL_SECONDS = '180';
+      const { service, redis } = makeService();
+      const token = await service.createSession('org-1', 'thread-1', REDIRECT_URI);
+
+      await service.markTerminalByThreadId('thread-1', ResponseCodeStatus.COMPLETED, COMPLETED);
+
+      expect(redis.ttls.get(`verification:response-code:${token}`)).toBe(180);
+      expect(redis.ttls.get('verification:idx:thread:thread-1')).toBe(180);
+    });
+  });
+});

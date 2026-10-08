@@ -43,47 +43,50 @@ export class AgentProvisioningService {
       if (agentType === AgentType.AFJ) {
         // The wallet provision command is used to invoke a shell script
         const walletProvision = `${process.cwd() + process.env.AFJ_AGENT_SPIN_UP} ${orgId} "${externalIp}" "${walletName}" "${walletPassword}" ${seed} ${webhookEndpoint} ${walletStorageHost} ${walletStoragePort} ${walletStorageUser} ${walletStoragePassword} ${containerName} ${protocol} ${tenant} ${credoImage} "${indyLedger}" ${inboundEndpoint} ${process.env.SCHEMA_FILE_SERVER_URL} ${process.env.AGENT_API_KEY} ${process.env.AWS_ACCOUNT_ID} ${process.env.S3_BUCKET_ARN} ${process.env.CLUSTER_NAME} ${process.env.TASKDEFINITION_FAMILY} ${process.env.ADMIN_TG_ARN} ${process.env.INBOUND_TG_ARN} ${process.env.FILESYSTEMID} ${process.env.ECS_SUBNET_ID} ${process.env.ECS_SECURITY_GROUP_ID}`;
-        const spinUpResponse: object = new Promise(async (resolve) => {
-          await exec(walletProvision, async (err, stdout, stderr) => {
+        await new Promise<void>((resolve, reject) => {
+          exec(walletProvision, (err, stdout, stderr) => {
             this.logger.log(`shell script output: ${stdout}`);
             if (stderr) {
               this.logger.log(`shell script error: ${stderr}`);
             }
 
-            const agentEndpointPath = `${process.cwd()}${process.env.AFJ_AGENT_ENDPOINT_PATH}${orgId}_${containerName}.json`;
-
-            const agentEndPointExists = await this.checkFileExistence(agentEndpointPath);
-
-            let agentEndPoint;
-
-            if (agentEndPointExists) {
-              this.logger.log('Agent endpoint file exists');
-              agentEndPoint = await fs.readFileSync(agentEndpointPath, 'utf8');
-              // Proceed with accessing the files if needed
-            } else {
-              this.logger.log('Agent endpoint file does not exist');
-              throw new NotFoundException(`Agent endpoint file does not exist: ${agentEndpointPath}`);
+            if (err) {
+              this.logger.error(`Agent provisioning script failed: ${err.message}`);
+              reject(err);
+              return;
             }
 
-            let parsedEndpoint;
-            try {
-              parsedEndpoint = JSON.parse(agentEndPoint);
-            } catch (parseError) {
-              this.logger.error(`Failed to parse agent endpoint file: ${parseError.message}`);
-              throw new Error(`Invalid JSON in agent endpoint file: ${agentEndpointPath}`);
-            }
-
-            if (!parsedEndpoint.CONTROLLER_ENDPOINT) {
-              this.logger.error('CONTROLLER_ENDPOINT key missing in agent endpoint file');
-              throw new Error(`Missing CONTROLLER_ENDPOINT in: ${agentEndpointPath}`);
-            }
-
-            resolve({
-              agentEndPoint: parsedEndpoint.CONTROLLER_ENDPOINT
-            });
+            resolve();
           });
         });
-        return spinUpResponse;
+
+        const agentEndpointPath = `${process.cwd()}${process.env.AFJ_AGENT_ENDPOINT_PATH}${orgId}_${containerName}.json`;
+        const agentEndPointExists = await this.checkFileExistence(agentEndpointPath);
+
+        if (!agentEndPointExists) {
+          this.logger.log('Agent endpoint file does not exist');
+          throw new NotFoundException(`Agent endpoint file does not exist: ${agentEndpointPath}`);
+        }
+
+        this.logger.log('Agent endpoint file exists');
+        const agentEndPoint = fs.readFileSync(agentEndpointPath, 'utf8');
+
+        let parsedEndpoint;
+        try {
+          parsedEndpoint = JSON.parse(agentEndPoint);
+        } catch (parseError) {
+          this.logger.error(`Failed to parse agent endpoint file: ${parseError.message}`);
+          throw new Error(`Invalid JSON in agent endpoint file: ${agentEndpointPath}`);
+        }
+
+        if (!parsedEndpoint.CONTROLLER_ENDPOINT) {
+          this.logger.error('CONTROLLER_ENDPOINT key missing in agent endpoint file');
+          throw new Error(`Missing CONTROLLER_ENDPOINT in: ${agentEndpointPath}`);
+        }
+
+        return {
+          agentEndPoint: parsedEndpoint.CONTROLLER_ENDPOINT
+        };
       } else if (agentType === AgentType.ACAPY) {
         // TODO: ACA-PY Agent Spin-Up
       }

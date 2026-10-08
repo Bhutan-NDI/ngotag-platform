@@ -27,6 +27,7 @@ import {
   BadRequestException,
   ParseUUIDPipe,
   Delete,
+  Patch,
   Version
 } from '@nestjs/common';
 import { ApiResponseDto } from '../dtos/apiResponse.dto';
@@ -46,6 +47,7 @@ import { WebhookPresentationProofDto } from './dto/webhook-proof.dto';
 import { CustomExceptionFilter } from 'apps/api-gateway/common/exception-handler';
 import { User } from '../authz/decorators/user.decorator';
 import { GetAllProofRequestsDto } from './dto/get-all-proof-requests.dto';
+import { RegisterRedirectUrisDto, UpdateRedirectUrisDto } from './dto/redirect-uris.dto';
 import { IProofRequestSearchCriteria } from './interfaces/verification.interface';
 import { API_Version, ProofRequestType, SortFields } from './enum/verification.enum';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -56,6 +58,7 @@ import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 import { MarketplaceService } from '../marketplace/marketplace.service';
+import { isMarketplaceMeteringEnabled } from '../marketplace/utils/marketplace-config.util';
 
 @UseFilters(CustomExceptionFilter)
 @Controller()
@@ -96,6 +99,51 @@ export class VerificationController {
       statusCode: HttpStatus.OK,
       message: ResponseMessages.verification.success.verifiedProofDetails,
       data: sendProofRequest
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  @Get('/orgs/:orgId/verified-proofs/threads/:threadId')
+  @ApiOperation({
+    summary: 'Get a verified proof presentation by thread ID',
+    description:
+      'Returns the raw proof format data (proofData) of a verified proof presentation, fetched live from the agent. Only proofs of this organization in state done and verified are returned; other states get 409.'
+  })
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @ApiBearerAuth()
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'No proof with this thread ID for the organization' })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'The proof is not in state done and verified' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
+  @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
+  async getProofPresentationByThreadId(
+    @Param(
+      'orgId',
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    orgId: string,
+    @Param(
+      'threadId',
+      TrimStringParamPipe,
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.verification.error.invalidThreadId);
+        }
+      })
+    )
+    threadId: string,
+    @Res() res: Response
+  ): Promise<Response> {
+    const presentation = await this.verificationService.getProofPresentationByThreadId(orgId, threadId);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.verifiedProofDetails,
+      data: presentation
     };
     return res.status(HttpStatus.OK).json(finalResponse);
   }
@@ -475,6 +523,7 @@ export class VerificationController {
     const resolvedOrgId = (webhookProofPresentation as { orgId?: string } | undefined)?.orgId;
     const verificationSourceId = proofPresentationPayload.presentationId || proofPresentationPayload.threadId;
     if (
+      isMarketplaceMeteringEnabled() &&
       resolvedOrgId &&
       verificationSourceId &&
       (proofPresentationPayload.isVerified ||
@@ -523,6 +572,140 @@ export class VerificationController {
         );
       });
     return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
+
+  @Post('/orgs/:orgId/verification/redirect-uris')
+  @ApiOperation({
+    summary: 'Register redirect URIs',
+    description:
+      'Register the URIs a same-device out-of-band proof request may return the holder to (redirectUri). Replaces any existing list; at least one URI is required.'
+  })
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Created', type: ApiResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
+  @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
+  @ApiBearerAuth()
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  async registerRedirectUris(
+    @Param(
+      'orgId',
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    orgId: string,
+    @Body() redirectUrisDto: RegisterRedirectUrisDto,
+    @User() user: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const redirectUris = await this.verificationService.setRedirectUris(orgId, redirectUrisDto.redirectUris, user.id);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.CREATED,
+      message: ResponseMessages.verification.success.redirectUrisRegistered,
+      data: { redirectUris }
+    };
+    return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
+
+  @Patch('/orgs/:orgId/verification/redirect-uris')
+  @ApiOperation({
+    summary: 'Update redirect URIs',
+    description:
+      'Replace the registered redirect URIs for the organization. An empty list disables same-device redirects: any redirectUri is then rejected with 400.'
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
+  @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
+  @ApiBearerAuth()
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  async updateRedirectUris(
+    @Param(
+      'orgId',
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    orgId: string,
+    @Body() redirectUrisDto: UpdateRedirectUrisDto,
+    @User() user: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const redirectUris = await this.verificationService.setRedirectUris(orgId, redirectUrisDto.redirectUris, user.id);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.redirectUrisUpdated,
+      data: { redirectUris }
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  @Get('/orgs/:orgId/verification/redirect-uris')
+  @ApiOperation({
+    summary: 'Get redirect URIs',
+    description: 'Get the redirect URIs registered for the organization.'
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized', type: UnauthorizedErrorDto })
+  @ApiForbiddenResponse({ description: 'Forbidden', type: ForbiddenErrorDto })
+  @ApiBearerAuth()
+  @Roles(OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.VERIFIER)
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  async getRedirectUris(
+    @Param(
+      'orgId',
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    orgId: string,
+    @Res() res: Response
+  ): Promise<Response> {
+    const redirectUris = await this.verificationService.getRedirectUris(orgId);
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.redirectUrisFetched,
+      data: { redirectUris }
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  /**
+   * Unauthenticated by design: possession of the single-use, short-lived response_code
+   * is the authorization.
+   */
+  @Get('/verification/callback-result')
+  @ApiOperation({
+    summary: 'Get proof result by response_code',
+    description:
+      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof finishes. completed only means it finished: fetch the outcome with the authenticated proof endpoint. A completed/failed result can be read only once, so read it once and keep the outcome in your own state (a retried or duplicated read gets 410).'
+  })
+  @ApiQuery({ name: 'response_code', required: true })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Pending, completed or failed', type: ApiResponseDto })
+  @ApiResponse({ status: HttpStatus.GONE, description: 'Unknown, expired or already used response_code' })
+  async getProofCallbackResult(@Query('response_code') responseCode: string, @Res() res: Response): Promise<Response> {
+    // Set first so error responses (e.g. 503) are not cached either.
+    res.setHeader('Cache-Control', 'no-store');
+    const callbackResult = await this.verificationService.getProofCallbackResult(responseCode?.trim());
+    if ('expired' === callbackResult.status) {
+      return res.status(HttpStatus.GONE).json({
+        statusCode: HttpStatus.GONE,
+        message: ResponseMessages.verification.error.responseCodeExpired,
+        data: callbackResult
+      });
+    }
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.callbackResultFetched,
+      data: callbackResult
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**

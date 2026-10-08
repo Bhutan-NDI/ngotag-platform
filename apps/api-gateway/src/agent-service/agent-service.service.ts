@@ -7,6 +7,7 @@ import { AgentStatus } from './interface/agent-service.interface';
 import { CreateDidDto } from './dto/create-did.dto';
 import { CreateWalletDto } from './dto/create-wallet.dto';
 import { AgentConfigureDto } from './dto/agent-configure.dto';
+import { SetDedicatedAgentTokenDto } from './dto/dedicated-agent-token.dto';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { ClientProxy } from '@nestjs/microservices';
 
@@ -92,11 +93,25 @@ export class AgentService extends BaseService {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'polygon-create-keys', payload);
   }
 
+  async createEthKeyPair(orgId: string): Promise<object> {
+    const payload = { orgId };
+    // NATS call
+
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'ethereum-create-keys', payload);
+  }
+
   async agentConfigure(agentConfigureDto: AgentConfigureDto, user: user): Promise<object> {
     const payload = { agentConfigureDto, user };
     // NATS call
 
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'agent-configure', payload);
+  }
+
+  async setDedicatedAgentToken(setDedicatedAgentTokenDto: SetDedicatedAgentTokenDto, user: user): Promise<object> {
+    const payload = { setDedicatedAgentTokenDto, userId: user.id };
+    // NATS call
+
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'set-dedicated-agent-token', payload);
   }
 
   async deleteWallet(orgId: string, user: user): Promise<object> {

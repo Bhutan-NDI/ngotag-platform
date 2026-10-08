@@ -105,6 +105,17 @@ export interface IschemaPayload {
   user: IUserRequestInterface;
   orgId: string;
 }
+
+export interface IMigrateW3CSchema {
+  schemaId: string;
+  targetSchemaType: JSONSchemaType.ETHEREUM_W3C;
+}
+
+export interface IMigrateW3CSchemaPayload {
+  migrateSchemaDetails: IMigrateW3CSchema;
+  user: IUserRequestInterface;
+  orgId: string;
+}
 export interface ISchemasResult {
   id: string;
   createDateTime: Date;

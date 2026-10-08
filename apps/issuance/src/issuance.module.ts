@@ -11,8 +11,9 @@ import { OutOfBandIssuance } from '../templates/out-of-band-issuance.template';
 import { EmailDto } from '@credebl/common/dtos/email.dto';
 import { BullModule } from '@nestjs/bull';
 import { CacheModule } from '@nestjs/cache-manager';
+import { IssuanceWorkCoordinator } from './issuance-work.coordinator';
 import { BulkIssuanceProcessor } from './issuance.processor';
-import { AzureStorageService } from '@credebl/azure-storage';
+import { StorageModule } from '@credebl/storage';
 import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { CommonConstants, MICRO_SERVICE_NAME } from '@credebl/common/common.constant';
 import { LoggerModule } from '@credebl/logger/logger.module';
@@ -36,6 +37,7 @@ import { NATSClient } from '@credebl/common/NATSClient';
       }
     ]),
     CommonModule,
+    StorageModule,
     GlobalConfigModule,
     LoggerModule,
     PlatformConfig,
@@ -48,7 +50,9 @@ import { NATSClient } from '@credebl/common/NATSClient';
       }
     }),
     BullModule.registerQueue({
-      name: 'bulk-issuance'
+      name: 'bulk-issuance',
+      defaultJobOptions: { attempts: 1 },
+      settings: { maxStalledCount: 0 }
     })
   ],
   controllers: [IssuanceController],
@@ -61,7 +65,7 @@ import { NATSClient } from '@credebl/common/NATSClient';
     OutOfBandIssuance,
     EmailDto,
     BulkIssuanceProcessor,
-    AzureStorageService,
+    IssuanceWorkCoordinator,
     NATSClient,
     {
       provide: MICRO_SERVICE_NAME,

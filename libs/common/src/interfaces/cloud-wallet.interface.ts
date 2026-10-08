@@ -1,5 +1,6 @@
 import { CloudWalletType } from '../../../enum/src/enum';
 import { $Enums } from '@prisma/client';
+import { JsonValue, SingleOrArray } from 'apps/api-gateway/src/issuance/utils/helper';
 
 export class ICreateCloudWallet {
   label: string;
@@ -7,7 +8,11 @@ export class ICreateCloudWallet {
   email?: string;
   userId?: string;
 }
-
+export class IDeleteCloudWallet {
+  email?: string;
+  userId?: string;
+  deleteHolder: boolean;
+}
 export interface ICloudWalletDetails {
   label: string;
   tenantId: string;
@@ -31,10 +36,25 @@ export interface IStoredWalletDetails {
   label: string;
   lastChangedDateTime: Date;
 }
+export interface ICheckCloudWalletStatus {
+  userId: string;
+  email: string;
+}
+
+export interface IDeclineProofRequest {
+  proofRecordId: string;
+  userId: string;
+  email: string;
+  sendProblemReport?: boolean;
+  problemReportDescription?: string;
+}
 
 export interface IReceiveInvitation {
   alias?: string;
-  label?: string;
+  // Required, matching ReceiveInvitationUrlDTO -- agent-controller's own endpoint (both the old
+  // multi-tenancy one and the current /didcomm/oob one) has always required label. See the #71
+  // review's IReceiveInvitation/DTO contract-mismatch finding.
+  label: string;
   imageUrl?: string;
   autoAcceptConnection?: boolean;
   autoAcceptInvitation?: boolean;
@@ -44,6 +64,9 @@ export interface IReceiveInvitation {
   invitationUrl: string;
   email?: string;
   userId?: string;
+  // Restored, matching ReceiveInvitationUrlDTO -- see that DTO's own comment for why this exists
+  // (revocation-credential connection tagging/filtering) and why it was dropped in the first place.
+  connectionType?: string;
 }
 
 export interface IAcceptOffer {
@@ -68,6 +91,7 @@ export interface ICreateCloudWalletDid {
   endorserDid?: string;
   email?: string;
   userId?: string;
+  isDefault?: boolean;
 }
 export interface IGetStoredWalletInfo {
   email: string;
@@ -95,9 +119,14 @@ export interface IStoreWalletInfo {
   agentApiKey: string;
   agentEndpoint: string;
   type: CloudWalletType;
+  // Required, not optional — maps to a NOT NULL Uuid column via createdBy: userId. Loosening
+  // this to optional removes the compile-time guarantee and turns an omitted userId into a
+  // runtime Prisma error instead of a type error. See the #71 review.
   userId: string;
   createdBy: string;
   lastChangedBy: string;
+  // Optional — the DB column defaults to 5000; see ICloudBaseWalletConfigure's own comment.
+  maxSubWallets?: number;
 }
 
 export interface IGetStoredWalletInfo {
@@ -150,6 +179,12 @@ export interface ICloudBaseWalletConfigure {
   agentEndpoint: string;
   userId: string;
   email: string;
+  // Optional — the DB column defaults to 5000. Required would 400 every existing caller of the
+  // live POST /cloud-wallet/configure/base-wallet endpoint. See the #71 review's "required field
+  // added to a live endpoint's DTO".
+  maxSubWallets?: number;
+  // webhookUrl: string;
+  // orgId: string;
 }
 
 export interface Tags {
@@ -192,6 +227,7 @@ export interface CloudWallet {
 export interface IWalletDetailsForDidList {
   userId: string;
   email: string;
+  isDefault: boolean;
 }
 
 export interface IConnectionDetailsById {
@@ -329,4 +365,162 @@ export interface IBasicMessageDetails {
   email?: string;
   content: string;
   connectionId: string;
+}
+export interface IProofPresentationPayloadWithCred {
+  userId: string;
+  email: string;
+  proof: {
+    proofFormats: {
+      presentationExchange: {
+        credentials: Record<string, string>;
+      };
+    };
+    comment?: string;
+    proofRecordId: string;
+  };
+}
+
+export interface IProofPresentationDetails {
+  userId: string;
+  email: string;
+  proofRecordId: string;
+}
+export interface ICredentialForRequestRes {
+  proofFormats: ProofFormats;
+}
+
+interface ProofFormats {
+  presentationExchange: PresentationExchange;
+}
+
+interface PresentationExchange {
+  requirements: Requirement[];
+  areRequirementsSatisfied: boolean;
+  name: string;
+  purpose: string;
+}
+
+interface Requirement {
+  rule: string;
+  needsCount: number;
+  submissionEntry: SubmissionEntry[];
+  isRequirementSatisfied: boolean;
+}
+
+interface SubmissionEntry {
+  inputDescriptorId: string;
+  verifiableCredentials: VerifiableCredential[];
+}
+
+interface VerifiableCredential {
+  type: object;
+  credentialRecord: CredentialRecord;
+}
+
+interface CredentialRecord {
+  _tags: ITags;
+  metadata: object;
+  id: string;
+  createdAt: Date;
+  credential: Credential;
+  updatedAt: Date;
+}
+
+interface ITags {
+  claimFormat: object;
+  contexts: string[];
+  expandedTypes: string[];
+  issuerId: string;
+  proofTypes: string[];
+  subjectIds: string[];
+  types: string[];
+}
+
+interface Credential {
+  '@context': string[];
+  type: string[];
+  issuer: Issuer;
+  issuanceDate: Date;
+  credentialSubject: object;
+  proof: Proof;
+}
+
+interface Issuer {
+  id: string;
+}
+
+interface Proof {
+  verificationMethod: string;
+  type: string;
+  created: Date;
+  proofPurpose: string;
+  jws: string;
+}
+
+export interface BaseAgentInfo {
+  // id and isActive added: GET /cloud-wallet/get-active-base-wallet is the only read endpoint for
+  // base wallets, and PATCH /cloud-wallet/base-wallet/:walletId (added in the same PR) keys off
+  // cloud_wallet_user_info.id -- without id here there was no way to construct that PATCH URL
+  // from this response, and rows sharing an agentEndpoint weren't even distinguishable. isActive
+  // was otherwise unobservable too. See the #71 review.
+  id: string;
+  agentEndpoint: string;
+  isActive: boolean;
+  useCount: number;
+  maxSubWallets: number;
+}
+
+export interface IUpdateBaseWallet {
+  maxSubWallets?: number;
+  isActive?: boolean;
+  email?: string;
+  userId?: string;
+  walletId: string;
+}
+interface JsonObject {
+  [property: string]: JsonValue;
+}
+
+export interface ISelfAttestedCredential {
+  '@context': (string | JsonObject)[];
+
+  type: string[];
+
+  credentialSubject: SingleOrArray<JsonObject>;
+  [key: string]: unknown;
+
+  proofType: string;
+
+  userId: string;
+  email: string;
+}
+
+export interface IW3cCredentials {
+  userId: string;
+  email: string;
+  credentialRecordId?: string;
+}
+
+export interface IExportCloudWallet {
+  passKey: string;
+  userId: string;
+  email: string;
+  walletID?: string;
+}
+
+// Export/import against agent-controller's native WalletPortabilityService are async jobs:
+// the initiating call returns { jobId, status } immediately, and completion is observed by
+// polling the corresponding status op with this same payload shape.
+export interface IWalletPortabilityJobStatus {
+  userId: string;
+  email: string;
+  jobId: string;
+}
+
+export interface IImportCloudWallet {
+  exportUrl: string;
+  checksum: string;
+  passKey: string;
+  userId: string;
+  email: string;
 }

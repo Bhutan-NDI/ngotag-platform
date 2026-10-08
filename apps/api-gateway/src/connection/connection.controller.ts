@@ -376,13 +376,13 @@ export class ConnectionController {
       connectionDto.orgId = orgId;
     }
 
-    const connectionData = await this.connectionService.getConnectionWebhook(connectionDto, orgId).catch((error) => {
+    const orgAgent = await this.connectionService.getConnectionWebhook(connectionDto, orgId).catch((error) => {
       this.logger.debug(`error in saving connection webhook ::: ${JSON.stringify(error)}`);
     });
     const finalResponse: IResponse = {
       statusCode: HttpStatus.CREATED,
       message: ResponseMessages.connection.success.create,
-      data: connectionData
+      data: orgAgent
     };
     void this.connectionService
       ._getWebhookUrl(connectionDto?.contextCorrelationId, orgId)

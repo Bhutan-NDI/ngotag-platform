@@ -1,0 +1,381 @@
+{
+  "dzongkhags": [
+    {
+      "dzongkhagSerialNo": 1,
+      "dzongkhagId": "01",
+      "dzongkhagName": "Bumthang",
+      "gewogs": [
+        { "gewogSerialNo": 1, "gewogId": "0101", "gewogName": "Chokhor" },
+        { "gewogSerialNo": 2, "gewogId": "0102", "gewogName": "Chumey" },
+        { "gewogSerialNo": 3, "gewogId": "0103", "gewogName": "Tang" },
+        { "gewogSerialNo": 4, "gewogId": "0104", "gewogName": "Ura" },
+        { "gewogSerialNo": 5, "gewogId": "0199", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 2,
+      "dzongkhagId": "02",
+      "dzongkhagName": "Chukha",
+      "gewogs": [
+        { "gewogSerialNo": 6, "gewogId": "0201", "gewogName": "Sampheling/Bhalujora" },
+        { "gewogSerialNo": 7, "gewogId": "0202", "gewogName": "Bjachho" },
+        { "gewogSerialNo": 8, "gewogId": "0203", "gewogName": "Bongo" },
+        { "gewogSerialNo": 9, "gewogId": "0204", "gewogName": "Chapcha" },
+        { "gewogSerialNo": 10, "gewogId": "0205", "gewogName": "Darla" },
+        { "gewogSerialNo": 11, "gewogId": "0206", "gewogName": "Dungna" },
+        { "gewogSerialNo": 12, "gewogId": "0207", "gewogName": "Geling" },
+        { "gewogSerialNo": 13, "gewogId": "0208", "gewogName": "Getana" },
+        { "gewogSerialNo": 14, "gewogId": "0209", "gewogName": "Lokchina" },
+        { "gewogSerialNo": 15, "gewogId": "0210", "gewogName": "Metakha" },
+        { "gewogSerialNo": 16, "gewogId": "0211", "gewogName": "Phuentsholing" },
+        { "gewogSerialNo": 17, "gewogId": "0212", "gewogName": "Phuentsholing Throm" },
+        { "gewogSerialNo": 18, "gewogId": "0299", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 3,
+      "dzongkhagId": "03",
+      "dzongkhagName": "Dagana",
+      "gewogs": [
+        { "gewogSerialNo": 19, "gewogId": "0301", "gewogName": "Dorona" },
+        { "gewogSerialNo": 20, "gewogId": "0302", "gewogName": "Drujeygang" },
+        { "gewogSerialNo": 21, "gewogId": "0303", "gewogName": "Gesarling" },
+        { "gewogSerialNo": 22, "gewogId": "0304", "gewogName": "Gozhi" },
+        { "gewogSerialNo": 23, "gewogId": "0305", "gewogName": "Kana" },
+        { "gewogSerialNo": 24, "gewogId": "0306", "gewogName": "Khebisa" },
+        { "gewogSerialNo": 25, "gewogId": "0307", "gewogName": "Lajab" },
+        { "gewogSerialNo": 26, "gewogId": "0308", "gewogName": "Trashiding" },
+        { "gewogSerialNo": 27, "gewogId": "0309", "gewogName": "Tsendagang (Suntalay)" },
+        { "gewogSerialNo": 28, "gewogId": "0310", "gewogName": "Tseza" },
+        { "gewogSerialNo": 29, "gewogId": "0311", "gewogName": "Tsangkha" },
+        { "gewogSerialNo": 30, "gewogId": "0312", "gewogName": "Karmaling" },
+        { "gewogSerialNo": 31, "gewogId": "0313", "gewogName": "Lhamoyzingkhag/Kalikhola" },
+        { "gewogSerialNo": 32, "gewogId": "0314", "gewogName": "Nichula" },
+        { "gewogSerialNo": 33, "gewogId": "0315", "gewogName": "Daga Throm" },
+        { "gewogSerialNo": 34, "gewogId": "0399", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 4,
+      "dzongkhagId": "04",
+      "dzongkhagName": "Gasa",
+      "gewogs": [
+        { "gewogSerialNo": 35, "gewogId": "0401", "gewogName": "Khamae" },
+        { "gewogSerialNo": 36, "gewogId": "0402", "gewogName": "Khatoe" },
+        { "gewogSerialNo": 37, "gewogId": "0403", "gewogName": "Laya" },
+        { "gewogSerialNo": 38, "gewogId": "0404", "gewogName": "Lunana" },
+        { "gewogSerialNo": 39, "gewogId": "0499", "gewogName": "Unknown" },
+        { "gewogSerialNo": 237, "gewogId": "0405", "gewogName": "Gasa Throm" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 5,
+      "dzongkhagId": "05",
+      "dzongkhagName": "Haa",
+      "gewogs": [
+        { "gewogSerialNo": 40, "gewogId": "0501", "gewogName": "Bji" },
+        { "gewogSerialNo": 41, "gewogId": "0502", "gewogName": "Eusu" },
+        { "gewogSerialNo": 42, "gewogId": "0503", "gewogName": "Katsho" },
+        { "gewogSerialNo": 43, "gewogId": "0504", "gewogName": "Samar" },
+        { "gewogSerialNo": 44, "gewogId": "0505", "gewogName": "Sangbay" },
+        { "gewogSerialNo": 45, "gewogId": "0506", "gewogName": "Gakiling" },
+        { "gewogSerialNo": 46, "gewogId": "0599", "gewogName": "Unknown" },
+        { "gewogSerialNo": 236, "gewogId": "0507", "gewogName": "Haa Throm" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 6,
+      "dzongkhagId": "06",
+      "dzongkhagName": "Lhuentse",
+      "gewogs": [
+        { "gewogSerialNo": 47, "gewogId": "0601", "gewogName": "Gangzur" },
+        { "gewogSerialNo": 48, "gewogId": "0602", "gewogName": "Jaray" },
+        { "gewogSerialNo": 49, "gewogId": "0603", "gewogName": "Khoma" },
+        { "gewogSerialNo": 50, "gewogId": "0604", "gewogName": "Kurtoe" },
+        { "gewogSerialNo": 51, "gewogId": "0605", "gewogName": "Menbi" },
+        { "gewogSerialNo": 52, "gewogId": "0606", "gewogName": "Menji" },
+        { "gewogSerialNo": 53, "gewogId": "0607", "gewogName": "Metsho" },
+        { "gewogSerialNo": 54, "gewogId": "0608", "gewogName": "Tsenkhar" },
+        { "gewogSerialNo": 55, "gewogId": "0699", "gewogName": "Unknown" },
+        { "gewogSerialNo": 232, "gewogId": "0609", "gewogName": "Phaling Throm" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 7,
+      "dzongkhagId": "07",
+      "dzongkhagName": "Mongar",
+      "gewogs": [
+        { "gewogSerialNo": 56, "gewogId": "0701", "gewogName": "Balam" },
+        { "gewogSerialNo": 57, "gewogId": "0702", "gewogName": "Chali" },
+        { "gewogSerialNo": 58, "gewogId": "0703", "gewogName": "Chaskhar" },
+        { "gewogSerialNo": 59, "gewogId": "0704", "gewogName": "Depong" },
+        { "gewogSerialNo": 60, "gewogId": "0705", "gewogName": "Drametse" },
+        { "gewogSerialNo": 61, "gewogId": "0706", "gewogName": "Gungdue" },
+        { "gewogSerialNo": 62, "gewogId": "0707", "gewogName": "Jurmey" },
+        { "gewogSerialNo": 63, "gewogId": "0708", "gewogName": "Kengkhar" },
+        { "gewogSerialNo": 64, "gewogId": "0709", "gewogName": "Mongar" },
+        { "gewogSerialNo": 65, "gewogId": "0710", "gewogName": "Ngatshang" },
+        { "gewogSerialNo": 66, "gewogId": "0711", "gewogName": "Saling" },
+        { "gewogSerialNo": 67, "gewogId": "0712", "gewogName": "Sherimung" },
+        { "gewogSerialNo": 68, "gewogId": "0713", "gewogName": "Silambi" },
+        { "gewogSerialNo": 69, "gewogId": "0714", "gewogName": "Thangrong" },
+        { "gewogSerialNo": 70, "gewogId": "0715", "gewogName": "Tsamang" },
+        { "gewogSerialNo": 71, "gewogId": "0716", "gewogName": "Tsakaling" },
+        { "gewogSerialNo": 72, "gewogId": "0717", "gewogName": "Narang" },
+        { "gewogSerialNo": 73, "gewogId": "0799", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 8,
+      "dzongkhagId": "08",
+      "dzongkhagName": "Paro",
+      "gewogs": [
+        { "gewogSerialNo": 74, "gewogId": "0801", "gewogName": "Dogar" },
+        { "gewogSerialNo": 75, "gewogId": "0802", "gewogName": "Dopshari" },
+        { "gewogSerialNo": 76, "gewogId": "0803", "gewogName": "Doteng" },
+        { "gewogSerialNo": 77, "gewogId": "0804", "gewogName": "Hungrel" },
+        { "gewogSerialNo": 78, "gewogId": "0805", "gewogName": "Lamgong" },
+        { "gewogSerialNo": 79, "gewogId": "0806", "gewogName": "Lungnyi" },
+        { "gewogSerialNo": 80, "gewogId": "0807", "gewogName": "Naja" },
+        { "gewogSerialNo": 81, "gewogId": "0808", "gewogName": "Shaba" },
+        { "gewogSerialNo": 82, "gewogId": "0809", "gewogName": "Paro Throm" },
+        { "gewogSerialNo": 83, "gewogId": "0810", "gewogName": "Tsento" },
+        { "gewogSerialNo": 84, "gewogId": "0811", "gewogName": "Wangchang" },
+        { "gewogSerialNo": 85, "gewogId": "0899", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 9,
+      "dzongkhagId": "09",
+      "dzongkhagName": "Pemagatshel",
+      "gewogs": [
+        { "gewogSerialNo": 86, "gewogId": "0901", "gewogName": "Chimung" },
+        { "gewogSerialNo": 87, "gewogId": "0902", "gewogName": "Chongshing" },
+        { "gewogSerialNo": 88, "gewogId": "0903", "gewogName": "Dungmin" },
+        { "gewogSerialNo": 89, "gewogId": "0904", "gewogName": "Khar" },
+        { "gewogSerialNo": 90, "gewogId": "0905", "gewogName": "Shumar" },
+        { "gewogSerialNo": 91, "gewogId": "0906", "gewogName": "Yurung" },
+        { "gewogSerialNo": 92, "gewogId": "0907", "gewogName": "Zobel" },
+        { "gewogSerialNo": 93, "gewogId": "0908", "gewogName": "Choekhorling" },
+        { "gewogSerialNo": 94, "gewogId": "0909", "gewogName": "Dechhenling" },
+        { "gewogSerialNo": 95, "gewogId": "0910", "gewogName": "Nanong" },
+        { "gewogSerialNo": 96, "gewogId": "0911", "gewogName": "Norbugang" },
+        { "gewogSerialNo": 97, "gewogId": "0999", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 10,
+      "dzongkhagId": "10",
+      "dzongkhagName": "Punakha",
+      "gewogs": [
+        { "gewogSerialNo": 98, "gewogId": "1001", "gewogName": "Chubu" },
+        { "gewogSerialNo": 99, "gewogId": "1002", "gewogName": "Dzomesa" },
+        { "gewogSerialNo": 100, "gewogId": "1003", "gewogName": "Goenshari" },
+        { "gewogSerialNo": 101, "gewogId": "1004", "gewogName": "Guma" },
+        { "gewogSerialNo": 102, "gewogId": "1005", "gewogName": "Kabjisa" },
+        { "gewogSerialNo": 103, "gewogId": "1006", "gewogName": "Lingmukha" },
+        { "gewogSerialNo": 104, "gewogId": "1007", "gewogName": "Shengana" },
+        { "gewogSerialNo": 105, "gewogId": "1008", "gewogName": "Talo" },
+        { "gewogSerialNo": 106, "gewogId": "1009", "gewogName": "Toewang" },
+        { "gewogSerialNo": 107, "gewogId": "1010", "gewogName": "Barp" },
+        { "gewogSerialNo": 108, "gewogId": "1011", "gewogName": "Toeb" },
+        { "gewogSerialNo": 109, "gewogId": "1099", "gewogName": "Unknown" },
+        { "gewogSerialNo": 234, "gewogId": "1012", "gewogName": "Khuruthang Throm" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 11,
+      "dzongkhagId": "11",
+      "dzongkhagName": "Samdrupjongkhar",
+      "gewogs": [
+        { "gewogSerialNo": 110, "gewogId": "1102", "gewogName": "Gomdar" },
+        { "gewogSerialNo": 111, "gewogId": "1103", "gewogName": "Langchenphu" },
+        { "gewogSerialNo": 112, "gewogId": "1104", "gewogName": "Lauri" },
+        { "gewogSerialNo": 113, "gewogId": "1105", "gewogName": "Martshala" },
+        { "gewogSerialNo": 114, "gewogId": "1107", "gewogName": "Orong" },
+        { "gewogSerialNo": 115, "gewogId": "1108", "gewogName": "Pemathang/Dalim" },
+        { "gewogSerialNo": 116, "gewogId": "1109", "gewogName": "Phuntshothang/Bakuli" },
+        { "gewogSerialNo": 117, "gewogId": "1110", "gewogName": "Samrang" },
+        { "gewogSerialNo": 118, "gewogId": "1111", "gewogName": "Serthi" },
+        { "gewogSerialNo": 119, "gewogId": "1112", "gewogName": "Deothang" },
+        { "gewogSerialNo": 120, "gewogId": "1113", "gewogName": "Wangphu" },
+        { "gewogSerialNo": 121, "gewogId": "1199", "gewogName": "Unknown" },
+        { "gewogSerialNo": 231, "gewogId": "1114", "gewogName": "Samdrupjongkhar Throm" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 12,
+      "dzongkhagId": "12",
+      "dzongkhagName": "Samtse",
+      "gewogs": [
+        { "gewogSerialNo": 122, "gewogId": "1201", "gewogName": "Norgaygang/Bara" },
+        { "gewogSerialNo": 123, "gewogId": "1202", "gewogName": "Pemaling/Biru" },
+        { "gewogSerialNo": 124, "gewogId": "1203", "gewogName": "Sangacholing/Chargharey" },
+        { "gewogSerialNo": 125, "gewogId": "1204", "gewogName": "Norbugang/Chengmari" },
+        { "gewogSerialNo": 126, "gewogId": "1205", "gewogName": "Denchukha" },
+        { "gewogSerialNo": 127, "gewogId": "1206", "gewogName": "Dophuchen/Dorokha" },
+        { "gewogSerialNo": 128, "gewogId": "1207", "gewogName": "Dumtoe" },
+        { "gewogSerialNo": 129, "gewogId": "1208", "gewogName": "Yoesheltse/Ghumauney" },
+        { "gewogSerialNo": 130, "gewogId": "1209", "gewogName": "Namgyelcholing/Lahireni" },
+        { "gewogSerialNo": 131, "gewogId": "1211", "gewogName": "Ugyentse/Nainital" },
+        { "gewogSerialNo": 132, "gewogId": "1212", "gewogName": "Phuntshopelri/Pugli" },
+        { "gewogSerialNo": 133, "gewogId": "1213", "gewogName": "Samtse" },
+        { "gewogSerialNo": 134, "gewogId": "1214", "gewogName": "Tashicholing/Sipsu" },
+        { "gewogSerialNo": 135, "gewogId": "1215", "gewogName": "Tading" },
+        { "gewogSerialNo": 136, "gewogId": "1216", "gewogName": "Tendu" },
+        { "gewogSerialNo": 137, "gewogId": "1299", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 13,
+      "dzongkhagId": "13",
+      "dzongkhagName": "Sarpang",
+      "gewogs": [
+        { "gewogSerialNo": 138, "gewogId": "1301", "gewogName": "Samtenling" },
+        { "gewogSerialNo": 139, "gewogId": "1302", "gewogName": "Chuzagang" },
+        { "gewogSerialNo": 140, "gewogId": "1303", "gewogName": "Dekiling" },
+        { "gewogSerialNo": 141, "gewogId": "1305", "gewogName": "Chhudzom" },
+        { "gewogSerialNo": 142, "gewogId": "1306", "gewogName": "Gelephu" },
+        { "gewogSerialNo": 143, "gewogId": "1307", "gewogName": "Gakiling" },
+        { "gewogSerialNo": 144, "gewogId": "1308", "gewogName": "Jigmechoeling" },
+        { "gewogSerialNo": 145, "gewogId": "1311", "gewogName": "Shompangkha" },
+        { "gewogSerialNo": 146, "gewogId": "1312", "gewogName": "Serzhong" },
+        { "gewogSerialNo": 147, "gewogId": "1313", "gewogName": "Singhi" },
+        { "gewogSerialNo": 148, "gewogId": "1314", "gewogName": "Tareythang" },
+        { "gewogSerialNo": 149, "gewogId": "1315", "gewogName": "Umling" },
+        { "gewogSerialNo": 150, "gewogId": "1399", "gewogName": "Unknown" },
+        { "gewogSerialNo": 230, "gewogId": "1316", "gewogName": "Gelephu Throm" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 14,
+      "dzongkhagId": "14",
+      "dzongkhagName": "Thimphu",
+      "gewogs": [
+        { "gewogSerialNo": 151, "gewogId": "1402", "gewogName": "Chang" },
+        { "gewogSerialNo": 152, "gewogId": "1403", "gewogName": "Dagala" },
+        { "gewogSerialNo": 153, "gewogId": "1404", "gewogName": "Geney" },
+        { "gewogSerialNo": 154, "gewogId": "1405", "gewogName": "Kawang" },
+        { "gewogSerialNo": 155, "gewogId": "1406", "gewogName": "Lingzhi" },
+        { "gewogSerialNo": 156, "gewogId": "1407", "gewogName": "Mewang" },
+        { "gewogSerialNo": 157, "gewogId": "1408", "gewogName": "Naro" },
+        { "gewogSerialNo": 158, "gewogId": "1409", "gewogName": "Soe" },
+        { "gewogSerialNo": 159, "gewogId": "1410", "gewogName": "Thim Throm" },
+        { "gewogSerialNo": 160, "gewogId": "1499", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 15,
+      "dzongkhagId": "15",
+      "dzongkhagName": "Trashigang",
+      "gewogs": [
+        { "gewogSerialNo": 161, "gewogId": "1501", "gewogName": "Bartsham" },
+        { "gewogSerialNo": 162, "gewogId": "1502", "gewogName": "Bidung" },
+        { "gewogSerialNo": 163, "gewogId": "1503", "gewogName": "Kanglung" },
+        { "gewogSerialNo": 164, "gewogId": "1504", "gewogName": "Kangpara" },
+        { "gewogSerialNo": 165, "gewogId": "1505", "gewogName": "Khaling" },
+        { "gewogSerialNo": 166, "gewogId": "1506", "gewogName": "Lumang" },
+        { "gewogSerialNo": 167, "gewogId": "1507", "gewogName": "Merak" },
+        { "gewogSerialNo": 168, "gewogId": "1509", "gewogName": "Phongme" },
+        { "gewogSerialNo": 169, "gewogId": "1510", "gewogName": "Radhi" },
+        { "gewogSerialNo": 170, "gewogId": "1511", "gewogName": "Sakteng" },
+        { "gewogSerialNo": 171, "gewogId": "1512", "gewogName": "Samkhar" },
+        { "gewogSerialNo": 172, "gewogId": "1513", "gewogName": "Shongphu" },
+        { "gewogSerialNo": 173, "gewogId": "1514", "gewogName": "Thrimshing" },
+        { "gewogSerialNo": 174, "gewogId": "1515", "gewogName": "Udzorong" },
+        { "gewogSerialNo": 175, "gewogId": "1516", "gewogName": "Yangnyer" },
+        { "gewogSerialNo": 176, "gewogId": "1599", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 16,
+      "dzongkhagId": "16",
+      "dzongkhagName": "Trashiyangtse",
+      "gewogs": [
+        { "gewogSerialNo": 177, "gewogId": "1601", "gewogName": "Bumdeyling" },
+        { "gewogSerialNo": 178, "gewogId": "1602", "gewogName": "Jamkhar" },
+        { "gewogSerialNo": 179, "gewogId": "1603", "gewogName": "Khamdang" },
+        { "gewogSerialNo": 180, "gewogId": "1604", "gewogName": "Ramjar" },
+        { "gewogSerialNo": 181, "gewogId": "1605", "gewogName": "Toetsho" },
+        { "gewogSerialNo": 182, "gewogId": "1606", "gewogName": "Tongzhang" },
+        { "gewogSerialNo": 183, "gewogId": "1607", "gewogName": "Yalang" },
+        { "gewogSerialNo": 184, "gewogId": "1608", "gewogName": "Yangtse" },
+        { "gewogSerialNo": 185, "gewogId": "1699", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 17,
+      "dzongkhagId": "17",
+      "dzongkhagName": "Trongsa",
+      "gewogs": [
+        { "gewogSerialNo": 186, "gewogId": "1701", "gewogName": "Drakten" },
+        { "gewogSerialNo": 187, "gewogId": "1702", "gewogName": "Korphu" },
+        { "gewogSerialNo": 188, "gewogId": "1703", "gewogName": "Langthil" },
+        { "gewogSerialNo": 189, "gewogId": "1704", "gewogName": "Nubee" },
+        { "gewogSerialNo": 190, "gewogId": "1705", "gewogName": "Tangsibjee" },
+        { "gewogSerialNo": 191, "gewogId": "1799", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 18,
+      "dzongkhagId": "18",
+      "dzongkhagName": "Tsirang",
+      "gewogs": [
+        { "gewogSerialNo": 192, "gewogId": "1801", "gewogName": "Barshong" },
+        { "gewogSerialNo": 193, "gewogId": "1802", "gewogName": "Patshaling" },
+        { "gewogSerialNo": 194, "gewogId": "1803", "gewogName": "Dunglagang" },
+        { "gewogSerialNo": 195, "gewogId": "1804", "gewogName": "Gosarling" },
+        { "gewogSerialNo": 196, "gewogId": "1805", "gewogName": "Kikhorthang" },
+        { "gewogSerialNo": 197, "gewogId": "1806", "gewogName": "Mendrelgang" },
+        { "gewogSerialNo": 198, "gewogId": "1807", "gewogName": "Sergithang" },
+        { "gewogSerialNo": 199, "gewogId": "1808", "gewogName": "Phuentenchu" },
+        { "gewogSerialNo": 200, "gewogId": "1809", "gewogName": "Rangthangling" },
+        { "gewogSerialNo": 201, "gewogId": "1810", "gewogName": "Semjong" },
+        { "gewogSerialNo": 202, "gewogId": "1811", "gewogName": "Tsholingkhar" },
+        { "gewogSerialNo": 203, "gewogId": "1812", "gewogName": "Tsirangtoe" },
+        { "gewogSerialNo": 204, "gewogId": "1899", "gewogName": "Unknown" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 19,
+      "dzongkhagId": "19",
+      "dzongkhagName": "Wangdue Phodrang",
+      "gewogs": [
+        { "gewogSerialNo": 205, "gewogId": "1901", "gewogName": "Athang" },
+        { "gewogSerialNo": 206, "gewogId": "1902", "gewogName": "Bjena" },
+        { "gewogSerialNo": 207, "gewogId": "1903", "gewogName": "Daga" },
+        { "gewogSerialNo": 208, "gewogId": "1904", "gewogName": "Dangchu" },
+        { "gewogSerialNo": 209, "gewogId": "1905", "gewogName": "Gangtey" },
+        { "gewogSerialNo": 210, "gewogId": "1906", "gewogName": "Gase Tshogom" },
+        { "gewogSerialNo": 211, "gewogId": "1907", "gewogName": "Gase Tshoom" },
+        { "gewogSerialNo": 212, "gewogId": "1908", "gewogName": "Kazhi" },
+        { "gewogSerialNo": 213, "gewogId": "1909", "gewogName": "Nahi" },
+        { "gewogSerialNo": 214, "gewogId": "1910", "gewogName": "Nyisho" },
+        { "gewogSerialNo": 215, "gewogId": "1911", "gewogName": "Phangyul" },
+        { "gewogSerialNo": 216, "gewogId": "1912", "gewogName": "Phobji" },
+        { "gewogSerialNo": 217, "gewogId": "1913", "gewogName": "Rubesa" },
+        { "gewogSerialNo": 218, "gewogId": "1914", "gewogName": "Sephu" },
+        { "gewogSerialNo": 219, "gewogId": "1915", "gewogName": "Thedtsho" },
+        { "gewogSerialNo": 220, "gewogId": "1999", "gewogName": "Unknown" },
+        { "gewogSerialNo": 233, "gewogId": "1916", "gewogName": "Bajo Throm" }
+      ]
+    },
+    {
+      "dzongkhagSerialNo": 20,
+      "dzongkhagId": "20",
+      "dzongkhagName": "Zhemgang",
+      "gewogs": [
+        { "gewogSerialNo": 221, "gewogId": "2001", "gewogName": "Bardo" },
+        { "gewogSerialNo": 222, "gewogId": "2002", "gewogName": "Bjoka" },
+        { "gewogSerialNo": 223, "gewogId": "2003", "gewogName": "Goshing" },
+        { "gewogSerialNo": 224, "gewogId": "2004", "gewogName": "Nangkor" },
+        { "gewogSerialNo": 225, "gewogId": "2005", "gewogName": "Ngangla" },
+        { "gewogSerialNo": 226, "gewogId": "2006", "gewogName": "Phangkhar" },
+        { "gewogSerialNo": 227, "gewogId": "2007", "gewogName": "Shingkhar" },
+        { "gewogSerialNo": 228, "gewogId": "2008", "gewogName": "Trong" },
+        { "gewogSerialNo": 229, "gewogId": "2099", "gewogName": "Unknown" },
+        { "gewogSerialNo": 235, "gewogId": "2009", "gewogName": "Zhemgang Throm" }
+      ]
+    }
+  ]
+}

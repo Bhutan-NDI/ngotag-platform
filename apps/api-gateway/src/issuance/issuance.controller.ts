@@ -21,7 +21,8 @@ import {
   NotFoundException,
   ParseUUIDPipe,
   Delete,
-  ValidationPipe
+  ValidationPipe,
+  Inject
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -69,7 +70,7 @@ import {
   IssueCredentialType,
   UploadedFileDetails
 } from './interfaces';
-import { AzureStorageService } from '@credebl/azure-storage';
+import { STORAGE_SERVICE, StorageService } from '@credebl/storage';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { v4 as uuidv4 } from 'uuid';
 import { RpcException } from '@nestjs/microservices';
@@ -85,6 +86,7 @@ import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 import { MarketplaceService } from '../marketplace/marketplace.service';
+import { isMarketplaceMeteringEnabled } from '../marketplace/utils/marketplace-config.util';
 @Controller()
 @UseFilters(CustomExceptionFilter)
 @ApiTags('credentials')
@@ -93,7 +95,7 @@ import { MarketplaceService } from '../marketplace/marketplace.service';
 export class IssuanceController {
   constructor(
     private readonly issueCredentialService: IssuanceService,
-    private readonly azureStorageService: AzureStorageService,
+    @Inject(STORAGE_SERVICE) private readonly storageService: StorageService,
     private readonly marketplaceService: MarketplaceService
   ) {}
   private readonly logger = new Logger('IssuanceController');
@@ -382,7 +384,7 @@ export class IssuanceController {
     if (file) {
       const fileKey: string = uuidv4();
       try {
-        await this.azureStorageService.uploadCsvFile(fileKey, file?.buffer);
+        await this.storageService.uploadCsvFile(fileKey, file?.buffer);
       } catch (error) {
         throw new RpcException(error.response ? error.response : error);
       }
@@ -536,7 +538,7 @@ export class IssuanceController {
     if (file && clientDetails?.isSelectiveIssuance) {
       const fileKey: string = uuidv4();
       try {
-        await this.azureStorageService.uploadCsvFile(fileKey, file.buffer);
+        await this.storageService.uploadCsvFile(fileKey, file.buffer);
       } catch (error) {
         throw new RpcException(error.response ? error.response : error);
       }
@@ -979,7 +981,12 @@ export class IssuanceController {
     // shared/cloud agents the microservice resolves it via tenant lookup and returns it here.
     const resolvedOrgId = (getCredentialDetails as { response?: { orgId?: string } } | undefined)?.response?.orgId;
     const issuanceSourceId = issueCredentialDto.id || issueCredentialDto.threadId;
-    if (resolvedOrgId && issuanceSourceId && this.isIssuedCredentialState(issueCredentialDto.state)) {
+    if (
+      isMarketplaceMeteringEnabled() &&
+      resolvedOrgId &&
+      issuanceSourceId &&
+      this.isIssuedCredentialState(issueCredentialDto.state)
+    ) {
       void this.marketplaceService
         .recordUsageEvent({
           orgId: resolvedOrgId,

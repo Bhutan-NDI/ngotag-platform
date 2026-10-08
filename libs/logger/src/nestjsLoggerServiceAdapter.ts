@@ -33,9 +33,21 @@ export default class NestjsLoggerServiceAdapter extends ConsoleLogger implements
     this.logger.info(message, this.getLogData(optionalParams));
   }
 
-  private getLogData(...optionalParams: any[]): LogData {
+  private getLogData(optionalParams: unknown[]): LogData {
+    const params = [...optionalParams];
+
+    // Nest appends the logger's context as the last string argument, not params[0].
+    const sourceClass = 'string' === typeof params[params.length - 1] ? (params.pop() as string) : undefined;
+
+    // Surfaced as data.error so winstonLogger can lift its stack.
+    const error = params.find((p) => p instanceof Error) as Error | undefined;
+    // `undefined` marks an absent argument, not a real value; false/0/null are kept.
+    const rest = params.filter((p) => !(p instanceof Error) && undefined !== p);
+
     return {
-      sourceClass: optionalParams[0] ? optionalParams[0] : undefined
+      sourceClass,
+      ...(error ? { error } : {}),
+      ...(0 < rest.length ? { props: { params: rest } } : {})
     };
   }
 }

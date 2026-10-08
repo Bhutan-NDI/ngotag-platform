@@ -5,7 +5,6 @@ import { Module } from '@nestjs/common';
 import { X509Controller } from './x509.controller';
 import { X509Service } from './x509.service';
 import { getNatsOptions } from '@credebl/common/nats.config';
-import { AzureStorageService } from '@credebl/azure-storage';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { NATSClient } from '@credebl/common/NATSClient';
 @Module({
@@ -25,6 +24,6 @@ import { NATSClient } from '@credebl/common/NATSClient';
     ])
   ],
   controllers: [X509Controller],
-  providers: [X509Service, AzureStorageService, NATSClient]
+  providers: [X509Service, NATSClient]
 })
 export class X509Module {}

@@ -43,6 +43,7 @@ interface IIndy {
 
 export interface IIssueData {
   protocolVersion?: string;
+  parentThreadId?: string;
   connectionId: string;
   credentialFormats: {
     indy: IIndy;

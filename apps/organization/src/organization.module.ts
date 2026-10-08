@@ -18,7 +18,7 @@ import { getNatsOptions } from '@credebl/common/nats.config';
 import { ClientRegistrationService } from '@credebl/client-registration';
 import { KeycloakUrlService } from '@credebl/keycloak-url';
 
-import { AzureStorageService } from '@credebl/azure-storage';
+import { StorageModule } from '@credebl/storage';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { GlobalConfigModule } from '@credebl/config/global-config.module';
 import { ConfigModule as PlatformConfig } from '@credebl/config/config.module';
@@ -39,6 +39,7 @@ import { NATSClient } from '@credebl/common/NATSClient';
       }
     ]),
     CommonModule,
+    StorageModule,
     GlobalConfigModule,
     LoggerModule,
     PlatformConfig,
@@ -61,7 +62,6 @@ import { NATSClient } from '@credebl/common/NATSClient';
     UserActivityService,
     ClientRegistrationService,
     KeycloakUrlService,
-    AzureStorageService,
     NATSClient
   ],
   exports: [OrganizationRepository]

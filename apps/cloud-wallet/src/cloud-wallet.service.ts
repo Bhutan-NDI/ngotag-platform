@@ -1,13 +1,17 @@
 /* eslint-disable camelcase */
+import { createHash } from 'crypto';
 import { CommonService } from '@credebl/common';
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException
 } from '@nestjs/common';
+import { RpcException } from '@nestjs/microservices';
 import {
   IAcceptOffer,
   ICreateCloudWalletDid,
@@ -31,12 +35,27 @@ import {
   IConnectionInvitationResponse,
   GetAllCloudWalletConnections,
   IBasicMessage,
-  IBasicMessageDetails
+  IBasicMessageDetails,
+  ICheckCloudWalletStatus,
+  IDeleteCloudWallet,
+  BaseAgentInfo,
+  IUpdateBaseWallet,
+  IW3cCredentials,
+  IProofPresentationDetails,
+  IExportCloudWallet,
+  IImportCloudWallet,
+  IWalletPortabilityJobStatus,
+  ISelfAttestedCredential,
+  IDeclineProofRequest,
+  IProofPresentationPayloadWithCred,
+  ICredentialForRequestRes
 } from '@credebl/common/interfaces/cloud-wallet.interface';
 import { CloudWalletRepository } from './cloud-wallet.repository';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { CloudWalletType } from '@credebl/enum/enum';
 import { CommonConstants } from '@credebl/common/common.constant';
+// eslint-disable-next-line camelcase
+import { cloud_wallet_user_info, user } from '@prisma/client';
 
 @Injectable()
 export class CloudWalletService {
@@ -52,10 +71,16 @@ export class CloudWalletService {
    * @returns cloud base wallet
    */
   async configureBaseWallet(configureBaseWalletPayload: ICloudBaseWalletConfigure): Promise<IGetStoredWalletInfo> {
-    const { agentEndpoint, apiKey, email, walletKey, userId } = configureBaseWalletPayload;
+    const { agentEndpoint, apiKey, email, walletKey, userId, maxSubWallets } = configureBaseWalletPayload;
 
     try {
-      const existingWalletInfo = await this.cloudWalletRepository.getCloudWalletInfo(email);
+      // Keyed on agentEndpoint, not (email, type)/(userId, type): agentEndpoint is the only thing
+      // that actually identifies "the same base wallet" -- a duplicate-registration guard keyed on
+      // the *caller's* identity instead would (a) throw for username-based admin accounts, whose
+      // email is null, and (b) cap a deployment at one base wallet per admin, contradicting this
+      // PR's own capacity-pool design (see the #71 review's two findings on this guard). This
+      // reuses getBaseWalletByAgentEndpoint rather than a dedicated lookup -- same query either way.
+      const existingWalletInfo = await this.cloudWalletRepository.getBaseWalletByAgentEndpoint(agentEndpoint);
       if (existingWalletInfo) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.agentAlreadyExist);
       }
@@ -73,7 +98,8 @@ export class CloudWalletService {
         userId,
         key: encryptionWalletKey,
         createdBy: userId,
-        lastChangedBy: userId
+        lastChangedBy: userId,
+        maxSubWallets
       };
 
       const storedWalletInfo = await this.cloudWalletRepository.storeCloudWalletInfo(walletInfoToStore);
@@ -121,7 +147,7 @@ export class CloudWalletService {
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${CommonConstants.CLOUD_WALLET_ACCEPT_PROOF_REQUEST}`;
+      const url = this.buildProofUrl(agentEndpoint, proofRecordId, CommonConstants.CLOUD_WALLET_ACCEPT_PROOF_REQUEST);
       const proofAcceptRequestPayload = {
         comment,
         filterByNonRevocationRequirements,
@@ -148,7 +174,7 @@ export class CloudWalletService {
       const { proofRecordId, userId } = proofPrsentationByIdPayload;
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}}`;
+      const url = this.buildProofUrl(agentEndpoint, proofRecordId);
 
       const getProofById = await this.commonService.httpGet(url, { headers: { authorization: decryptedApiKey } });
       return getProofById;
@@ -170,7 +196,7 @@ export class CloudWalletService {
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
       const { agentEndpoint } = baseWalletDetails;
       const threadParam = threadId ? `?threadId=${threadId}` : '';
-      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${threadParam}}`;
+      const url = this.buildProofUrl(agentEndpoint, '', threadParam);
       const getProofById = await this.commonService.httpGet(url, { headers: { authorization: decryptedApiKey } });
       return getProofById;
     } catch (error) {
@@ -180,31 +206,232 @@ export class CloudWalletService {
   }
 
   /**
+   * Decline a received proof request as holder, optionally sending a problem-report message.
+   * Restored — deleted when agent-controller had no matching endpoint (#71 review); agent-controller
+   * now has a real POST /didcomm/proofs/:id/decline-request (PR #76).
+   * @param declineProofRequestPayload
+   * @returns proof presentation
+   */
+  async declineProofRequest(declineProofRequestPayload: IDeclineProofRequest): Promise<IProofRequestRes> {
+    try {
+      const { proofRecordId, sendProblemReport, problemReportDescription, userId } = declineProofRequestPayload;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = this.buildProofUrl(agentEndpoint, proofRecordId, CommonConstants.CLOUD_WALLET_DECLINE_PROOF_REQUEST);
+      const declineProofRequestBody = { sendProblemReport, problemReportDescription };
+
+      const declineProofRequestResponse = await this.commonService.httpPost(url, declineProofRequestBody, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return declineProofRequestResponse;
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Submit a proof request accept with the caller's own chosen credential per requirement, instead
+   * of auto-selecting (see acceptProofRequest above). Wired now that agent-controller has a real
+   * POST /didcomm/proofs/:id/accept-request-with-cred (this agent's contract never had an
+   * equivalent before — not a restoration).
+   * @param proofPresentationPayloadWithCred
+   * @returns proof presentation
+   */
+  async submitProofWithCred(
+    proofPresentationPayloadWithCred: IProofPresentationPayloadWithCred
+  ): Promise<IProofRequestRes> {
+    try {
+      const { proof, userId } = proofPresentationPayloadWithCred;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = this.buildProofUrl(
+        agentEndpoint,
+        proof.proofRecordId,
+        CommonConstants.CLOUD_WALLET_POST_PROOF_REQUEST_WITH_CRED
+      );
+      // proofRecordId is a path param on agent-controller's side, not part of the body -- its
+      // tsoa schema for this route only declares proofFormats/comment, and throw-on-extras
+      // rejects any other key with a 422. Sending the whole proof object (which also carries
+      // proofRecordId) broke every real call. See the #85 review.
+      const { proofFormats, comment } = proof;
+
+      const submitProofWithCredResponse = await this.commonService.httpPost(
+        url,
+        { proofFormats, comment },
+        {
+          headers: { authorization: decryptedApiKey }
+        }
+      );
+      return submitProofWithCredResponse;
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * List the credentials that satisfy a proof request, without accepting any of them — lets the
+   * holder choose before submitting via submitProofWithCred above. Restored — deleted when
+   * agent-controller had no matching endpoint (#71 review); agent-controller now has a real
+   * GET /didcomm/proofs/:id/credentials-for-request (PR #76).
+   * @param getCredentialsForRequestPayload
+   * @returns credentials satisfying each requested attribute/predicate
+   */
+  async getCredentialsByProofId(
+    getCredentialsForRequestPayload: IProofPresentationDetails
+  ): Promise<ICredentialForRequestRes> {
+    try {
+      const { proofRecordId, userId } = getCredentialsForRequestPayload;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = this.buildProofUrl(
+        agentEndpoint,
+        proofRecordId,
+        CommonConstants.CLOUD_WALLET_GET_CREDENTIALS_BY_PROOF_REQUEST
+      );
+
+      const credentialsForRequest = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return credentialsForRequest;
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete an AnonCreds/Indy credential exchange record (and, by default, its associated stored
+   * credential) by credential record id. New — agent-controller never had a matching endpoint
+   * before (not a restoration); now has a real DELETE /didcomm/credentials/:credentialRecordId.
+   * @param credentialDetails
+   */
+  async deleteCredentialByRecord(credentialDetails: ICredentialDetails): Promise<object | string> {
+    try {
+      return await this.deleteAgentCredential(CommonConstants.CLOUD_WALLET_CREDENTIAL, credentialDetails);
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a W3C credential by credential record id. New — same rationale as
+   * deleteCredentialByRecord above, but for the separate W3C credential store
+   * (DELETE /didcomm/credentials/w3c/:credentialRecordId).
+   * @param credentialDetails
+   */
+  async deleteW3cCredentialByRecord(credentialDetails: ICredentialDetails): Promise<object | string> {
+    try {
+      return await this.deleteAgentCredential(CommonConstants.CLOUD_WALLET_W3C_CREDENTIAL, credentialDetails);
+    } catch (error) {
+      this.rethrowIfInvalidProofState(error);
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  // Shared by deleteCredentialByRecord/deleteW3cCredentialByRecord above -- both were byte-for-byte
+  // identical aside from which CommonConstants URL constant is used. See the #85 review.
+  //
+  // Returns .data, not the raw AxiosResponse -- httpDelete resolves to the full AxiosResponse
+  // ({data, status, headers, config, request}), and returning that unchanged would either expose
+  // .config.headers.authorization (the tenant's just-used decrypted agent API key) to the calling
+  // client over the NATS reply, or throw on the circular request/socket references inside it,
+  // failing the call with a 500 even though the delete succeeded upstream. Matches the convention
+  // every other httpDelete caller in this codebase already follows (agent-service.service.ts's
+  // deleteWallet, deleteOidcIssuer, deleteOid4vpVerifier). See the #85 review.
+  private async deleteAgentCredential(
+    urlBase: CommonConstants,
+    credentialDetails: ICredentialDetails
+  ): Promise<object | string> {
+    const { userId, credentialRecordId } = credentialDetails;
+    const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+    const { agentEndpoint } = baseWalletDetails;
+
+    const url = `${agentEndpoint}${urlBase}/${credentialRecordId}`;
+
+    const credentialDetailResponse = await this.commonService.httpDelete(url, {
+      headers: { authorization: decryptedApiKey }
+    });
+    return credentialDetailResponse.data;
+  }
+
+  // Shared by all 7 CLOUD_WALLET_GET_PROOF_REQUEST-based methods -- the stray-'}' typo fixed in #86
+  // happened twice independently from copy-pasting this exact template string. proofRecordId
+  // defaults to '' for getProofPresentation, the one caller with no id (suffix is its query string).
+  private buildProofUrl(agentEndpoint: string, proofRecordId = '', suffix = ''): string {
+    return `${agentEndpoint}${CommonConstants.CLOUD_WALLET_GET_PROOF_REQUEST}/${proofRecordId}${suffix}`;
+  }
+
+  // Shared by declineProofRequest/submitProofWithCred/getCredentialsByProofId/
+  // deleteCredentialByRecord/deleteW3cCredentialByRecord -- all five can hit the same
+  // agent-controller state-machine violation (a proof/credential record in a state that doesn't
+  // support the requested operation), but only getCredentialsByProofId special-cased it before,
+  // leaving the other four to fall through to the generic handleError path with an inconsistent
+  // status/shape for the same class of business error. Centralizing this also means a wording
+  // change in agent-controller's error text only needs updating in one place -- the check itself
+  // remains a literal English substring match, which is inherently fragile either way. See the
+  // #85 review.
+  private rethrowIfInvalidProofState(error: { response?: { error?: { message?: string } } }): void {
+    const message = error.response?.error?.message;
+    // agent-controller's own #85-review fix (ProofController's assertProofState helper) now
+    // throws "Cannot ${verb} a proof record in state '...'; expected 'request-received'." for
+    // acceptRequestWithCred/declineRequest/getCredentialsForRequest's state-guard case --
+    // completely different wording from the original 'Proof record is in invalid state' match,
+    // which was Credo's own raw error text reaching here before that fix existed. Matching both:
+    // the new wording is what real traffic hits today, the old one is kept in case some other
+    // code path still emits Credo's raw text. See the #85 review.
+    if (message?.includes('Proof record is in invalid state') || message?.includes("expected 'request-received'")) {
+      throw new RpcException({ message, statusCode: HttpStatus.BAD_REQUEST });
+    }
+  }
+
+  /**
    * common function for get cloud wallet
    * @param userId
    * @returns cloud wallet info
    */
   async _commonCloudWalletInfo(userId: string): Promise<[CloudWallet, string]> {
-    const baseWalletDetails = await this.cloudWalletRepository.getCloudWalletDetails(CloudWalletType.BASE_WALLET);
-
-    if (!baseWalletDetails) {
-      throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
-    }
-
-    const getAgentDetails = await this.commonService.httpGet(
-      `${baseWalletDetails?.agentEndpoint}${CommonConstants.URL_AGENT_GET_ENDPOINT}`
-    );
-    if (!getAgentDetails?.isInitialized) {
-      throw new BadRequestException(ResponseMessages.cloudWallet.error.notReachable);
-    }
-
     const getTenant = await this.cloudWalletRepository.getCloudSubWallet(userId);
 
     if (!getTenant || !getTenant?.tenantId) {
       throw new NotFoundException(ResponseMessages.cloudWallet.error.walletRecordNotFound);
     }
 
+    // Resolved by the tenant's OWN agentEndpoint, not an arbitrary active BASE_WALLET row.
+    // getCloudWalletDetails's plain findFirstOrThrow picks whichever base wallet Postgres returns
+    // first -- once more than one base wallet exists (this PR's own configureBaseWallet/
+    // getAllBaseWallets/PATCH base-wallet/:walletId make that a real, supported topology), that
+    // can be a different agent than the one this tenant actually lives on: the request would go
+    // out to the wrong endpoint carrying a token that agent doesn't recognize. See the #71 review.
+    const baseWalletDetails = await this.cloudWalletRepository.getBaseWalletByAgentEndpoint(getTenant.agentEndpoint);
+
+    if (!baseWalletDetails) {
+      throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
+    }
+
     const decryptedApiKey = await this.commonService.decryptPassword(getTenant?.agentApiKey);
+
+    // Authenticated — agent-controller's GET /agent now requires a JWT (AgentController.getAgentInfo
+    // carries @Security since the #75 port), so an unauthenticated call here always 401s, breaking
+    // every one of this helper's ~28 callers. Decrypt the tenant's own key above and send it, same
+    // as checkAgentHealth already does for the callers that also call that separately.
+    const getAgentDetails = await this.commonService.httpGet(
+      `${baseWalletDetails?.agentEndpoint}${CommonConstants.URL_AGENT_GET_ENDPOINT}`,
+      { headers: { authorization: decryptedApiKey } }
+    );
+    if (!getAgentDetails?.isInitialized) {
+      throw new BadRequestException(ResponseMessages.cloudWallet.error.notReachable);
+    }
 
     return [baseWalletDetails, decryptedApiKey];
   }
@@ -215,6 +442,11 @@ export class CloudWalletService {
    * @returns cloud wallet details
    */
   async createCloudWallet(cloudWalletDetails: ICreateCloudWallet): Promise<IStoredWalletDetails> {
+    // Tracks whether this call is the one holding a claimed capacity slot, so the catch block
+    // below knows whether there is anything to release. Declared outside the try so it's visible
+    // there regardless of which line inside the try throws.
+    let capacityClaimed = false;
+    let claimedBaseWalletId: string | undefined;
     try {
       const { label, connectionImageUrl, email, userId } = cloudWalletDetails;
       const agentPayload = {
@@ -224,13 +456,41 @@ export class CloudWalletService {
         }
       };
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(email);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
       if (checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.userExist);
       }
 
-      const baseWalletDetails = await this.cloudWalletRepository.getCloudWalletDetails(CloudWalletType.BASE_WALLET);
+      // Picks an active base wallet that still has capacity, deterministically -- not just
+      // whichever active row Postgres returns first. The previous plain findFirstOrThrow (no
+      // capacity predicate, no ordering) could reject creation with a full wallet A while an
+      // empty wallet B sat idle, and which of the two got picked wasn't even reproducible between
+      // calls. See the #71 review.
+      const baseWalletDetails = await this.cloudWalletRepository.getAvailableBaseWallet();
+
+      if (!baseWalletDetails) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.BaseWalletLimitExceeded);
+      }
+
+      // The read above only reflects capacity as of a moment ago -- two concurrent requests can
+      // both read the same base wallet with room for exactly one more tenant and both proceed past
+      // this point, over-provisioning it past maxSubWallets. claimBaseWalletCapacity is the actual
+      // claim: an atomic conditional UPDATE that succeeds only if the row still has room at the
+      // instant it runs, so at most one of two racing callers wins it. Done before the remote
+      // agent call (not after, where the old incrementBaseWalletUseCount ran) so nothing remote
+      // happens on a slot this request didn't actually secure. Released in the catch below if
+      // anything past this point fails, so a failed creation doesn't permanently burn capacity it
+      // never used. See the #71 review.
+      const claimed = await this.cloudWalletRepository.claimBaseWalletCapacity(
+        baseWalletDetails.id,
+        baseWalletDetails.maxSubWallets
+      );
+      if (!claimed) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.BaseWalletLimitExceeded);
+      }
+      capacityClaimed = true;
+      claimedBaseWalletId = baseWalletDetails.id;
 
       const { agentEndpoint, agentApiKey } = baseWalletDetails;
       if (!agentEndpoint || !agentApiKey) {
@@ -255,7 +515,10 @@ export class CloudWalletService {
         });
       }
 
-      const walletKey = await this.commonService.dataEncryption(createCloudWalletResponse.config.walletConfig.token);
+      // createTenant's response is { token, ...tenantRecord } — Credo 0.6.2's TenantConfig is
+      // just { label: string }, no walletConfig. Matches the agentApiKey assignment below, which
+      // already reads the same top-level field correctly.
+      const walletKey = await this.commonService.dataEncryption(createCloudWalletResponse.token);
 
       if (!walletKey) {
         throw new BadRequestException(ResponseMessages.cloudWallet.error.encryptCloudWalletKey, {
@@ -277,9 +540,22 @@ export class CloudWalletService {
         key: walletKey,
         connectionImageUrl
       };
+      // The capacity claim above already incremented useCount -- this call no longer does, it
+      // only persists the sub-wallet's own row. See claimBaseWalletCapacity's docblock.
       const storeCloudWalletDetails = await this.cloudWalletRepository.storeCloudWalletDetails(cloudWalletResponse);
       return storeCloudWalletDetails;
     } catch (error) {
+      // Release a claimed slot on any failure past that point -- the tenant was never actually
+      // created (or its record never actually persisted), so the capacity this request claimed
+      // must go back to the pool rather than being burned on a request that didn't use it. A
+      // second, unrelated failure here (the DB write itself failing) is logged and swallowed
+      // rather than replacing the real error below -- best-effort, same as the old post-hoc
+      // increment's own failure handling.
+      if (capacityClaimed && claimedBaseWalletId) {
+        await this.cloudWalletRepository.decrementBaseWalletUseCount(claimedBaseWalletId).catch((releaseError) => {
+          this.logger.error(`[createCloudWallet] - failed to release claimed base wallet capacity: ${releaseError}`);
+        });
+      }
       this.logger.error(`[createCloudWallet] - error in create cloud wallet: ${error}`);
       await this.commonService.handleError(error);
     }
@@ -295,7 +571,7 @@ export class CloudWalletService {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { email, userId, ...invitationDetails } = ReceiveInvitationDetails;
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(email);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
@@ -338,7 +614,7 @@ export class CloudWalletService {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { email, userId, ...offerDetails } = acceptOfferDetails;
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(email);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
@@ -378,10 +654,15 @@ export class CloudWalletService {
    */
   async createDid(createDidDetails: ICreateCloudWalletDid): Promise<Response> {
     try {
+      // isDefault forwarded through, not stripped: agent-controller's DidController.writeDid
+      // (#75) now accepts isDefault and tags the created DID's own DidRecord when set, and
+      // getDidList (below) reads that same tag via GET /dids?isDefault=true. Stripping it here
+      // would make the read side permanently return an empty list -- no cloud wallet could ever
+      // have a default DID. See the #71 review.
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { email, userId, ...didDetails } = createDidDetails;
 
-      const checkUserExist = await this.cloudWalletRepository.checkUserExist(email);
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
 
       if (!checkUserExist) {
         throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
@@ -419,16 +700,34 @@ export class CloudWalletService {
    * @param walletDetails
    * @returns DID list
    */
-  async getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {
+  async getDidList(
+    walletDetails: IWalletDetailsForDidList
+  ): Promise<IProofRequestRes[] | (Record<string, unknown> & { hashTenantID: string })> {
     try {
-      const { userId } = walletDetails;
+      const { userId, isDefault } = walletDetails;
+
       const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
 
       const { agentEndpoint } = baseWalletDetails;
 
-      const url = `${agentEndpoint}${CommonConstants.URL_AGENT_GET_DID}`;
+      // isDefault forwarded as a query param, not silently dropped: agent-controller's GET /dids
+      // (DidController.getDids) now accepts ?isDefault=true and answers from its own DidRecord tag
+      // query -- see the agent-controller #75 review. Previously this threw NotImplementedException
+      // for any isDefault request since there was nothing on the agent side to forward it to.
+      const url = isDefault
+        ? `${agentEndpoint}${CommonConstants.URL_AGENT_GET_DID}?isDefault=true`
+        : `${agentEndpoint}${CommonConstants.URL_AGENT_GET_DID}`;
 
       const didList = (await this.commonService.httpGet(url, { headers: { authorization: decryptedApiKey } })) ?? [];
+      // Reshaped to a single object: an array can't carry a named property (hashTenantID) across a JSON hop.
+      if (isDefault) {
+        const [defaultDid] = didList;
+        if (!defaultDid) {
+          throw new NotFoundException(ResponseMessages.cloudWallet.error.defaultDidNotFound);
+        }
+        const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+        return { ...defaultDid, hashTenantID: createHash('md5').update(tenantId).digest('hex') };
+      }
       return didList;
     } catch (error) {
       await this.commonService.handleError(error);
@@ -588,6 +887,515 @@ export class CloudWalletService {
     } catch (error) {
       await this.commonService.handleError(error);
       throw error;
+    }
+  }
+
+  /**
+   * Start a native wallet export job against agent-controller. Async: returns { jobId, status }
+   * immediately — poll getExportWalletStatus for the actual completion result (download URL +
+   * checksum). tenantId comes from the platform's own record, not the caller — the agent-side
+   * export endpoint (agent-controller PR #72) takes it from the path, not the request body.
+   * @param exportWallet
+   * @returns { jobId, status }
+   */
+  async exportCloudWallet(exportWallet: IExportCloudWallet): Promise<Response> {
+    try {
+      const { userId, passKey, walletID } = exportWallet;
+
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
+      if (!checkUserExist) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
+      }
+
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_EXPORT}${tenantId}`;
+
+      const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
+      if (!checkCloudWalletAgentHealth) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
+      }
+
+      // POST /multi-tenancy/export/:tenantId requires the *base* wallet's own token, not the
+      // tenant token decryptedApiKey holds (that one's only valid against /agent, which is what
+      // checkAgentHealth just used it for) -- every /multi-tenancy/* route rejects a tenant-scoped
+      // token lacking the Basewallet scope. Same fix as checkCloudWalletStatus/deleteCloudWallet.
+      const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+
+      const exportWalletResponse = await this.commonService.httpPost(
+        url,
+        { passKey, walletID },
+        {
+          headers: { authorization: baseWalletApiKey }
+        }
+      );
+
+      if (!exportWalletResponse) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.exportWallet, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      return exportWalletResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Poll the status of an export job started via exportCloudWallet. On completion, the response
+   * carries a short-lived pre-signed S3 download URL and the artifact's SHA-256 checksum.
+   * @param jobStatus
+   * @returns the WalletPortabilityJobRecord, as reported by agent-controller
+   */
+  async getExportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
+    try {
+      const { userId, jobId } = jobStatus;
+      const [baseWalletDetails] = await this._commonCloudWalletInfo(userId);
+      const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      // encodeURIComponent as defense in depth -- the controller's ParseUUIDPipe already rejects
+      // a malformed jobId before this is ever reached, but this keeps the call safe even if that
+      // validation is ever loosened or bypassed. See the #71 review.
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_EXPORT}${tenantId}/status/${encodeURIComponent(jobId)}`;
+      // Base wallet token required -- see exportCloudWallet's identical comment.
+      const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+      const statusResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: baseWalletApiKey }
+      });
+
+      if (!statusResponse) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.jobStatusNotFound);
+      }
+
+      return statusResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check whether a user's cloud wallet tenant still exists on the agent
+   * @param checkCloudWalletStatusPayload
+   * @returns tenant record if the wallet still exists on the agent
+   */
+  async checkCloudWalletStatus(checkCloudWalletStatusPayload: ICheckCloudWalletStatus): Promise<Response> {
+    try {
+      const { userId } = checkCloudWalletStatusPayload;
+      const cloudSubWalletDetails = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      if (!cloudSubWalletDetails || !cloudSubWalletDetails.tenantId) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.walletRecordNotFound);
+      }
+
+      // Resolved by the tenant's OWN agentEndpoint, not an arbitrary active BASE_WALLET row --
+      // same fix, same reasoning as _commonCloudWalletInfo. This method can't use that helper
+      // directly since it needs the *base* wallet's own token below, not the tenant's.
+      const baseWalletDetails = await this.cloudWalletRepository.getBaseWalletByAgentEndpoint(
+        cloudSubWalletDetails.agentEndpoint
+      );
+      if (!baseWalletDetails) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
+      }
+
+      // GET /multi-tenancy/:tenantId requires the *base* wallet's own token, not the tenant token
+      // _commonCloudWalletInfo returns — every /multi-tenancy/* route rejects a tenant-scoped
+      // token lacking the Basewallet scope. See the closed #74 PR review.
+      const decryptedApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+      const url = `${baseWalletDetails.agentEndpoint}${CommonConstants.CLOUD_WALLET_DELETE_BY_TENANT_ID}${cloudSubWalletDetails.tenantId}`;
+
+      const tenantStatusResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return tenantStatusResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a user's cloud wallet: removes the tenant on the agent and the platform record
+   * @param deleteCloudWalletPayload
+   * @returns deleted cloud wallet record
+   */
+  // eslint-disable-next-line camelcase
+  async deleteCloudWallet(deleteCloudWalletPayload: IDeleteCloudWallet): Promise<cloud_wallet_user_info | null> {
+    try {
+      const { userId, deleteHolder } = deleteCloudWalletPayload;
+      const cloudSubWalletDetails = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      if (!cloudSubWalletDetails || !cloudSubWalletDetails.tenantId) {
+        if (deleteHolder) {
+          // A retry after the wallet is already gone: let the caller go on to delete the holder.
+          this.logger.warn(`[deleteCloudWallet] - no cloud wallet left for user ${userId}, nothing to delete`);
+          return null;
+        }
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.walletRecordNotFound);
+      }
+
+      // Resolved by the tenant's OWN agentEndpoint, not an arbitrary active BASE_WALLET row --
+      // same fix, same reasoning as _commonCloudWalletInfo/checkCloudWalletStatus.
+      const baseWalletDetails = await this.cloudWalletRepository.getBaseWalletByAgentEndpoint(
+        cloudSubWalletDetails.agentEndpoint
+      );
+      if (!baseWalletDetails) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.notFoundBaseWallet);
+      }
+
+      // Base-wallet scope required for /multi-tenancy/:tenantId — same reasoning as
+      // checkCloudWalletStatus above.
+      const decryptedApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+      const url = `${baseWalletDetails.agentEndpoint}${CommonConstants.CLOUD_WALLET_DELETE_BY_TENANT_ID}${cloudSubWalletDetails.tenantId}`;
+
+      let tenantAlreadyDeleted = false;
+      let deleteTenantResponse;
+      try {
+        deleteTenantResponse = await this.commonService.httpDelete(url, {
+          headers: { authorization: decryptedApiKey }
+        });
+      } catch (error) {
+        if (!this.isTenantNotFoundOnAgent(error)) {
+          throw error;
+        }
+        // Deleted on the agent by an earlier attempt that failed before removing the row: finish the cleanup.
+        tenantAlreadyDeleted = true;
+      }
+
+      if (
+        !tenantAlreadyDeleted &&
+        (!deleteTenantResponse ||
+          (HttpStatus.OK !== deleteTenantResponse.status && HttpStatus.NO_CONTENT !== deleteTenantResponse.status))
+      ) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.deleteCloudWallet, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      const deletedCloudWalletDetails = await this.cloudWalletRepository.deleteCloudWalletDetails(
+        cloudSubWalletDetails.id
+      );
+      // Best-effort, mirroring createCloudWallet's own claim: the tenant is already deleted
+      // on the agent and the row is already gone here -- log rather than fail an already-
+      // successful delete over a counter update. Without this, useCount only ever goes up (see
+      // claimBaseWalletCapacity's own docblock), permanently leaking capacity that a real
+      // deletion should have freed. See the #73 review.
+      await this.cloudWalletRepository.decrementBaseWalletUseCount(baseWalletDetails.id).catch((error) => {
+        this.logger.error(`[deleteCloudWallet] - failed to decrement base wallet useCount: ${error}`);
+      });
+      return deletedCloudWalletDetails;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  // A 404 carrying agent-controller's `{ reason }` body. An unreachable agent is also mapped to 404 by
+  // CommonService, but its body is a plain message string, so it is not mistaken for a deleted tenant.
+  private isTenantNotFoundOnAgent(error: unknown): boolean {
+    if (!(error instanceof HttpException) || HttpStatus.NOT_FOUND !== error.getStatus()) {
+      return false;
+    }
+    const body = error.getResponse() as { error?: { reason?: unknown } } | string;
+    return 'object' === typeof body && 'string' === typeof body.error?.reason;
+  }
+
+  /**
+   * Start a native wallet import job against agent-controller. Async: returns { jobId, status }
+   * immediately — poll getImportWalletStatus for the actual completion result (backupProfile).
+   * exportUrl/checksum/passKey are the values returned by a prior export job.
+   * @param importWallet
+   * @returns { jobId, status }
+   */
+  async importCloudWallet(importWallet: IImportCloudWallet): Promise<Response> {
+    try {
+      const { userId, exportUrl, checksum, passKey } = importWallet;
+
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
+      if (!checkUserExist) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
+      }
+
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_IMPORT}${tenantId}`;
+
+      const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
+      if (!checkCloudWalletAgentHealth) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
+      }
+
+      // POST /multi-tenancy/import/:tenantId requires the *base* wallet's own token, not the
+      // tenant token decryptedApiKey holds (that one's only valid against /agent, which is what
+      // checkAgentHealth just used it for) -- every /multi-tenancy/* route rejects a tenant-scoped
+      // token lacking the Basewallet scope. Same fix as checkCloudWalletStatus/deleteCloudWallet
+      // (and exportCloudWallet, on the stacked feat/cloud-wallet-export branch).
+      const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+
+      const importWalletResponse = await this.commonService.httpPost(
+        url,
+        { exportUrl, checksum, passKey },
+        {
+          headers: { authorization: baseWalletApiKey }
+        }
+      );
+
+      if (!importWalletResponse) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.importWallet, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      return importWalletResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all configured base wallets and their current capacity
+   * @returns base wallet info list
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async getBaseWalletDetails(user: user): Promise<BaseAgentInfo[]> {
+    try {
+      const baseWallets = await this.cloudWalletRepository.getAllBaseWallets();
+      return baseWallets.map(({ id, agentEndpoint, isActive, useCount, maxSubWallets }) => ({
+        id,
+        agentEndpoint,
+        isActive,
+        useCount,
+        maxSubWallets
+      }));
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update a base wallet's active flag / sub-wallet capacity
+   * @param updateBaseWalletPayload
+   * @returns updated base wallet info
+   */
+  async updateBaseWalletDetails(updateBaseWalletPayload: IUpdateBaseWallet): Promise<BaseAgentInfo[]> {
+    try {
+      const { walletId, isActive, maxSubWallets } = updateBaseWalletPayload;
+      const updatedWallet = await this.cloudWalletRepository.updateBaseWallet(walletId, isActive, maxSubWallets);
+
+      return [
+        {
+          id: updatedWallet.id,
+          agentEndpoint: updatedWallet.agentEndpoint,
+          isActive: updatedWallet.isActive,
+          useCount: updatedWallet.useCount,
+          maxSubWallets: updatedWallet.maxSubWallets
+        }
+      ];
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all W3C credentials for a tenant
+   * @param w3cCredentialsDetails
+   * @returns W3C credential list
+   */
+  async getAllW3cCredentials(w3cCredentialsDetails: IW3cCredentials): Promise<Response> {
+    try {
+      const { userId } = w3cCredentialsDetails;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_W3C_CREDENTIAL}`;
+
+      const w3cCredentialsResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return w3cCredentialsResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a W3C credential by its record id
+   * @param w3cCredentialDetails
+   * @returns W3C credential
+   */
+  async getW3cCredentialByCredentialRecordId(w3cCredentialDetails: IW3cCredentials): Promise<Response> {
+    try {
+      const { userId, credentialRecordId } = w3cCredentialDetails;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_W3C_CREDENTIAL}/${credentialRecordId}`;
+
+      const w3cCredentialResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return w3cCredentialResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a credential's format data by its record id
+   * @param credentialDetails
+   * @returns credential format data
+   */
+  async getCredentialFormatDataByCredentialRecordId(credentialDetails: ICredentialDetails): Promise<Response> {
+    try {
+      const { userId, credentialRecordId } = credentialDetails;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_CREDENTIAL}/${credentialRecordId}${CommonConstants.CLOUD_WALLET_CREDENTIAL_FORMAT_DATA}`;
+
+      const credentialFormatDataResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return credentialFormatDataResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a proof presentation's format data by its record id
+   * @param proofPresentationDetails
+   * @returns proof presentation format data
+   */
+  async getProofFormatDataByProofRecordId(proofPresentationDetails: IProofPresentationDetails): Promise<Response> {
+    try {
+      const { userId, proofRecordId } = proofPresentationDetails;
+      const [baseWalletDetails, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      const url = this.buildProofUrl(agentEndpoint, proofRecordId, CommonConstants.CLOUD_WALLET_PROOF_FORM_DATA);
+
+      const proofFormatDataResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: decryptedApiKey }
+      });
+      return proofFormatDataResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Poll the status of an import job started via importCloudWallet. On completion, the response
+   * carries backupProfile — the name the tenant's pre-import profile was renamed to.
+   * @param jobStatus
+   * @returns the WalletPortabilityJobRecord, as reported by agent-controller
+   */
+  async getImportWalletStatus(jobStatus: IWalletPortabilityJobStatus): Promise<Response> {
+    try {
+      const { userId, jobId } = jobStatus;
+      const [baseWalletDetails] = await this._commonCloudWalletInfo(userId);
+      const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+      const { agentEndpoint } = baseWalletDetails;
+
+      // encodeURIComponent as defense in depth -- the controller's ParseUUIDPipe already rejects
+      // a malformed jobId before this is reached for a gateway-routed request, but this keeps the
+      // call safe even if that validation is ever loosened, bypassed, or reached via an internal
+      // NATS caller directly. See the #73 review.
+      const url = `${agentEndpoint}${CommonConstants.URL_CLOUD_WALLET_IMPORT}${tenantId}/status/${encodeURIComponent(jobId)}`;
+      // Base wallet token required -- see importCloudWallet's identical comment.
+      const baseWalletApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
+      const statusResponse = await this.commonService.httpGet(url, {
+        headers: { authorization: baseWalletApiKey }
+      });
+
+      if (!statusResponse) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.jobStatusNotFound);
+      }
+
+      return statusResponse;
+    } catch (error) {
+      await this.commonService.handleError(error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create self-attested W3C credential
+   * @param selfAttestedCredential
+   * @returns Self-attested credential Details
+   */
+  async createSelfAttestedW3cCredential(selfAttestedCredential: ISelfAttestedCredential): Promise<Response> {
+    try {
+      const { userId } = selfAttestedCredential;
+      // Destructured explicitly rather than rest-spread: agent-controller's tsoa config throws on
+      // any body property outside its jsonLdCredentialOptions model (@context/type/
+      // credentialSubject/proofType only, additionalProperties: false). ISelfAttestedCredential's
+      // own `[key: string]: unknown` says extras pass through, which they don't past the agent's
+      // validation — matching the model's real contract here instead.
+      const { '@context': context, type, credentialSubject, proofType } = selfAttestedCredential;
+      const selfAttestedDetails = { '@context': context, type, credentialSubject, proofType };
+
+      const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
+
+      if (!checkUserExist) {
+        throw new ConflictException(ResponseMessages.cloudWallet.error.walletNotExist);
+      }
+      // baseWalletDetails deliberately unused here (not destructured) — not because it's wrong
+      // (_commonCloudWalletInfo already resolves the tenant's own base wallet via
+      // getBaseWalletByAgentEndpoint, fixed at the root on the base branch), just not needed: this
+      // handler wants decryptedApiKey plus getTenant's own agentEndpoint below, not
+      // baseWalletDetails.agentEndpoint (which would be the same value regardless).
+      const [, decryptedApiKey] = await this._commonCloudWalletInfo(userId);
+      // A second, identical query to _commonCloudWalletInfo's own internal getCloudSubWallet
+      // call — deliberate, not an oversight. Widening the helper's 2-tuple return to also hand
+      // back the tenant record would save this round-trip but touches every one of its ~28
+      // other callers; left as its own query here rather than take that on as part of this fix.
+      const getTenant = await this.cloudWalletRepository.getCloudSubWallet(userId);
+
+      const { tenantId, agentEndpoint } = getTenant;
+
+      // No tenantId appended — the endpoint now resolves the tenant from decryptedApiKey's own
+      // claims (a per-tenant token, not the base wallet's), matching CLOUD_WALLET_GET_PROOF_REQUEST
+      // and URL_CONN_INVITE's existing calling convention above. See the constant's own comment.
+      const url = `${agentEndpoint}${CommonConstants.CLOUD_WALLET_SELF_ATTESTED_W3C_CREDENTIAL}`;
+
+      const checkCloudWalletAgentHealth = await this.commonService.checkAgentHealth(agentEndpoint, decryptedApiKey);
+
+      if (!checkCloudWalletAgentHealth) {
+        throw new NotFoundException(ResponseMessages.cloudWallet.error.agentNotRunning);
+      }
+      const selfAttestedCredentialResponse = await this.commonService.httpPost(url, selfAttestedDetails, {
+        headers: { authorization: decryptedApiKey }
+      });
+
+      if (!selfAttestedCredentialResponse) {
+        throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.createSelfAttestedW3cCredential, {
+          cause: new Error(),
+          description: ResponseMessages.errorMessages.serverError
+        });
+      }
+
+      selfAttestedCredentialResponse.tenantId = tenantId;
+
+      return selfAttestedCredentialResponse;
+    } catch (error) {
+      this.logger.error(`[createSelfAttestedW3cCredential] - error in create self-attested credential: ${error}`);
+      await this.commonService.handleError(error);
     }
   }
 }

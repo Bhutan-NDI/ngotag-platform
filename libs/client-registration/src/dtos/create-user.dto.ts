@@ -6,7 +6,7 @@ import { ApiExtraModels } from '@nestjs/swagger';
 export class CreateUserDto {
   id?: string;
   username?: string;
-  email: string;
+  email?: string;
   password: string;
   logo_uri?: string;
   token_lifetime?: number;

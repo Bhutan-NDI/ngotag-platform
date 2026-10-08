@@ -11,6 +11,7 @@ import {
   IIssuanceCreateOffer,
   IOutOfBandCredentialOffer,
   ISendProofRequestPayload,
+  ISetDedicatedAgentToken,
   IStoreAgent,
   IStoreOrgAgentDetails,
   ITenantCredDef,
@@ -90,6 +91,11 @@ export class AgentServiceController {
   @MessagePattern({ cmd: 'agent-create-w3c-schema' })
   async createW3CSchema(payload: { url; orgId; schemaRequestPayload }): Promise<object> {
     return this.agentServiceService.createW3CSchema(payload.url, payload.orgId, payload.schemaRequestPayload);
+  }
+
+  @MessagePattern({ cmd: 'agent-migrate-w3c-schema' })
+  async migrateW3CSchema(payload: { url; orgId; schemaRequestPayload }): Promise<object> {
+    return this.agentServiceService.migrateW3CSchema(payload.url, payload.orgId, payload.schemaRequestPayload);
   }
 
   //DONE
@@ -311,6 +317,11 @@ export class AgentServiceController {
     return this.agentServiceService.createSecp256k1KeyPair(payload.orgId);
   }
 
+  @MessagePattern({ cmd: 'ethereum-create-keys' })
+  async createEthKeyPair(payload: { orgId: string }): Promise<object> {
+    return this.agentServiceService.createEthereumKeyPair(payload.orgId);
+  }
+
   @MessagePattern({ cmd: 'agent-create-connection-invitation' })
   async createConnectionInvitation(payload: {
     url: string;
@@ -331,6 +342,22 @@ export class AgentServiceController {
     user: IUserRequestInterface;
   }): Promise<IStoreAgent> {
     return this.agentServiceService.agentConfigure(payload.agentConfigureDto, payload.user);
+  }
+
+  /**
+   * Store a token minted outside the platform for an org with a dedicated agent
+   * @param payload
+   * @returns The org, endpoint and role the token was stored for
+   */
+  @MessagePattern({ cmd: 'set-dedicated-agent-token' })
+  async setDedicatedAgentToken(payload: {
+    setDedicatedAgentTokenDto: Omit<ISetDedicatedAgentToken, 'userId'>;
+    userId: string;
+  }): Promise<object> {
+    return this.agentServiceService.setDedicatedAgentToken({
+      ...payload.setDedicatedAgentTokenDto,
+      userId: payload.userId
+    });
   }
 
   @MessagePattern({ cmd: 'get-agent-details-by-org-id' })

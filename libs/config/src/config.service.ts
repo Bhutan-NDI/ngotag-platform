@@ -22,6 +22,13 @@ export class ConfigService {
     return this.configService.get<string>('SLACK_INC_WEBHOOK_URL');
   }
 
+  // Trimmed/lowercased so a stray whitespace or a differently-cased value (e.g. LOG_FORMAT=JSON
+  // from a secrets manager) doesn't silently fail the 'json' check and ship ANSI-colourised
+  // output to CloudWatch instead.
+  get logFormat(): string {
+    return this.configService.get<string>('LOG_FORMAT')?.trim().toLowerCase();
+  }
+
   private get environment(): string {
     return this.configService.get<string>('NODE_ENV');
   }

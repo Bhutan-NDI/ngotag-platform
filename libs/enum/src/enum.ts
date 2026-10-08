@@ -53,7 +53,8 @@ export enum DidMethod {
   INDY = 'indy',
   KEY = 'key',
   WEB = 'web',
-  POLYGON = 'polygon'
+  POLYGON = 'polygon',
+  ETHEREUM = 'ethr'
 }
 
 export enum Ledgers {
@@ -88,6 +89,14 @@ export enum EndorserTransactionType {
 export enum schemaRequestType {
   W3C = 'w3c',
   INDY = 'indy'
+}
+
+// Mirrors agent-controller's AgentRole. The role a minted token carries decides which routes the
+// agent will accept it on, so the platform has to assert it before storing one.
+export enum AgentRole {
+  RestRootAgentWithTenants = 'RestRootAgentWithTenants',
+  RestRootAgent = 'RestRootAgent',
+  RestTenantAgent = 'RestTenantAgent'
 }
 
 export enum OrgAgentType {
@@ -274,6 +283,7 @@ export enum IndySchemaDataType {
 
 export enum JSONSchemaType {
   POLYGON_W3C = 'polygon',
+  ETHEREUM_W3C = 'ethr',
   LEDGER_LESS = 'no_ledger'
 }
 

@@ -40,6 +40,19 @@ export interface IAgentConfigure {
   network?: string;
 }
 
+export interface ISetDedicatedAgentToken {
+  targetOrgId: string;
+  agentToken: string;
+  agentEndPoint: string;
+  userId: string;
+}
+
+export interface IDedicatedAgentTokenResult {
+  orgId: string;
+  agentEndPoint: string;
+  role: string;
+}
+
 export interface IOutOfBandCredentialOffer {
   emailId: string;
   attributes: IAttributes[];
@@ -333,8 +346,14 @@ export interface IAgentStatus {
 export interface ISchema {
   uri: string;
 }
+
+export interface IFilter {
+  type: string;
+  pattern: string;
+}
 export interface IFields {
   path: string[];
+  filter?: IFilter;
 }
 export interface IConstraints {
   fields: IFields[];

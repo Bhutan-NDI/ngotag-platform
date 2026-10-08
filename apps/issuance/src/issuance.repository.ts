@@ -93,11 +93,20 @@ export class IssuanceRepository {
     }
   }
 
-  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations[]> {
+  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations> {
     try {
-      return this.prisma.agent_invitations.findMany({
+      return this.prisma.agent_invitations.findFirst({
         where: {
-          orgId
+          AND: [
+            {
+              orgId
+            },
+            {
+              invitationDid: {
+                not: null
+              }
+            }
+          ]
         },
         orderBy: {
           createDateTime: 'asc'
@@ -416,6 +425,18 @@ export class IssuanceRepository {
     }
   }
 
+  async interruptFileUpload(fileId: string, orgId: string): Promise<boolean> {
+    const result = await this.prisma.file_upload.updateMany({
+      where: {
+        id: fileId,
+        orgId,
+        status: { in: [FileUploadStatus.started, FileUploadStatus.retry] }
+      },
+      data: { status: FileUploadStatus.interrupted }
+    });
+    return 0 < result.count;
+  }
+
   async countErrorsForFile(fileUploadId: string): Promise<number> {
     try {
       const errorCount = await this.prisma.file_data.count({
@@ -540,6 +561,13 @@ export class IssuanceRepository {
       this.logger.error(`[getFileDetailsByFileId] - error: ${JSON.stringify(error)}`);
       throw error;
     }
+  }
+
+  async getFileDataForProcessing(id: string, fileUploadId: string, orgId: string): Promise<{ status: boolean } | null> {
+    return this.prisma.file_data.findFirst({
+      where: { id, fileUploadId, fileUpload: { orgId } },
+      select: { status: true }
+    });
   }
 
   async updateFileUploadData(fileUploadData: FileUploadData): Promise<file_data> {

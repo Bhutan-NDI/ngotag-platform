@@ -12,6 +12,7 @@ import { JwtPayload } from './jwt-payload.interface';
 import { OrganizationService } from '../organization/organization.service';
 import { PassportStrategy } from '@nestjs/passport';
 import { ResponseMessages } from '@credebl/common/response-messages';
+import { UserRole } from '@credebl/enum/enum';
 import { UserService } from '../user/user.service';
 import { passportJwtSecret } from 'jwks-rsa';
 
@@ -56,7 +57,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: JwtPayload): Promise<object> {
     let userDetails = null;
-    let userInfo;
 
     const sessionId = payload?.sid;
     let sessionDetails = null;
@@ -70,10 +70,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         throw new UnauthorizedException(ResponseMessages.user.error.invalidAccessToken);
       }
     }
-    if (payload?.email) {
-      userInfo = await this.usersService.getUserByUserIdInKeycloak(payload?.email);
-    }
-
     if (payload.hasOwnProperty('client_id') && uuidRegex.test(payload['client_id'])) {
       const orgDetails: IOrganization = await this.organizationService.findOrganizationOwner(payload['client_id']);
       this.logger.log('Organization details fetched');
@@ -102,18 +98,33 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!userDetails && !isServiceToken) {
       throw new NotFoundException(ResponseMessages.user.error.notFound);
     }
-    //TODO patch to QA
-    if (userInfo && userInfo?.['attributes'] && userInfo?.['attributes']?.userRole) {
-      userDetails['userRole'] = userInfo?.['attributes']?.userRole;
-    }
+    // Holder marker. This used to read a Keycloak `userRole` user attribute, which the realm's
+    // User Profile doesn't declare and so never stores -- the value was always undefined, which
+    // 403'd every holder on UserRoleGuard and silently disabled the inverse check on
+    // OrgRolesGuard/UserAccessGuard. user_role_mapping is the platform's own holder-only marker,
+    // written at signup for isHolder accounts and already fetched by findUserinKeycloak above.
+    const isHolder = Boolean(
+      userDetails?.user_role_mapping?.some((mapping) => UserRole.HOLDER === mapping?.user_role?.role)
+    );
 
     if (userDetails && payload?.ecosystem_access) {
       userDetails.ecosystem_access = payload.ecosystem_access;
     }
 
+    // isHolder is all that is consumed from user_role_mapping; dropped rather than spread, so the
+    // raw rows don't widen the authorization context every guard and controller sees. Removed from
+    // a copy, not from userDetails itself -- that object is the lookup's own response, and
+    // mutating it would strip the mapping from anything else holding a reference to it.
+    const userForRequest = { ...userDetails };
+    delete userForRequest.user_role_mapping;
+
     return {
-      ...userDetails,
-      ...payload
+      ...userForRequest,
+      ...payload,
+      // Applied after ...payload so a userRole claim in the token cannot override the
+      // database-derived value in either direction -- elevating a non-holder, or masking a
+      // mapped one. This is the second source of truth the change exists to remove.
+      userRole: isHolder ? CommonConstants.USER_HOLDER_ROLE : undefined
     };
   }
 }
