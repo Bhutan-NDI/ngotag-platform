@@ -41,13 +41,13 @@ function makeService(): { service: VerificationService; natsSend: jest.Mock } {
   return { service, natsSend };
 }
 
-function agentPayloadFor(natsSend: jest.Mock): Record<string, unknown> {
+function agentPayloadFor(natsSend: jest.Mock, cmd = 'agent-send-out-of-band-proof-request'): Record<string, unknown> {
   const [[, pattern, agentPayload]] = natsSend.mock.calls;
-  expect(pattern).toEqual({ cmd: 'agent-send-out-of-band-proof-request' });
+  expect(pattern).toEqual({ cmd });
   return agentPayload.proofRequestPayload;
 }
 
-describe('VerificationService — OOB proof request expiresInSeconds', () => {
+describe('VerificationService — out-of-band proof request expiresInSeconds', () => {
   const cases = [
     { type: 'presentationExchange', body: { presentationDefinition } },
     { type: 'indy', body: { proofFormats: { indy: { attributes: [] } } } }
@@ -81,6 +81,52 @@ describe('VerificationService — OOB proof request expiresInSeconds', () => {
 
         const payload = agentPayloadFor(natsSend);
         // Absent from the serialised payload sent over NATS and HTTP.
+        expect(JSON.parse(JSON.stringify(payload))).not.toHaveProperty('expiresInSeconds');
+      }
+    );
+  });
+});
+
+describe('VerificationService — connection-based proof request expiresInSeconds', () => {
+  const cases = [
+    { type: 'presentationExchange', body: { presentationDefinition } },
+    { type: 'indy', body: { proofFormats: { indy: { attributes: [] } } } }
+  ];
+
+  function sendProofRequest(
+    service: VerificationService,
+    type: string,
+    body: object,
+    extra: object
+  ): Promise<object | object[]> {
+    return service.sendProofRequest({
+      type,
+      ...body,
+      orgId: ORG_ID,
+      version: 'neutral',
+      connectionId: 'connection-1',
+      comment: 'KYC',
+      ...extra
+    } as never);
+  }
+
+  describe.each(cases)('$type', ({ type, body }) => {
+    it('forwards expiresInSeconds unchanged to agent-controller', async () => {
+      const { service, natsSend } = makeService();
+
+      await sendProofRequest(service, type, body, { expiresInSeconds: 600 });
+
+      expect(agentPayloadFor(natsSend, 'agent-send-proof-request').expiresInSeconds).toBe(600);
+    });
+
+    it.each([undefined, null])(
+      'leaves it out when it is %p, so agent-controller applies its default',
+      async (value) => {
+        const { service, natsSend } = makeService();
+
+        await sendProofRequest(service, type, body, { expiresInSeconds: value });
+
+        const payload = agentPayloadFor(natsSend, 'agent-send-proof-request');
         expect(JSON.parse(JSON.stringify(payload))).not.toHaveProperty('expiresInSeconds');
       }
     );

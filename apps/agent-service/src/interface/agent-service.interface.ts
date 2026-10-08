@@ -335,7 +335,7 @@ export interface ISendProofRequestPayload {
   parentThreadId?: string;
   willConfirm?: boolean;
   protocolVersion?: string;
-  /** Out-of-band proof requests: seconds until expiry, forwarded unchanged to agent-controller. */
+  /** Seconds until the request expires, forwarded unchanged to agent-controller. */
   expiresInSeconds?: number;
 }
 

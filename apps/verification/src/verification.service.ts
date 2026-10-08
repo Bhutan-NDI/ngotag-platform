@@ -304,7 +304,9 @@ export class VerificationService {
           autoAcceptProof: requestProof.autoAcceptProof || AutoAccept.Never,
           goalCode: requestProof.goalCode || undefined,
           parentThreadId: requestProof.parentThreadId || undefined,
-          willConfirm: requestProof.willConfirm || undefined
+          willConfirm: requestProof.willConfirm || undefined,
+          // Null or absent is left out so agent-controller applies its deployment default.
+          expiresInSeconds: requestProof.expiresInSeconds ?? undefined
         };
 
         const payload: IProofRequestPayload = {

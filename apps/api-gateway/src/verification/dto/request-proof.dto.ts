@@ -22,6 +22,7 @@ import {
 } from 'class-validator';
 import { REDIRECT_URI_VALIDATION_OPTIONS } from './redirect-uris.dto';
 import { trim } from '@credebl/common/cast.helper';
+import { applyDecorators } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { AutoAccept } from '@credebl/enum/enum';
@@ -36,6 +37,27 @@ export const MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS = 300;
 const PURGE_CEILING_SECONDS = 604_800; // 7 days, the default PURGE_CRON_ABANDONED_TTL_SECONDS
 const PURGE_CEILING_MARGIN_SECONDS = 3_600;
 export const MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS = PURGE_CEILING_SECONDS - PURGE_CEILING_MARGIN_SECONDS;
+
+/** Optional expiresInSeconds, validated the same way on connection-based and out-of-band requests. */
+function ExpiresInSecondsProperty(): PropertyDecorator {
+  return applyDecorators(
+    ApiPropertyOptional({
+      example: 1800,
+      minimum: MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS,
+      maximum: MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS,
+      description:
+        'Seconds until the proof request expires. Omit (or null) to use the agent deployment default. Out-of-range or non-integer values are rejected, never adjusted.'
+    }),
+    IsOptional(),
+    IsInt({ message: 'expiresInSeconds must be a whole number of seconds' }),
+    Min(MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS, {
+      message: `expiresInSeconds must be at least ${MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS}`
+    }),
+    Max(MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS, {
+      message: `expiresInSeconds must be at most ${MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS}`
+    })
+  );
+}
 
 export class ProofRequestAttribute {
   @ValidateIf((obj) => obj.attributeNames === undefined)
@@ -99,6 +121,9 @@ class ProofPayload {
   @IsNotEmpty({ message: 'please provide valid protocol version' })
   @IsOptional()
   protocolVersion: string;
+
+  @ExpiresInSecondsProperty()
+  expiresInSeconds?: number | null;
 }
 
 export class Filter {
@@ -524,20 +549,6 @@ export class SendProofRequestPayload {
   @IsUrl(REDIRECT_URI_VALIDATION_OPTIONS, { message: 'redirectUri must be a valid http(s) URL' })
   redirectUri?: string;
 
-  @ApiPropertyOptional({
-    example: 1800,
-    minimum: MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS,
-    maximum: MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS,
-    description:
-      'Seconds until the proof request expires. Omit (or null) to use the agent deployment default. Out-of-range or non-integer values are rejected, never adjusted.'
-  })
-  @IsOptional()
-  @IsInt({ message: 'expiresInSeconds must be a whole number of seconds' })
-  @Min(MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS, {
-    message: `expiresInSeconds must be at least ${MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS}`
-  })
-  @Max(MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS, {
-    message: `expiresInSeconds must be at most ${MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS}`
-  })
+  @ExpiresInSecondsProperty()
   expiresInSeconds?: number | null;
 }

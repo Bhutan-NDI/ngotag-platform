@@ -270,6 +270,8 @@ export interface IProofRequestData {
   presentationDefinition?: IProofRequestPresentationDefinition;
   comment: string;
   autoAcceptProof: AutoAccept;
+  /** Seconds until the request expires; agent-controller applies its default when absent. */
+  expiresInSeconds?: number | null;
 }
 export interface IProofFormat {
   indy: Indy;
