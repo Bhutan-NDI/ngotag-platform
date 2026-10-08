@@ -144,6 +144,7 @@ export interface ISendPresentationExchangeProofRequestPayload {
   proofFormats: IPresentationExchangeProofFormats;
   autoAcceptProof: string;
   label?: string;
+  expiresInSeconds?: number;
 }
 export interface IPresentationExchangeProofRequestPayload {
   url: string;
@@ -174,6 +175,8 @@ export interface ISendProofRequestPayload {
   recipientKey?: string;
   invitationDid?: string;
   redirectUri?: string;
+  /** Seconds until the request expires; agent-controller applies its default when absent. */
+  expiresInSeconds?: number | null;
 }
 
 export interface IWSendProofRequestPayload {
@@ -267,6 +270,8 @@ export interface IProofRequestData {
   presentationDefinition?: IProofRequestPresentationDefinition;
   comment: string;
   autoAcceptProof: AutoAccept;
+  /** Seconds until the request expires; agent-controller applies its default when absent. */
+  expiresInSeconds?: number | null;
 }
 export interface IProofFormat {
   indy: Indy;

@@ -335,6 +335,8 @@ export interface ISendProofRequestPayload {
   parentThreadId?: string;
   willConfirm?: boolean;
   protocolVersion?: string;
+  /** Seconds until the request expires, forwarded unchanged to agent-controller. */
+  expiresInSeconds?: number;
 }
 
 export interface IAgentStatus {

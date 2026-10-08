@@ -304,7 +304,9 @@ export class VerificationService {
           autoAcceptProof: requestProof.autoAcceptProof || AutoAccept.Never,
           goalCode: requestProof.goalCode || undefined,
           parentThreadId: requestProof.parentThreadId || undefined,
-          willConfirm: requestProof.willConfirm || undefined
+          willConfirm: requestProof.willConfirm || undefined,
+          // Null or absent is left out so agent-controller applies its deployment default.
+          expiresInSeconds: requestProof.expiresInSeconds ?? undefined
         };
 
         const payload: IProofRequestPayload = {
@@ -514,6 +516,9 @@ export class VerificationService {
         invitationDid = invitation?.invitationDid ?? undefined;
       }
       outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
+      // Forwarded unchanged when the caller sets it; null or absent is left out so agent-controller
+      // applies its deployment default (DIDCOMM_PROOF_REQUEST_EXPIRY).
+      const expiresInSeconds = outOfBandRequestProof.expiresInSeconds ?? undefined;
 
       let payload: IProofRequestPayload;
 
@@ -521,6 +526,7 @@ export class VerificationService {
         updateOutOfBandRequestProof.protocolVersion = updateOutOfBandRequestProof.protocolVersion || 'v1';
         updateOutOfBandRequestProof.invitationDid = invitationDid || undefined;
         updateOutOfBandRequestProof.imageUrl = getOrganization?.logoUrl || undefined;
+        updateOutOfBandRequestProof.expiresInSeconds = expiresInSeconds;
         payload = {
           orgId: user.orgId,
           url,
@@ -552,7 +558,8 @@ export class VerificationService {
               }
             },
             autoAcceptProof: outOfBandRequestProof.autoAcceptProof,
-            invitationDid: invitationDid || undefined
+            invitationDid: invitationDid || undefined,
+            expiresInSeconds
           }
         };
       }
