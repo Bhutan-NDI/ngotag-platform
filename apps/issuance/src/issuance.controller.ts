@@ -19,7 +19,7 @@ import {
 
 import { Controller, Logger } from '@nestjs/common';
 import { IssuanceService } from './issuance.service';
-import { Ctx, MessagePattern, NatsContext } from '@nestjs/microservices';
+import { Ctx, MessagePattern, NatsContext, Payload } from '@nestjs/microservices';
 import { IssuanceWorkCoordinator } from './issuance-work.coordinator';
 import { readIssuanceDeadline } from '../../../libs/context/src/issuanceDeadline';
 import { OOBIssueCredentialDto } from 'apps/api-gateway/src/issuance/dtos/issuance.dto';
@@ -40,7 +40,10 @@ export class IssuanceController {
   }
 
   @MessagePattern({ cmd: 'send-credential-create-offer' })
-  async sendCredentialCreateOffer(payload: IIssuance, @Ctx() context: NatsContext): Promise<ICredentialOfferResponse> {
+  async sendCredentialCreateOffer(
+    @Payload() payload: IIssuance,
+    @Ctx() context: NatsContext
+  ): Promise<ICredentialOfferResponse> {
     return this.issuanceWork.interactive(readIssuanceDeadline(context.getHeaders()), () => {
       return this.issuanceService.sendCredentialCreateOffer(payload);
     });
@@ -48,7 +51,7 @@ export class IssuanceController {
 
   @MessagePattern({ cmd: 'send-credential-create-offer-oob' })
   async sendCredentialOutOfBand(
-    payload: OOBIssueCredentialDto,
+    @Payload() payload: OOBIssueCredentialDto,
     @Ctx() context: NatsContext
   ): Promise<{ response: object }> {
     return this.issuanceWork.interactive(readIssuanceDeadline(context.getHeaders()), () => {
@@ -74,7 +77,10 @@ export class IssuanceController {
   }
 
   @MessagePattern({ cmd: 'out-of-band-credential-offer' })
-  async outOfBandCredentialOffer(payload: OutOfBandCredentialOffer, @Ctx() context: NatsContext): Promise<boolean> {
+  async outOfBandCredentialOffer(
+    @Payload() payload: OutOfBandCredentialOffer,
+    @Ctx() context: NatsContext
+  ): Promise<boolean> {
     const { outOfBandCredentialDto } = payload;
     this.logger.debug('Request reached issuance microservice controller, issuing oob credential');
     return this.issuanceWork.interactive(readIssuanceDeadline(context.getHeaders()), () => {
