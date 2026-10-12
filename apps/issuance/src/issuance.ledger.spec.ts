@@ -67,7 +67,7 @@ const template = (overrides: Partial<TemplateRow>): TemplateRow => ({
 // Drifted ledger data: NULL, no_ledger and other orgs' rows for the same template URL.
 const DRIFTED_DATA: [string, Agent, TemplateRow[]][] = [
   [
-    'a did:ethr agent left on no_ledger by the pre-#76 setPrimaryDid',
+    'a did:ethr agent stored on no_ledger',
     { orgId: ORG_ID, orgDid: 'did:ethr:sepolia:0xissuer', ledgerId: NO_LEDGER_ID },
     [template({ publisherDid: 'did:ethr:sepolia:0xissuer', ledgerId: LEDGERS['ethr:sepolia'] })]
   ],

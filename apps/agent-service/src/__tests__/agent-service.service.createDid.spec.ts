@@ -207,7 +207,7 @@ describe("AgentServiceService.createDid — network check against the org's own 
       { method: 'indy', network: 'bcovrin:testnet' }
     ],
     [
-      'a polygon DID for an org whose did:ethr primary DID was left on no_ledger by the pre-#76 setPrimaryDid',
+      'a polygon DID for an org whose did:ethr primary DID is stored on no_ledger',
       { orgDid: 'did:ethr:sepolia:0xissuer', ledgerId: 'ledger-not-applicable' },
       { method: 'polygon', network: 'polygon:testnet' }
     ],
