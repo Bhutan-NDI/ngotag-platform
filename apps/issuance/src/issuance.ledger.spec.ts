@@ -1,12 +1,6 @@
 /**
- * Ledger checks on every issuance entry point, driven through the real IssuanceController and
- * IssuanceService over Nest's RPC pipeline (only the database, agent and storage are faked).
- *
- * Stored `org_agents.ledgerId` / `schema.ledgerId` values drift: rows written before #76 keep
- * did:ethr agents on no_ledger, did:polygon agents and W3C templates have NULL ledgers, and other
- * orgs' rows for the same template URL carry their own ledgers. Before this change every W3C offer
- * over such data failed with "Unable to create offer" (the reason only inside `data[]`), which is
- * what the STAGE cutover hit on 2026-10-09.
+ * Ledger checks on every issuance entry point, through the real IssuanceController and IssuanceService
+ * over Nest's RPC pipeline (only the database, agent and storage are faked), over drifted ledger data.
  */
 import { Test } from '@nestjs/testing';
 import { INestMicroservice, Logger } from '@nestjs/common';
@@ -374,6 +368,64 @@ describe('W3C ledger difference warning', () => {
     await fixture.transport.dispatch(entryPoints.offer, offerPayload());
 
     expect(warn.mock.calls.filter(([message]) => String(message).includes(TEMPLATE_URL))).toHaveLength(0);
+  });
+
+  const movedIssuer = { orgId: ORG_ID, orgDid: 'did:ethr:sepolia:0xissuer', ledgerId: LEDGERS['ethr:sepolia'] };
+  const reportsFor = (url: string): unknown[][] => warn.mock.calls.filter(([message]) => String(message).includes(url));
+
+  it('looks the templates up once per offer, not once per recipient', async () => {
+    await startWith(movedIssuer, [template({})]);
+    const otherUrl = 'https://schema.example.com/schemas/other';
+    const recipients = [TEMPLATE_URL, TEMPLATE_URL, otherUrl, TEMPLATE_URL].map((url, i) => ({
+      connectionId: `connection-${i}`,
+      credential: { ...credential(), '@context': [W3C_CONTEXT, url] },
+      options
+    }));
+
+    const result = await fixture.transport.dispatch(entryPoints.offer, {
+      ...offerPayload(),
+      credentialData: recipients
+    });
+
+    expect(result).toEqual(expect.objectContaining({ statusCode: 201 }));
+    expect(fixture.agentCalls.offer).toHaveBeenCalledTimes(4);
+    expect(fixture.service._getSchemaDetails).toHaveBeenCalledTimes(1);
+    expect(fixture.service._getSchemaDetails).toHaveBeenCalledWith([TEMPLATE_URL, otherUrl]);
+  });
+
+  it('still creates the offer when the template lookup fails', async () => {
+    await startWith(movedIssuer, [template({})]);
+    jest.mocked(fixture.service._getSchemaDetails).mockRejectedValue(new Error('ledger service unavailable'));
+
+    await expect(fixture.transport.dispatch(entryPoints.offer, offerPayload())).resolves.toEqual(
+      expect.objectContaining({ statusCode: 201 })
+    );
+    await expect(fixture.transport.dispatch(entryPoints.email, emailPayload())).resolves.toBe(true);
+    expect(reportsFor(TEMPLATE_URL)).toHaveLength(0);
+  });
+
+  it('reports from the emailed and bulk path, naming both networks and no remediation', async () => {
+    await startWith(movedIssuer, [template({})]);
+
+    await fixture.transport.dispatch(entryPoints.email, emailPayload());
+
+    const [[message]] = reportsFor(TEMPLATE_URL);
+    expect(message).toBe(
+      `W3C template ${TEMPLATE_URL} of org ${ORG_ID} was published from polygon:testnet; the org now issues from ethr:sepolia.`
+    );
+  });
+
+  it('does not look templates up on the single-template paths', async () => {
+    await startWith(movedIssuer, [template({})]);
+
+    await fixture.transport.dispatch(entryPoints.outOfBand, outOfBandPayload());
+    await fixture.transport.dispatch(entryPoints.csvTemplate, {
+      orgId: ORG_ID,
+      templateDetails: { schemaType: 'w3c', templateId: TEMPLATE_URL }
+    });
+
+    expect(fixture.service._getSchemaDetails).not.toHaveBeenCalled();
+    expect(reportsFor(TEMPLATE_URL)).toHaveLength(0);
   });
 });
 

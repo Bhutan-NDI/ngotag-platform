@@ -890,16 +890,16 @@ export class AgentServiceService {
         const getNameSpace = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload?.network);
         networkLedgerId = getNameSpace.id;
 
-        // did:ethr's ledger legitimately differs from the agent's indy/polygon ledger, so it's
-        // exempt from this check; every other method must stay on the org's own network. That
-        // network is read from the primary DID: the stored org_agents.ledgerId copy is NULL,
-        // no_ledger or stale on rows written by older code. A DID of another method than the
-        // primary one (e.g. polygon on an org whose primary DID is ethr) is not compared.
+        // did:ethr is exempt. Other DIDs stay on the primary DID's network; across methods only
+        // test vs main network must match.
         const primaryNamespace = didLedgerNamespace(agentDetails.orgDid);
-        const isNetworkMismatch = primaryNamespace
-          ? agentDetails.orgDid.split(':')[1] === createDidPayload.method &&
-            primaryNamespace !== createDidPayload.network
-          : null !== agentDetails.ledgerId && agentDetails.ledgerId !== getNameSpace.id;
+        const isMainnet = (namespace: string): boolean => namespace.endsWith(':mainnet');
+        let isNetworkMismatch = null !== agentDetails.ledgerId && agentDetails.ledgerId !== getNameSpace.id;
+        if (primaryNamespace && agentDetails.orgDid.split(':')[1] === createDidPayload.method) {
+          isNetworkMismatch = primaryNamespace !== createDidPayload.network;
+        } else if (primaryNamespace) {
+          isNetworkMismatch = isMainnet(primaryNamespace) !== isMainnet(createDidPayload.network);
+        }
         if (createDidPayload.method !== DidMethod.ETHEREUM && isNetworkMismatch) {
           throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
         }

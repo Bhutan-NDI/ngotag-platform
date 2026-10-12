@@ -174,7 +174,8 @@ describe("AgentServiceService.createDid — network check against the org's own 
     'ethr:sepolia': ETHR_SEPOLIA_LEDGER,
     'ethr:mainnet': ETHR_MAINNET_LEDGER,
     'bcovrin:testnet': { id: 'ledger-bcovrin-testnet', indyNamespace: 'bcovrin:testnet' },
-    'indicio:testnet': { id: 'ledger-indicio-testnet', indyNamespace: 'indicio:testnet' }
+    'indicio:testnet': { id: 'ledger-indicio-testnet', indyNamespace: 'indicio:testnet' },
+    'indicio:mainnet': { id: 'ledger-indicio-mainnet', indyNamespace: 'indicio:mainnet' }
   };
   function findLedger(namespace: string): Promise<{ id: string; indyNamespace: string }> {
     return LEDGERS[namespace]
@@ -200,6 +201,11 @@ describe("AgentServiceService.createDid — network check against the org's own 
   }
 
   it.each([
+    [
+      'an indy DID on a test network for an org whose did:polygon primary DID is on a test network',
+      { orgDid: 'did:polygon:testnet:0xissuer', ledgerId: 'ledger-polygon-testnet' },
+      { method: 'indy', network: 'bcovrin:testnet' }
+    ],
     [
       'a polygon DID for an org whose did:ethr primary DID was left on no_ledger by the pre-#76 setPrimaryDid',
       { orgDid: 'did:ethr:sepolia:0xissuer', ledgerId: 'ledger-not-applicable' },
@@ -249,6 +255,21 @@ describe("AgentServiceService.createDid — network check against the org's own 
   });
 
   it.each([
+    [
+      'an indy DID on a mainnet for an org whose did:polygon primary DID is on a test network',
+      { orgDid: 'did:polygon:testnet:0xissuer', ledgerId: 'ledger-polygon-testnet' },
+      { method: 'indy', network: 'indicio:mainnet' }
+    ],
+    [
+      'a polygon DID on a test network for an org whose did:indy primary DID is on a mainnet',
+      { orgDid: 'did:indy:indicio:mainnet:issuer', ledgerId: 'ledger-indicio-mainnet' },
+      { method: 'polygon', network: 'polygon:testnet' }
+    ],
+    [
+      'a polygon DID on a mainnet for an org whose did:ethr primary DID is on a test network',
+      { orgDid: 'did:ethr:sepolia:0xissuer', ledgerId: ETHR_SEPOLIA_LEDGER.id },
+      { method: 'polygon', network: 'polygon:mainnet' }
+    ],
     [
       "a polygon DID on another network than the org's did:polygon primary DID",
       { orgDid: 'did:polygon:testnet:0xissuer', ledgerId: 'ledger-polygon-testnet' },

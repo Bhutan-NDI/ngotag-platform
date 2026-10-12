@@ -171,6 +171,18 @@ describe('OrganizationService.setPrimaryDid — ledger resolution for a did:ethr
     );
   });
 
+  it('falls back to Not_Applicable for a did:indy DID without a network, instead of looking up undefined:undefined', async () => {
+    const did = 'did:indy:abc123';
+    const { service, organizationRepository } = buildService(did);
+
+    await service.setPrimaryDid(ORG_ID, did, ORG_DID_ID);
+
+    expect(organizationRepository.getNetworkByNameSpace).not.toHaveBeenCalled();
+    expect(organizationRepository.setOrgsPrimaryDid).toHaveBeenCalledWith(
+      expect.objectContaining({ networkId: NOT_APPLICABLE_LEDGER.id })
+    );
+  });
+
   it("does not demote the existing primary DID when the new one's ledger cannot be resolved -- the org must not end up with no primary DID at all", async () => {
     // #76 review (P1): getNetworkByNameSpace uses findFirstOrThrow, so it throws outright if the
     // resolved namespace has no matching row (e.g. the ethr:* seed migration hasn't run in this

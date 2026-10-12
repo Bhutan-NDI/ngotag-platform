@@ -120,41 +120,57 @@ export class IssuanceService {
   ) {}
 
   /**
-   * W3C templates are HTTPS documents: signing and verification use the issuer's DID and the
-   * template URL, never `schema.ledgerId`. Stored ledger ids drift (NULL or stale on rows written
-   * by older code, other orgs' rows for the same URL), so a difference is logged once, not enforced.
+   * W3C issuance does not use `schema.ledgerId`, so a network difference between the org and its own
+   * templates is only logged, once. A failed lookup never fails the offer.
    */
-  private reportW3CLedgerDifference(
+  private async reportW3CLedgerDifferences(
     agent: { orgId?: string; orgDid?: string },
-    templates: { orgId?: string; publisherDid?: string; schemaLedgerId?: string }[]
-  ): void {
+    offers: { credential?: { '@context'?: unknown } }[]
+  ): Promise<void> {
     const issuerNamespace = didLedgerNamespace(agent?.orgDid);
+    const templateIds = new Set<string>();
+    for (const offer of offers ?? []) {
+      const context = offer?.credential?.['@context'];
+      if (Array.isArray(context) && 1 < context.length) {
+        templateIds.add(String(context[1]));
+      }
+    }
+    if (!issuerNamespace || 0 === templateIds.size) {
+      return;
+    }
+    let templates: ISchemaDetail[];
+    try {
+      templates = await this._getSchemaDetails([...templateIds]);
+    } catch (error) {
+      this.logger.debug(`Skipped the W3C ledger check: ${error?.message}`);
+      return;
+    }
     for (const template of templates ?? []) {
-      if (!template || template.orgId !== agent?.orgId) {
+      const templateNamespace = didLedgerNamespace(template?.publisherDid);
+      const key = `${agent.orgId}|${template?.schemaLedgerId}|${issuerNamespace}`;
+      if (
+        template?.orgId !== agent.orgId ||
+        !templateNamespace ||
+        templateNamespace === issuerNamespace ||
+        this.reportedLedgerDifferences.has(key)
+      ) {
         continue;
       }
-      const templateNamespace = didLedgerNamespace(template.publisherDid);
-      if (!issuerNamespace || !templateNamespace || issuerNamespace === templateNamespace) {
-        continue;
-      }
-      const key = `${agent.orgId}|${template.schemaLedgerId}|${issuerNamespace}`;
-      if (!this.reportedLedgerDifferences.has(key)) {
-        this.reportedLedgerDifferences.add(key);
-        this.logger.warn(
-          `W3C template ${template.schemaLedgerId} of org ${agent.orgId} was published on ${templateNamespace}; the org now issues from ${issuerNamespace}. Re-publish it with migrate-schema to align them.`
-        );
-      }
+      this.reportedLedgerDifferences.add(key);
+      this.logger.warn(
+        `W3C template ${template.schemaLedgerId} of org ${agent.orgId} was published from ${templateNamespace}; the org now issues from ${issuerNamespace}.`
+      );
     }
   }
 
-  /** The issuer's ledger from its primary DID, falling back to the stored copy when the DID does not say. */
+  /** The issuer's ledger from its primary DID, else the stored one. */
   private async issuerLedgerId(agent: { orgDid?: string; ledgerId?: string | null }): Promise<string | null> {
     const namespace = didLedgerNamespace(agent?.orgDid);
     const derived = namespace ? await this.issuanceRepository.getLedgerIdByNamespace(namespace) : null;
     return derived ?? agent?.ledgerId ?? null;
   }
 
-  /** Indy credential definitions do live on one ledger, so the issuer must be on it. */
+  /** An Indy credential definition lives on one ledger; the issuer must be on it. */
   private async assertIndyTemplateLedger(
     agent: { orgDid?: string; ledgerId?: string | null },
     schemaLedgerId: string | null | undefined
@@ -241,6 +257,7 @@ export class IssuanceService {
 
       if (payload.credentialType === IssueCredentialType.JSONLD) {
         await validateAndUpdateIssuanceDates(credentialData);
+        await this.reportW3CLedgerDifferences(agentDetails, credentialData);
       }
 
       // Start each recipient only when a local offer slot is available, so this
@@ -266,15 +283,6 @@ export class IssuanceService {
               comment
             };
           } else if (payload.credentialType === IssueCredentialType.JSONLD) {
-            const schemaIds = credentialData?.map((item) => {
-              const context: string[] = item?.credential?.['@context'];
-              return Array.isArray(context) && 1 < context.length ? context[1] : undefined;
-            });
-
-            const schemaDetails = await this._getSchemaDetails(schemaIds);
-
-            this.reportW3CLedgerDifference(agentDetails, schemaDetails);
-
             issueData = {
               protocolVersion: payload.protocolVersion || 'v2',
               connectionId,
@@ -462,8 +470,6 @@ export class IssuanceService {
         if (!schemaDetails) {
           throw new NotFoundException(ResponseMessages.schema.error.notFound);
         }
-
-        this.reportW3CLedgerDifference(agentDetails, [schemaDetails]);
 
         issueData = {
           protocolVersion: protocolVersion || 'v2',
@@ -817,17 +823,7 @@ export class IssuanceService {
         await validateAndUpdateIssuanceDates(credentialOffer);
 
         this.logger.debug('Validated/Updated Issuance dates credential offer');
-        const schemaIds = credentialOffer?.map((item) => {
-          const context: string[] = item?.credential?.['@context'];
-          return Array.isArray(context) && 1 < context.length ? context[1] : undefined;
-        });
-
-        this.logger.debug('Issuing credential with schemaIds', schemaIds);
-        const schemaDetails = await this._getSchemaDetails(schemaIds);
-
-        this.logger.debug('Issuance will be done with the following schemas: ', JSON.stringify(schemaDetails, null, 2));
-
-        this.reportW3CLedgerDifference(agentDetails, schemaDetails);
+        await this.reportW3CLedgerDifferences(agentDetails, credentialOffer);
       }
 
       if (IssueCredentialType.INDY === credentialType) {
@@ -1236,7 +1232,6 @@ export class IssuanceService {
         if (!schemaDetails) {
           throw new NotFoundException(ResponseMessages.bulkIssuance.error.invalidIdentifier);
         }
-        this.reportW3CLedgerDifference(orgDetails, [schemaDetails]);
         const { attributes, schemaLedgerId, name } = schemaDetails;
         schemaResponse = { attributes, schemaLedgerId, name };
         fileName = `${schemaResponse.name}-${timestamp}.csv`;
@@ -1296,7 +1291,6 @@ export class IssuanceService {
         if (!credentialDetails) {
           throw new NotFoundException(ResponseMessages.bulkIssuance.error.invalidIdentifier);
         }
-        this.reportW3CLedgerDifference(orgDetails, [credentialDetails]);
 
         credentialPayload.schemaLedgerId = credentialDetails.schemaLedgerId;
         credentialPayload.credentialDefinitionId = SchemaType.W3C_Schema;

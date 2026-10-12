@@ -70,12 +70,7 @@ export const networkNamespace = (did: string): string => {
   return segments[1];
 };
 
-/**
- * The `ledgers.indyNamespace` a DID belongs to, read from the DID itself, or null when the DID
- * alone does not say (unqualified, did:web, did:key, malformed). Stored `org_agents.ledgerId` and
- * `schema.ledgerId` values are copies of this and can be stale or NULL on rows written by older
- * code, so decisions should use this and fall back to the stored copy only on null.
- */
+/** The `ledgers.indyNamespace` a DID names, or null when it names none (did:web, did:key, unqualified). */
 export const didLedgerNamespace = (did?: string | null): string | null => {
   const segments = did?.split(':') ?? [];
   if ('did' !== segments[0] || 3 > segments.length) {
