@@ -7,6 +7,11 @@ on:
       - 'apps/issuance/**'
       - 'libs/context/**'
       - 'libs/common/src/NATSClient*'
+      - 'libs/common/src/common.utils*'
+      - 'apps/organization/src/organization.service.ts'
+      - 'apps/organization/src/__tests__/**'
+      - 'apps/agent-service/src/agent-service.service.ts'
+      - 'apps/agent-service/src/__tests__/**'
       - 'scripts/issuance-benchmark/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -39,6 +44,8 @@ jobs:
           pnpm exec prisma generate --schema=libs/prisma-service/prisma/schema.prisma
       - name: Build issuance
         run: pnpm run build issuance
+      - name: Test NATS handlers and ledger checks
+        run: pnpm exec jest --runInBand apps/issuance/src/issuance.controller.spec.ts apps/issuance/src/issuance.ledger.spec.ts libs/common/src/common.utils.spec.ts apps/organization/src/__tests__/organization.service.setPrimaryDid.spec.ts apps/agent-service/src/__tests__/agent-service.service.createDid.spec.ts
       - name: Start isolated Redis fixture
         run: |
           docker run --rm -d --name codex-issuance-p2-redis -p 127.0.0.1::6379 redis:7.2.5

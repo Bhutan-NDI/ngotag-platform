@@ -63,7 +63,7 @@ import { parse as paParse } from 'papaparse';
 import { v4 as uuidv4 } from 'uuid';
 import { Cache } from 'cache-manager';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { convertUrlToDeepLinkUrl, getAgentUrl, paginator } from '@credebl/common/common.utils';
+import { convertUrlToDeepLinkUrl, didLedgerNamespace, getAgentUrl, paginator } from '@credebl/common/common.utils';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { FileUploadStatus, FileUploadType } from 'apps/api-gateway/src/enum';
@@ -99,6 +99,7 @@ import { EmailService } from '@credebl/common/email.service';
 export class IssuanceService {
   private readonly logger = new Logger('IssueCredentialService');
   private counter = 0;
+  private readonly reportedLedgerDifferences = new Set<string>();
   constructor(
     @Inject('NATS_CLIENT') private readonly issuanceServiceProxy: ClientProxy,
     private readonly commonService: CommonService,
@@ -117,6 +118,77 @@ export class IssuanceService {
     private readonly emailService: EmailService,
     private readonly issuanceWork: IssuanceWorkCoordinator
   ) {}
+
+  /**
+   * W3C issuance does not use `schema.ledgerId`, so a network difference between the org and its own
+   * templates is only logged, once. A failed lookup never fails the offer.
+   */
+  private async reportW3CLedgerDifferences(
+    agent: { orgId?: string; orgDid?: string },
+    offers: { credential?: { '@context'?: unknown } }[]
+  ): Promise<void> {
+    const issuerNamespace = didLedgerNamespace(agent?.orgDid);
+    const templateIds = new Set<string>();
+    for (const offer of offers ?? []) {
+      const context = offer?.credential?.['@context'];
+      if (Array.isArray(context) && 1 < context.length) {
+        templateIds.add(String(context[1]));
+      }
+    }
+    if (!issuerNamespace || 0 === templateIds.size) {
+      return;
+    }
+    let templates: ISchemaDetail[];
+    try {
+      templates = await this._getSchemaDetails([...templateIds]);
+    } catch (error) {
+      this.logger.debug(`Skipped the W3C ledger check: ${error?.message}`);
+      return;
+    }
+    for (const template of templates ?? []) {
+      const templateNamespace = didLedgerNamespace(template?.publisherDid);
+      const key = `${agent.orgId}|${template?.schemaLedgerId}|${issuerNamespace}`;
+      if (
+        template?.orgId !== agent.orgId ||
+        !templateNamespace ||
+        templateNamespace === issuerNamespace ||
+        this.reportedLedgerDifferences.has(key)
+      ) {
+        continue;
+      }
+      this.reportedLedgerDifferences.add(key);
+      this.logger.warn(
+        `W3C template ${template.schemaLedgerId} of org ${agent.orgId} was published from ${templateNamespace}; the org now issues from ${issuerNamespace}.`
+      );
+    }
+  }
+
+  /** The ledger a DID names, else the stored one. */
+  private async ledgerIdOf(
+    did: string | null | undefined,
+    storedLedgerId: string | null | undefined
+  ): Promise<string | null> {
+    const namespace = didLedgerNamespace(did);
+    const derived = namespace ? await this.issuanceRepository.getLedgerIdByNamespace(namespace) : null;
+    return derived ?? storedLedgerId ?? null;
+  }
+
+  /**
+   * An Indy credential definition lives on one ledger; the issuer must be on it. Both ledgers are read
+   * from the DIDs where they name one. A template whose ledger is unknown keeps the stored comparison.
+   */
+  private async assertIndyTemplateLedger(
+    agent: { orgDid?: string; ledgerId?: string | null },
+    template: { issuerId?: string | null; ledgerId?: string | null }
+  ): Promise<void> {
+    const templateLedgerId = await this.ledgerIdOf(template?.issuerId, template?.ledgerId);
+    const issuerLedgerId = templateLedgerId
+      ? await this.ledgerIdOf(agent?.orgDid, agent?.ledgerId)
+      : (agent?.ledgerId ?? null);
+    if (issuerLedgerId !== templateLedgerId) {
+      throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
+    }
+  }
 
   async getIssuanceRecords(orgId: string): Promise<number> {
     try {
@@ -195,6 +267,7 @@ export class IssuanceService {
 
       if (payload.credentialType === IssueCredentialType.JSONLD) {
         await validateAndUpdateIssuanceDates(credentialData);
+        await this.reportW3CLedgerDifferences(agentDetails, credentialData);
       }
 
       // Start each recipient only when a local offer slot is available, so this
@@ -220,21 +293,6 @@ export class IssuanceService {
               comment
             };
           } else if (payload.credentialType === IssueCredentialType.JSONLD) {
-            const schemaIds = credentialData?.map((item) => {
-              const context: string[] = item?.credential?.['@context'];
-              return Array.isArray(context) && 1 < context.length ? context[1] : undefined;
-            });
-
-            const schemaDetails = await this._getSchemaDetails(schemaIds);
-
-            const ledgerIds = schemaDetails?.map((item) => item?.ledgerId);
-
-            for (const ledgerId of ledgerIds) {
-              if (agentDetails?.ledgerId !== ledgerId) {
-                throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
-              }
-            }
-
             issueData = {
               protocolVersion: payload.protocolVersion || 'v2',
               connectionId,
@@ -421,12 +479,6 @@ export class IssuanceService {
 
         if (!schemaDetails) {
           throw new NotFoundException(ResponseMessages.schema.error.notFound);
-        }
-
-        const ledgerId = schemaDetails?.ledgerId;
-
-        if (agentDetails?.ledgerId !== ledgerId) {
-          throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
         }
 
         issueData = {
@@ -781,23 +833,7 @@ export class IssuanceService {
         await validateAndUpdateIssuanceDates(credentialOffer);
 
         this.logger.debug('Validated/Updated Issuance dates credential offer');
-        const schemaIds = credentialOffer?.map((item) => {
-          const context: string[] = item?.credential?.['@context'];
-          return Array.isArray(context) && 1 < context.length ? context[1] : undefined;
-        });
-
-        this.logger.debug('Issuing credential with schemaIds', schemaIds);
-        const schemaDetails = await this._getSchemaDetails(schemaIds);
-
-        const ledgerIds = schemaDetails?.map((item) => item?.ledgerId);
-        this.logger.debug('Issuance will be done with the following schemas: ', JSON.stringify(schemaDetails, null, 2));
-
-        for (const ledgerId of ledgerIds) {
-          this.logger.debug('Checking ledger compatibility of schemas and issuer agent');
-          if (agentDetails?.ledgerId !== ledgerId) {
-            throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
-          }
-        }
+        await this.reportW3CLedgerDifferences(agentDetails, credentialOffer);
       }
 
       if (IssueCredentialType.INDY === credentialType) {
@@ -1197,17 +1233,11 @@ export class IssuanceService {
           throw new NotFoundException(ResponseMessages.schema.error.notFound);
         }
 
-        if (orgDetails?.ledgerId !== schemaDetails?.ledgerId) {
-          throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
-        }
+        await this.assertIndyTemplateLedger(orgDetails, schemaDetails);
 
         fileName = `${schemaResponse.tag}-${timestamp}.csv`;
       } else if (schemaType === SchemaType.W3C_Schema) {
         const schemaDetails = await this.issuanceRepository.getSchemaDetailsBySchemaIdentifier(templateId);
-
-        if (orgDetails?.ledgerId !== schemaDetails?.ledgerId) {
-          throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
-        }
 
         if (!schemaDetails) {
           throw new NotFoundException(ResponseMessages.bulkIssuance.error.invalidIdentifier);
@@ -1268,8 +1298,8 @@ export class IssuanceService {
       const { fileName, templateId, type, isValidateSchema } = importFileDetails;
       if (type === SchemaType.W3C_Schema) {
         credentialDetails = await this.issuanceRepository.getSchemaDetailsBySchemaIdentifier(templateId);
-        if (orgDetails?.ledgerId !== credentialDetails?.ledgerId) {
-          throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
+        if (!credentialDetails) {
+          throw new NotFoundException(ResponseMessages.bulkIssuance.error.invalidIdentifier);
         }
 
         credentialPayload.schemaLedgerId = credentialDetails.schemaLedgerId;
@@ -1284,9 +1314,7 @@ export class IssuanceService {
           throw new NotFoundException(ResponseMessages.schema.error.notFound);
         }
 
-        if (orgDetails?.ledgerId !== schemaDetails?.ledgerId) {
-          throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
-        }
+        await this.assertIndyTemplateLedger(orgDetails, schemaDetails);
 
         credentialPayload.schemaLedgerId = credentialDetails.schemaLedgerId;
         credentialPayload.credentialDefinitionId = credentialDetails.credentialDefinitionId;
