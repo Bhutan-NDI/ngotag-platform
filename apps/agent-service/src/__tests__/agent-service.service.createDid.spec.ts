@@ -33,12 +33,17 @@ const ETHR_SEPOLIA_LEDGER = { id: 'ledger-ethr-sepolia', indyNamespace: 'ethr:se
 const ETHR_MAINNET_LEDGER = { id: 'ledger-ethr-mainnet', indyNamespace: 'ethr:mainnet' };
 const NOT_APPLICABLE_LEDGER = { id: 'ledger-not-applicable', indyNamespace: null };
 
-function buildService(overrides: { getLedgerByNameSpaceImpl?: jest.Mock } = {}): {
+function buildService(
+  overrides: {
+    getLedgerByNameSpaceImpl?: jest.Mock;
+    agent?: Partial<typeof agentDetails> & { orgDid?: string | null };
+  } = {}
+): {
   service: AgentServiceService;
   repository: Record<string, jest.Mock>;
 } {
   const repository = {
-    getOrgAgentDetails: jest.fn().mockResolvedValue(agentDetails),
+    getOrgAgentDetails: jest.fn().mockResolvedValue({ ...agentDetails, ...overrides.agent }),
     getLedgerByNameSpace:
       overrides.getLedgerByNameSpaceImpl ??
       jest.fn((namespace: string) => {
@@ -159,5 +164,138 @@ describe('AgentServiceService.createDid — ledger resolution for a did:ethr pri
     expect(repository.persistDidWithUpdates).toHaveBeenCalledWith(
       expect.objectContaining({ ledgerId: NOT_APPLICABLE_LEDGER.id })
     );
+  });
+});
+
+describe("AgentServiceService.createDid — network check against the org's own network", () => {
+  const LEDGERS: Record<string, { id: string; indyNamespace: string }> = {
+    'polygon:testnet': { id: 'ledger-polygon-testnet', indyNamespace: 'polygon:testnet' },
+    'polygon:mainnet': { id: 'ledger-polygon-mainnet', indyNamespace: 'polygon:mainnet' },
+    'ethr:sepolia': ETHR_SEPOLIA_LEDGER,
+    'ethr:mainnet': ETHR_MAINNET_LEDGER,
+    'bcovrin:testnet': { id: 'ledger-bcovrin-testnet', indyNamespace: 'bcovrin:testnet' },
+    'indicio:testnet': { id: 'ledger-indicio-testnet', indyNamespace: 'indicio:testnet' },
+    'indicio:mainnet': { id: 'ledger-indicio-mainnet', indyNamespace: 'indicio:mainnet' }
+  };
+  function findLedger(namespace: string): Promise<{ id: string; indyNamespace: string }> {
+    return LEDGERS[namespace]
+      ? Promise.resolve(LEDGERS[namespace])
+      : Promise.reject(new Error(`unseeded ${namespace}`));
+  }
+
+  async function createDid(
+    agent: { orgDid: string | null; ledgerId: string | null },
+    request: { method: string; network: string },
+    createdDid: string
+  ): Promise<{ result: Promise<object>; service: AgentServiceService; repository: Record<string, jest.Mock> }> {
+    const { service, repository } = buildService({ agent, getLedgerByNameSpaceImpl: jest.fn(findLedger) });
+    mockAgentDidResponse(service, createdDid);
+    const result = service.createDid({ ...request, keyType: 'secp256k1', isPrimaryDid: false } as never, ORG_ID, {
+      id: 'user-1'
+    } as never);
+    return { result, service, repository };
+  }
+
+  function agentCall(service: AgentServiceService): jest.Mock {
+    return (service as unknown as { getDidDetails: jest.Mock }).getDidDetails;
+  }
+
+  it.each([
+    [
+      'an indy DID on a test network for an org whose did:polygon primary DID is on a test network',
+      { orgDid: 'did:polygon:testnet:0xissuer', ledgerId: 'ledger-polygon-testnet' },
+      { method: 'indy', network: 'bcovrin:testnet' }
+    ],
+    [
+      'a polygon DID for an org whose did:ethr primary DID is stored on no_ledger',
+      { orgDid: 'did:ethr:sepolia:0xissuer', ledgerId: 'ledger-not-applicable' },
+      { method: 'polygon', network: 'polygon:testnet' }
+    ],
+    [
+      'a polygon DID for an org whose primary DID is did:ethr',
+      { orgDid: 'did:ethr:sepolia:0xissuer', ledgerId: ETHR_SEPOLIA_LEDGER.id },
+      { method: 'polygon', network: 'polygon:testnet' }
+    ],
+    [
+      "a polygon DID on the network of the org's did:polygon primary DID, whose stored ledger is NULL",
+      { orgDid: 'did:polygon:testnet:0xissuer', ledgerId: null },
+      { method: 'polygon', network: 'polygon:testnet' }
+    ],
+    [
+      "a polygon DID on the network of the org's did:polygon primary DID, whose stored ledger is stale",
+      { orgDid: 'did:polygon:testnet:0xissuer', ledgerId: 'ledger-not-applicable' },
+      { method: 'polygon', network: 'polygon:testnet' }
+    ],
+    [
+      "a polygon DID on the network of the org's mainnet did:polygon primary DID",
+      { orgDid: 'did:polygon:0xissuer', ledgerId: null },
+      { method: 'polygon', network: 'polygon:mainnet' }
+    ],
+    [
+      "an ethr DID on another network than the org's did:ethr primary DID (ethr stays exempt)",
+      { orgDid: 'did:ethr:sepolia:0xissuer', ledgerId: ETHR_SEPOLIA_LEDGER.id },
+      { method: 'ethr', network: 'ethr:mainnet' }
+    ],
+    [
+      'a polygon DID for an org with no primary DID and no stored ledger',
+      { orgDid: null, ledgerId: null },
+      { method: 'polygon', network: 'polygon:testnet' }
+    ],
+    [
+      'a polygon DID for an org with no primary DID on the stored ledger',
+      { orgDid: null, ledgerId: 'ledger-polygon-testnet' },
+      { method: 'polygon', network: 'polygon:testnet' }
+    ]
+  ])('creates %s', async (_label, agent, request) => {
+    const { result, service, repository } = await createDid(agent, request, `did:${request.method}:new`);
+
+    await expect(result).resolves.toBeDefined();
+    expect(agentCall(service)).toHaveBeenCalledTimes(1);
+    expect(repository.persistDidWithUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      'an indy DID on a mainnet for an org whose did:polygon primary DID is on a test network',
+      { orgDid: 'did:polygon:testnet:0xissuer', ledgerId: 'ledger-polygon-testnet' },
+      { method: 'indy', network: 'indicio:mainnet' }
+    ],
+    [
+      'a polygon DID on a test network for an org whose did:indy primary DID is on a mainnet',
+      { orgDid: 'did:indy:indicio:mainnet:issuer', ledgerId: 'ledger-indicio-mainnet' },
+      { method: 'polygon', network: 'polygon:testnet' }
+    ],
+    [
+      'a polygon DID on a mainnet for an org whose did:ethr primary DID is on a test network',
+      { orgDid: 'did:ethr:sepolia:0xissuer', ledgerId: ETHR_SEPOLIA_LEDGER.id },
+      { method: 'polygon', network: 'polygon:mainnet' }
+    ],
+    [
+      "a polygon DID on another network than the org's did:polygon primary DID",
+      { orgDid: 'did:polygon:testnet:0xissuer', ledgerId: 'ledger-polygon-testnet' },
+      { method: 'polygon', network: 'polygon:mainnet' }
+    ],
+    [
+      "a polygon DID on another network than the org's mainnet did:polygon primary DID, even with a stale stored ledger",
+      { orgDid: 'did:polygon:0xissuer', ledgerId: 'ledger-polygon-testnet' },
+      { method: 'polygon', network: 'polygon:testnet' }
+    ],
+    [
+      "an indy DID on another ledger than the org's did:indy primary DID",
+      { orgDid: 'did:indy:bcovrin:testnet:issuer', ledgerId: null },
+      { method: 'indy', network: 'indicio:testnet' }
+    ],
+    [
+      'a polygon DID off the stored ledger of an org with no primary DID',
+      { orgDid: null, ledgerId: 'ledger-polygon-testnet' },
+      { method: 'polygon', network: 'polygon:mainnet' }
+    ]
+  ])('rejects %s before calling the agent', async (_label, agent, request) => {
+    const { result, service, repository } = await createDid(agent, request, `did:${request.method}:new`);
+
+    await expect(result).rejects.toBeDefined();
+    await result.catch((error) => expect(JSON.stringify(error)).toContain('The network is mismatched.'));
+    expect(agentCall(service)).not.toHaveBeenCalled();
+    expect(repository.persistDidWithUpdates).not.toHaveBeenCalled();
   });
 });

@@ -90,7 +90,7 @@ import { from } from 'rxjs';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { SignDataDto } from '../../api-gateway/src/agent-service/dto/agent-service.dto';
 import { IVerificationMethod } from 'apps/organization/interfaces/organization.interface';
-import { getAgentUrl, networkNamespace } from '@credebl/common/common.utils';
+import { didLedgerNamespace, getAgentUrl, networkNamespace } from '@credebl/common/common.utils';
 import {
   IX509ImportCertificateOptionsDto,
   x509CertificateDecodeDto,
@@ -890,13 +890,17 @@ export class AgentServiceService {
         const getNameSpace = await this.agentServiceRepository.getLedgerByNameSpace(createDidPayload?.network);
         networkLedgerId = getNameSpace.id;
 
-        // did:ethr's ledger legitimately differs from the agent's indy/polygon ledger, so it's
-        // exempt from this check; every other method must still write to the agent's own ledger.
-        if (
-          createDidPayload.method !== DidMethod.ETHEREUM &&
-          agentDetails.ledgerId !== null &&
-          agentDetails.ledgerId !== getNameSpace.id
-        ) {
+        // did:ethr is exempt. Other DIDs stay on the primary DID's network; across methods only
+        // test vs main network must match.
+        const primaryNamespace = didLedgerNamespace(agentDetails.orgDid);
+        const isMainnet = (namespace: string): boolean => namespace.endsWith(':mainnet');
+        let isNetworkMismatch = null !== agentDetails.ledgerId && agentDetails.ledgerId !== getNameSpace.id;
+        if (primaryNamespace && agentDetails.orgDid.split(':')[1] === createDidPayload.method) {
+          isNetworkMismatch = primaryNamespace !== createDidPayload.network;
+        } else if (primaryNamespace) {
+          isNetworkMismatch = isMainnet(primaryNamespace) !== isMainnet(createDidPayload.network);
+        }
+        if (createDidPayload.method !== DidMethod.ETHEREUM && isNetworkMismatch) {
           throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
         }
       }
@@ -954,14 +958,7 @@ export class AgentServiceService {
         if (createDidPayload.network) {
           ledgerId = networkLedgerId;
         } else if (createDidPayload.method === DidMethod.ETHEREUM) {
-          // `network` is optional on CreateDidDto for every method, not just ethr -- without this
-          // branch, a did:ethr primary DID created without it fell through to the Not_Applicable
-          // case below, same as setPrimaryDid's now-fixed sibling bug. That diverges from
-          // schema.ledgerId, which updateW3CSchemas resolves from this same DID string via
-          // networkNamespace(), and trips the pre-existing ledger-mismatch guard on the next
-          // issuance. Resolved off the agent's actual returned `did`, not the request's optional
-          // `network` field, for the same reason the mismatch check above exempts did:ethr: its
-          // ledger legitimately differs from the agent's own indy/polygon ledger.
+          // `network` is optional, so a primary did:ethr takes its ledger from the DID the agent returned.
           try {
             const ethrLedger = await this.agentServiceRepository.getLedgerByNameSpace(networkNamespace(did));
             ledgerId = ethrLedger.id;
