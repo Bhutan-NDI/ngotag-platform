@@ -146,8 +146,6 @@ describe('OrganizationService.setPrimaryDid — ledger resolution for a did:ethr
   });
 
   it('resolves a mainnet did:polygon DID, which has no network segment, to the polygon:mainnet ledger', async () => {
-    // did:polygon:0x... used to build the namespace polygon:0x..., which has no ledger row, so
-    // the lookup threw and a PROD org could not make its Polygon DID primary again.
     const did = 'did:polygon:0xabcdef1234567890abcdef1234567890abcdef12';
     const { service, organizationRepository } = buildService(did);
 

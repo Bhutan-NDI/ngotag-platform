@@ -36,7 +36,7 @@ const LEDGERS: Record<string, string> = {
   'bcovrin:testnet': 'ledger-bcovrin-testnet',
   'indicio:testnet': 'ledger-indicio-testnet'
 };
-// The Not_Applicable row (namespace no_ledger) that pre-#76 code wrote for did:ethr agents.
+// The Not_Applicable row (namespace no_ledger).
 const NO_LEDGER_ID = 'ledger-none';
 
 interface Agent {
@@ -64,7 +64,7 @@ const template = (overrides: Partial<TemplateRow>): TemplateRow => ({
   ...overrides
 });
 
-// What STAGE had before the data repair, and what PROD and older environments still have.
+// Drifted ledger data: NULL, no_ledger and other orgs' rows for the same template URL.
 const DRIFTED_DATA: [string, Agent, TemplateRow[]][] = [
   [
     'a did:ethr agent left on no_ledger by the pre-#76 setPrimaryDid',
