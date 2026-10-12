@@ -1,13 +1,12 @@
 import { Test } from '@nestjs/testing';
-import { CustomTransportStrategy, MsPattern, NatsContext, Server } from '@nestjs/microservices';
+import { MsPattern } from '@nestjs/microservices';
 import { PATTERN_METADATA } from '@nestjs/microservices/constants';
 import { INestMicroservice } from '@nestjs/common';
-import { headers as natsHeaders } from 'nats';
-import { isObservable, lastValueFrom } from 'rxjs';
 import { IssuanceController } from './issuance.controller';
 import { IssuanceService } from './issuance.service';
 import { IssuanceWorkCoordinator } from './issuance-work.coordinator';
 import { ISSUANCE_DEADLINE_HEADER } from '../../../libs/context/src/issuanceDeadline';
+import { InMemoryTransport } from '../test/in-memory-transport';
 
 jest.mock('./issuance.service', () => ({ IssuanceService: class IssuanceService {} }));
 jest.mock('./issuance-work.coordinator', () => ({ IssuanceWorkCoordinator: class IssuanceWorkCoordinator {} }));
@@ -17,30 +16,6 @@ jest.mock(
   () => jest.requireActual('../../connection/src/enum/connection.enum'),
   { virtual: true }
 );
-
-// Registers the controller's handlers without a broker, so messages go through Nest's own
-// RPC argument resolution instead of calling controller methods directly.
-class InMemoryTransport extends Server implements CustomTransportStrategy {
-  listen(callback: () => void): void {
-    callback();
-  }
-
-  close(): void {}
-
-  on(): void {}
-
-  unwrap<T>(): T {
-    throw new Error('In-memory transport has no broker');
-  }
-
-  async dispatch(pattern: MsPattern, data: unknown, headers: Record<string, string> = {}): Promise<unknown> {
-    const handler = this.getHandlerByPattern(this.normalizePattern(pattern));
-    const msgHeaders = natsHeaders();
-    Object.entries(headers).forEach(([name, value]) => msgHeaders.set(name, value));
-    const result = await handler(data, new NatsContext(['issuance', msgHeaders]));
-    return isObservable(result) ? lastValueFrom(result) : result;
-  }
-}
 
 const issuanceService = {
   sendCredentialCreateOffer: jest.fn().mockResolvedValue({ offer: true }),

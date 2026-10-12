@@ -90,7 +90,7 @@ import { from } from 'rxjs';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { SignDataDto } from '../../api-gateway/src/agent-service/dto/agent-service.dto';
 import { IVerificationMethod } from 'apps/organization/interfaces/organization.interface';
-import { getAgentUrl, networkNamespace } from '@credebl/common/common.utils';
+import { didLedgerNamespace, getAgentUrl, networkNamespace } from '@credebl/common/common.utils';
 import {
   IX509ImportCertificateOptionsDto,
   x509CertificateDecodeDto,
@@ -891,12 +891,16 @@ export class AgentServiceService {
         networkLedgerId = getNameSpace.id;
 
         // did:ethr's ledger legitimately differs from the agent's indy/polygon ledger, so it's
-        // exempt from this check; every other method must still write to the agent's own ledger.
-        if (
-          createDidPayload.method !== DidMethod.ETHEREUM &&
-          agentDetails.ledgerId !== null &&
-          agentDetails.ledgerId !== getNameSpace.id
-        ) {
+        // exempt from this check; every other method must stay on the org's own network. That
+        // network is read from the primary DID: the stored org_agents.ledgerId copy is NULL,
+        // no_ledger or stale on rows written by older code. A DID of another method than the
+        // primary one (e.g. polygon on an org whose primary DID is ethr) is not compared.
+        const primaryNamespace = didLedgerNamespace(agentDetails.orgDid);
+        const isNetworkMismatch = primaryNamespace
+          ? agentDetails.orgDid.split(':')[1] === createDidPayload.method &&
+            primaryNamespace !== createDidPayload.network
+          : null !== agentDetails.ledgerId && agentDetails.ledgerId !== getNameSpace.id;
+        if (createDidPayload.method !== DidMethod.ETHEREUM && isNetworkMismatch) {
           throw new BadRequestException(ResponseMessages.agent.error.networkMismatch);
         }
       }

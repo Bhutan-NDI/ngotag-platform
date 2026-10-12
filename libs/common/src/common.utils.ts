@@ -70,6 +70,28 @@ export const networkNamespace = (did: string): string => {
   return segments[1];
 };
 
+/**
+ * The `ledgers.indyNamespace` a DID belongs to, read from the DID itself, or null when the DID
+ * alone does not say (unqualified, did:web, did:key, malformed). Stored `org_agents.ledgerId` and
+ * `schema.ledgerId` values are copies of this and can be stale or NULL on rows written by older
+ * code, so decisions should use this and fall back to the stored copy only on null.
+ */
+export const didLedgerNamespace = (did?: string | null): string | null => {
+  const segments = did?.split(':') ?? [];
+  if ('did' !== segments[0] || 3 > segments.length) {
+    return null;
+  }
+  switch (segments[1]) {
+    case CommonConstants.POLYGON:
+    case CommonConstants.ETHR:
+      return networkNamespace(did);
+    case 'indy':
+      return 5 <= segments.length ? `${segments[2]}:${segments[3]}` : null;
+    default:
+      return null;
+  }
+};
+
 //TODO: Remove this util method because we can have some better way to manage agent URLs
 export const getAgentUrl = (agentEndPoint: string, urlFlag: string, paramId?: string): string => {
   if (!agentEndPoint) {

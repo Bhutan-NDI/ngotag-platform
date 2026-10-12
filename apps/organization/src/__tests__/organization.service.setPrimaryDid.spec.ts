@@ -35,6 +35,8 @@ const ETHR_SEPOLIA_LEDGER = { id: 'ledger-ethr-sepolia', indyNamespace: 'ethr:se
 const ETHR_MAINNET_LEDGER = { id: 'ledger-ethr-mainnet', indyNamespace: 'ethr:mainnet' };
 const NOT_APPLICABLE_LEDGER = { id: 'ledger-not-applicable', indyNamespace: null };
 const POLYGON_TESTNET_LEDGER = { id: 'ledger-polygon-testnet', indyNamespace: 'polygon:testnet' };
+const POLYGON_MAINNET_LEDGER = { id: 'ledger-polygon-mainnet', indyNamespace: 'polygon:mainnet' };
+const BCOVRIN_TESTNET_LEDGER = { id: 'ledger-bcovrin-testnet', indyNamespace: 'bcovrin:testnet' };
 
 function buildService(did: string): {
   service: OrganizationService;
@@ -56,6 +58,12 @@ function buildService(did: string): {
       }
       if ('polygon:testnet' === namespace) {
         return Promise.resolve(POLYGON_TESTNET_LEDGER);
+      }
+      if ('polygon:mainnet' === namespace) {
+        return Promise.resolve(POLYGON_MAINNET_LEDGER);
+      }
+      if ('bcovrin:testnet' === namespace) {
+        return Promise.resolve(BCOVRIN_TESTNET_LEDGER);
       }
       return Promise.reject(new Error(`no ledger seeded for namespace ${namespace}`));
     }),
@@ -125,13 +133,42 @@ describe('OrganizationService.setPrimaryDid — ledger resolution for a did:ethr
     );
   });
 
-  it('still resolves indy/polygon namespaces exactly as before (untouched by this fix)', async () => {
+  it('resolves a did:polygon testnet DID to the polygon:testnet ledger', async () => {
     const did = 'did:polygon:testnet:0xabcdef1234567890abcdef1234567890abcdef12';
     const { service, organizationRepository } = buildService(did);
 
     await service.setPrimaryDid(ORG_ID, did, ORG_DID_ID);
 
     expect(organizationRepository.getNetworkByNameSpace).toHaveBeenCalledWith('polygon:testnet');
+    expect(organizationRepository.setOrgsPrimaryDid).toHaveBeenCalledWith(
+      expect.objectContaining({ networkId: POLYGON_TESTNET_LEDGER.id })
+    );
+  });
+
+  it('resolves a mainnet did:polygon DID, which has no network segment, to the polygon:mainnet ledger', async () => {
+    // did:polygon:0x... used to build the namespace polygon:0x..., which has no ledger row, so
+    // the lookup threw and a PROD org could not make its Polygon DID primary again.
+    const did = 'did:polygon:0xabcdef1234567890abcdef1234567890abcdef12';
+    const { service, organizationRepository } = buildService(did);
+
+    await service.setPrimaryDid(ORG_ID, did, ORG_DID_ID);
+
+    expect(organizationRepository.getNetworkByNameSpace).toHaveBeenCalledWith('polygon:mainnet');
+    expect(organizationRepository.setOrgsPrimaryDid).toHaveBeenCalledWith(
+      expect.objectContaining({ networkId: POLYGON_MAINNET_LEDGER.id })
+    );
+  });
+
+  it('still resolves a did:indy DID from its namespace segments', async () => {
+    const did = 'did:indy:bcovrin:testnet:abc123';
+    const { service, organizationRepository } = buildService(did);
+
+    await service.setPrimaryDid(ORG_ID, did, ORG_DID_ID);
+
+    expect(organizationRepository.getNetworkByNameSpace).toHaveBeenCalledWith('bcovrin:testnet');
+    expect(organizationRepository.setOrgsPrimaryDid).toHaveBeenCalledWith(
+      expect.objectContaining({ networkId: BCOVRIN_TESTNET_LEDGER.id })
+    );
   });
 
   it("does not demote the existing primary DID when the new one's ledger cannot be resolved -- the org must not end up with no primary DID at all", async () => {

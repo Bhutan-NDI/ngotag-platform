@@ -262,7 +262,9 @@ export class OrganizationService {
       if (DidMethod.INDY === didParts[1]) {
         nameSpace = `${didParts[2]}:${didParts[3]}`;
       } else if (DidMethod.POLYGON === didParts[1]) {
-        nameSpace = `${didParts[1]}:${didParts[2]}`;
+        // A mainnet did:polygon has no network segment (did:polygon:0x...), so the old
+        // `${didParts[1]}:${didParts[2]}` built polygon:0x... and the ledger lookup threw.
+        nameSpace = networkNamespace(did);
       } else if (DidMethod.ETHEREUM === didParts[1]) {
         // Same helper schema.service.ts's updateW3CSchemas already uses to resolve a did:ethr
         // publisherDid to its ledger row -- without this branch, every did:ethr DID fell through

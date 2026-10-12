@@ -387,6 +387,14 @@ export class IssuanceRepository {
     return schemaDetails;
   }
 
+  async getLedgerIdByNamespace(indyNamespace: string): Promise<string | null> {
+    const ledger = await this.prisma.ledgers.findFirst({
+      where: { indyNamespace },
+      select: { id: true }
+    });
+    return ledger?.id ?? null;
+  }
+
   async saveFileUploadDetails(fileUploadPayload: FileUpload, userId: string): Promise<file_upload> {
     try {
       const { name, status, upload_type, orgId, credentialType, templateId } = fileUploadPayload;
