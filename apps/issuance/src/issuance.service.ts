@@ -163,19 +163,29 @@ export class IssuanceService {
     }
   }
 
-  /** The issuer's ledger from its primary DID, else the stored one. */
-  private async issuerLedgerId(agent: { orgDid?: string; ledgerId?: string | null }): Promise<string | null> {
-    const namespace = didLedgerNamespace(agent?.orgDid);
+  /** The ledger a DID names, else the stored one. */
+  private async ledgerIdOf(
+    did: string | null | undefined,
+    storedLedgerId: string | null | undefined
+  ): Promise<string | null> {
+    const namespace = didLedgerNamespace(did);
     const derived = namespace ? await this.issuanceRepository.getLedgerIdByNamespace(namespace) : null;
-    return derived ?? agent?.ledgerId ?? null;
+    return derived ?? storedLedgerId ?? null;
   }
 
-  /** An Indy credential definition lives on one ledger; the issuer must be on it. */
+  /**
+   * An Indy credential definition lives on one ledger; the issuer must be on it. Both ledgers are read
+   * from the DIDs where they name one. A template whose ledger is unknown keeps the stored comparison.
+   */
   private async assertIndyTemplateLedger(
     agent: { orgDid?: string; ledgerId?: string | null },
-    schemaLedgerId: string | null | undefined
+    template: { issuerId?: string | null; ledgerId?: string | null }
   ): Promise<void> {
-    if ((await this.issuerLedgerId(agent)) !== (schemaLedgerId ?? null)) {
+    const templateLedgerId = await this.ledgerIdOf(template?.issuerId, template?.ledgerId);
+    const issuerLedgerId = templateLedgerId
+      ? await this.ledgerIdOf(agent?.orgDid, agent?.ledgerId)
+      : (agent?.ledgerId ?? null);
+    if (issuerLedgerId !== templateLedgerId) {
       throw new BadRequestException(ResponseMessages.issuance.error.ledgerMismatched);
     }
   }
@@ -1223,7 +1233,7 @@ export class IssuanceService {
           throw new NotFoundException(ResponseMessages.schema.error.notFound);
         }
 
-        await this.assertIndyTemplateLedger(orgDetails, schemaDetails.ledgerId);
+        await this.assertIndyTemplateLedger(orgDetails, schemaDetails);
 
         fileName = `${schemaResponse.tag}-${timestamp}.csv`;
       } else if (schemaType === SchemaType.W3C_Schema) {
@@ -1304,7 +1314,7 @@ export class IssuanceService {
           throw new NotFoundException(ResponseMessages.schema.error.notFound);
         }
 
-        await this.assertIndyTemplateLedger(orgDetails, schemaDetails.ledgerId);
+        await this.assertIndyTemplateLedger(orgDetails, schemaDetails);
 
         credentialPayload.schemaLedgerId = credentialDetails.schemaLedgerId;
         credentialPayload.credentialDefinitionId = credentialDetails.credentialDefinitionId;

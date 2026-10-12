@@ -429,7 +429,7 @@ describe('W3C ledger difference warning', () => {
   });
 });
 
-describe('Indy templates keep the ledger check, read from the issuer DID', () => {
+describe('Indy templates keep the ledger check, read from the DIDs', () => {
   let fixture: Fixture;
 
   afterEach(async () => {
@@ -438,8 +438,15 @@ describe('Indy templates keep the ledger check, read from the issuer DID', () =>
   });
 
   const CRED_DEF_ID = 'issuer:3:CL:1:default';
+  const BCOVRIN = LEDGERS['bcovrin:testnet'];
+  const INDICIO = LEDGERS['indicio:testnet'];
+  const issuer = (orgDid: string, ledgerId: string | null): Agent => ({ orgId: ORG_ID, orgDid, ledgerId });
+  const indyTemplate = (issuerId: string, ledgerId: string | null): { issuerId: string; ledgerId: string | null } => ({
+    issuerId,
+    ledgerId
+  });
 
-  async function startIndy(agent: Agent, schemaLedgerId: string | null): Promise<void> {
+  async function startIndy(agent: Agent, row: { issuerId: string; ledgerId: string | null }): Promise<void> {
     fixture = await start(agent, []);
     fixture.repository.getCredentialDefinitionDetails.mockResolvedValue({
       credentialDefinitionId: CRED_DEF_ID,
@@ -448,7 +455,7 @@ describe('Indy templates keep the ledger check, read from the issuer DID', () =>
       schemaName: 'Bank',
       attributes: JSON.stringify([{ attributeName: 'name', schemaDataType: 'string', isRequired: true }])
     });
-    fixture.repository.getSchemaDetails.mockResolvedValue({ ledgerId: schemaLedgerId });
+    fixture.repository.getSchemaDetails.mockResolvedValue(row);
   }
 
   function csvTemplate(): Promise<unknown> {
@@ -467,23 +474,37 @@ describe('Indy templates keep the ledger check, read from the issuer DID', () =>
 
   it.each([
     [
-      'the stored agent ledger is NULL but the DID names the ledger',
-      { orgId: ORG_ID, orgDid: 'did:indy:bcovrin:testnet:issuer', ledgerId: null }
+      'the org ledger is NULL but its DID names the template ledger',
+      issuer('did:indy:bcovrin:testnet:issuer', null),
+      indyTemplate('issuer', BCOVRIN)
     ],
     [
-      'the stored agent ledger is stale but the DID names the ledger',
-      { orgId: ORG_ID, orgDid: 'did:indy:bcovrin:testnet:issuer', ledgerId: NO_LEDGER_ID }
+      'the org ledger is stale but its DID names the template ledger',
+      issuer('did:indy:bcovrin:testnet:issuer', NO_LEDGER_ID),
+      indyTemplate('issuer', BCOVRIN)
     ],
     [
-      'the DID is unqualified and the stored agent ledger matches',
-      { orgId: ORG_ID, orgDid: 'issuer', ledgerId: LEDGERS['bcovrin:testnet'] }
+      'both stored ledgers are NULL, as before, even though the org DID names a ledger',
+      issuer('did:indy:bcovrin:testnet:issuer', null),
+      indyTemplate('issuer', null)
     ],
     [
-      'the DID names a ledger that is not seeded and the stored agent ledger matches',
-      { orgId: ORG_ID, orgDid: 'did:indy:unseeded:net:issuer', ledgerId: LEDGERS['bcovrin:testnet'] }
+      'the template ledger is NULL but its issuer DID names the org ledger',
+      issuer('did:indy:bcovrin:testnet:issuer', BCOVRIN),
+      indyTemplate('did:indy:bcovrin:testnet:issuer', null)
+    ],
+    [
+      'both DIDs are unqualified and the stored ledgers match',
+      issuer('issuer', BCOVRIN),
+      indyTemplate('issuer', BCOVRIN)
+    ],
+    [
+      'the org DID names a ledger that is not seeded and the stored ledgers match',
+      issuer('did:indy:unseeded:net:issuer', BCOVRIN),
+      indyTemplate('issuer', BCOVRIN)
     ]
-  ])('allows the CSV template and upload when %s', async (_label, agent) => {
-    await startIndy(agent, LEDGERS['bcovrin:testnet']);
+  ])('allows the CSV template and upload when %s', async (_label, agent, row) => {
+    await startIndy(agent, row);
 
     await expect(csvTemplate()).resolves.toEqual(expect.objectContaining({ fileName: expect.any(String) }));
     const failure = await failureOf(upload());
@@ -493,15 +514,27 @@ describe('Indy templates keep the ledger check, read from the issuer DID', () =>
 
   it.each([
     [
-      'the issuer DID is on another Indy ledger, whatever the stored copy says',
-      { orgId: ORG_ID, orgDid: 'did:indy:bcovrin:testnet:issuer', ledgerId: LEDGERS['indicio:testnet'] }
+      'the org DID and the template are on different Indy ledgers',
+      issuer('did:indy:bcovrin:testnet:issuer', BCOVRIN),
+      indyTemplate('issuer', INDICIO)
     ],
     [
-      'the DID is unqualified and the stored agent ledger differs',
-      { orgId: ORG_ID, orgDid: 'issuer', ledgerId: LEDGERS['bcovrin:testnet'] }
+      'the org DID is on another ledger, even though its stale stored ledger matches the template',
+      issuer('did:indy:bcovrin:testnet:issuer', INDICIO),
+      indyTemplate('issuer', INDICIO)
+    ],
+    [
+      'the template ledger is NULL and its issuer DID names another ledger than the org DID',
+      issuer('did:indy:bcovrin:testnet:issuer', null),
+      indyTemplate('did:indy:indicio:testnet:issuer', null)
+    ],
+    [
+      'both DIDs are unqualified and the stored ledgers differ',
+      issuer('issuer', BCOVRIN),
+      indyTemplate('issuer', INDICIO)
     ]
-  ])('rejects the CSV template and upload when %s', async (_label, agent) => {
-    await startIndy(agent, LEDGERS['indicio:testnet']);
+  ])('rejects the CSV template and upload when %s', async (_label, agent, row) => {
+    await startIndy(agent, row);
 
     expect(await failureOf(csvTemplate())).toContain(MISMATCH);
     expect(await failureOf(upload())).toContain(MISMATCH);
