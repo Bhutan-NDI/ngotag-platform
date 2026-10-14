@@ -401,7 +401,18 @@ export class OrganizationService {
     );
     const orgDetails = await this.clientRegistrationService.createClient(orgName, orgId, token);
 
-    const orgRolesList = [OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER, OrgRoles.VERIFIER, OrgRoles.MEMBER];
+    // ALLOW_PROOF_TEMPLATE/ALLOW_VERIFIER are created here (like every other role) so they can
+    // be assigned/revoked later via the existing updateUserRoles flow; they are not granted to
+    // the creating user automatically.
+    const orgRolesList = [
+      OrgRoles.OWNER,
+      OrgRoles.ADMIN,
+      OrgRoles.ISSUER,
+      OrgRoles.VERIFIER,
+      OrgRoles.MEMBER,
+      OrgRoles.ALLOW_PROOF_TEMPLATE,
+      OrgRoles.ALLOW_VERIFIER
+    ];
 
     for (const role of orgRolesList) {
       await this.clientRegistrationService.createClientRole(orgDetails.idpId, token, role, role);

@@ -1135,3 +1135,66 @@ model marketplace_operation {
   @@unique([operationId, marketplaceSubscriptionId])
   @@index([action])
 }
+
+// --- mobile-verifier tables -------------------------------------------------
+// Owned by apps/mobile-verifier, fully moved onto this shared platform DB —
+// mobile-verifier no longer has a standalone database/PrismaService of its own.
+// The mobile_verifier_ prefix identifies them as belonging to that service.
+
+// Org identity/permissions are resolved via ngotag's own organisation + Keycloak client
+// roles (ALLOW_PROOF_TEMPLATE / ALLOW_VERIFIER, see libs/org-roles/enums/index.ts) decoded
+// from the caller's JWT — mobile-verifier keeps no organization table of its own.
+model mobile_verifier_role {
+  id                           String                                   @id @default(uuid())
+  role                         String
+  orgId                        String
+  createdByOrgId               String
+  verifierRoleToProofTemplates mobile_verifier_role_to_proof_template[]
+
+  @@index([orgId])
+}
+
+model mobile_verifier_proof_template {
+  id                           String                                   @id @default(uuid())
+  templateId                   String                                   @unique
+  orgId                        String
+  name                         String
+  description                  String?
+  version                      String                                   @default("1")
+  payload                      Json
+  createdByOrgId               String
+  createdAt                    DateTime                                 @default(now())
+  updatedAt                    DateTime                                 @updatedAt
+  verifierRoleToProofTemplates mobile_verifier_role_to_proof_template[]
+
+  @@index([orgId])
+}
+
+model mobile_verifier_role_to_proof_template {
+  verifierRoleId  String
+  proofTemplateId String
+
+  verifierRole  mobile_verifier_role           @relation(fields: [verifierRoleId], references: [id])
+  proofTemplate mobile_verifier_proof_template @relation(fields: [proofTemplateId], references: [id])
+
+  @@id([verifierRoleId, proofTemplateId])
+}
+
+// Mobile-verifier's own webhook registration — deliberately separate from org_agents'
+// webhookUrl/webhookSecret (used by the platform's generic connection/credential/proof
+// webhook system, apps/webhook). Keeps mobile-verifier's outbound notifications independent
+// of that unrelated system, consistent with it keeping no other org-level tables of its own.
+model mobile_verifier_webhook_config {
+  id          String   @id @default(uuid())
+  orgId       String
+  webhookId   String
+  webhookUrl  String
+  authType    String // 'OAuth2' (only supported type today)
+  authVersion String // 'v1' | 'v2'
+  authData    Json // version-specific auth fields; secrets (clientSecret/token) encrypted at rest
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([orgId, webhookId])
+  @@index([orgId])
+}
