@@ -401,7 +401,18 @@ export class OrganizationService {
     );
     const orgDetails = await this.clientRegistrationService.createClient(orgName, orgId, token);
 
-    const orgRolesList = [OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER, OrgRoles.VERIFIER, OrgRoles.MEMBER];
+    // ALLOW_PROOF_TEMPLATE/ALLOW_VERIFIER are created here (like every other role) so they can
+    // be assigned/revoked later via the existing updateUserRoles flow; they are not granted to
+    // the creating user automatically.
+    const orgRolesList = [
+      OrgRoles.OWNER,
+      OrgRoles.ADMIN,
+      OrgRoles.ISSUER,
+      OrgRoles.VERIFIER,
+      OrgRoles.MEMBER,
+      OrgRoles.ALLOW_PROOF_TEMPLATE,
+      OrgRoles.ALLOW_VERIFIER
+    ];
 
     for (const role of orgRolesList) {
       await this.clientRegistrationService.createClientRole(orgDetails.idpId, token, role, role);
@@ -1461,6 +1472,12 @@ export class OrganizationService {
         return roleObj;
       }
     );
+
+    // A client role with no org_roles row would make the mapping below throw — after the user's
+    // existing roles were already deleted. Refuse up front, before anything is touched.
+    if (rolesPayload.some((role) => null === role)) {
+      throw new NotFoundException(ResponseMessages.organisation.error.orgRoleIdNotFound);
+    }
 
     const userData = await this.getUserUserId(userId);
 

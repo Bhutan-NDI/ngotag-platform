@@ -462,6 +462,7 @@ export enum CommonConstants {
   OIDC4VC_VERIFICATION_SERVICE = 'oid4vc-verification',
   OID4VP_VERIFICATION_SESSION = 'oid4vp-verification-session',
   X509_SERVICE = 'x509-service',
+  MOBILE_VERIFIER_SERVICE = 'mobile-verifier',
 
   ACCEPT_OFFER = '/didcomm/credentials/accept-offer',
   SEED_LENGTH = 32,
