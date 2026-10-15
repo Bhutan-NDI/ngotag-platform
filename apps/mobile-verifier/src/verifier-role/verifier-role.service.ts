@@ -57,7 +57,10 @@ export class VerifierRoleService {
     params: { id?: string; page?: number; pageSize?: number },
     loginOrgId: string
   ): Promise<ResponseType> {
-    const { page = 1, pageSize = 10, id } = params;
+    const { id } = params;
+    // `page`/`pageSize` arrive as strings from @Query; keep the pagination math numeric
+    const page = Number(params.page) || 1;
+    const pageSize = Number(params.pageSize) || 10;
 
     if (id) {
       const verifierRole = await this.verifierRoleRepository.getVerifierRoleByWhere({ id, orgId: loginOrgId });
@@ -76,7 +79,7 @@ export class VerifierRoleService {
       };
     }
 
-    const { skip, take } = getSkipTake(Number(page), Number(pageSize));
+    const { skip, take } = getSkipTake(page, pageSize);
     const query: {
       skip?: number;
       take?: number;
