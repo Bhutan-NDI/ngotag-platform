@@ -9,7 +9,7 @@ import {
   mobile_verifier_role_to_proof_template as VerifierRoleToProofTemplate
 } from '@prisma/client';
 import { ProofTemplateQueryDto } from './dto/proof-template-query.dto';
-import { getNextPrevPages, getSkipTake } from '../common/functions';
+import { getNextPrevPages, getSkipTake, parseStoredPayload } from '../common/functions';
 import { PrismaError } from '../common/constants';
 import { assertRole } from '../common/keycloak-roles.util';
 import { OrgRoles } from 'libs/org-roles/enums';
@@ -49,7 +49,7 @@ export class ProofTemplateService {
           {
             ...proofDetails,
             orgId: loginOrgId,
-            payload: JSON.stringify(payload),
+            payload: payload as unknown as Prisma.InputJsonValue,
             createdByOrgId: loginOrgId
           },
           verifierRoleIds
@@ -58,7 +58,7 @@ export class ProofTemplateService {
         proofTemplate = await this.proofTemplateRepo.createProofTemplate({
           ...proofDetails,
           orgId: loginOrgId,
-          payload: JSON.stringify(payload),
+          payload: payload as unknown as Prisma.InputJsonValue,
           createdByOrgId: loginOrgId
         });
       }
@@ -95,7 +95,7 @@ export class ProofTemplateService {
         loginOrgId,
         {
           ...proofDetails,
-          ...(payload ? { payload: JSON.stringify(payload) } : {})
+          ...(payload ? { payload: payload as unknown as Prisma.InputJsonValue } : {})
         },
         verifierRoleIds
       );
@@ -165,7 +165,7 @@ export class ProofTemplateService {
       message: 'Proof templates fetch successfully',
       data: proofTemplates[1].map((ele) => ({
         ...ele.proofTemplate,
-        payload: JSON.parse(ele.proofTemplate.payload as string)
+        payload: parseStoredPayload(ele.proofTemplate.payload)
       })),
       pagination: {
         total: proofTemplates[0],
@@ -210,7 +210,7 @@ export class ProofTemplateService {
       return {
         statusCode: HttpStatus.OK,
         message: 'Proof template fetch successfully',
-        data: proofTemplate
+        data: { ...proofTemplate, payload: parseStoredPayload(proofTemplate.payload) }
       };
     }
 
@@ -243,7 +243,7 @@ export class ProofTemplateService {
     return {
       statusCode: HttpStatus.OK,
       message: 'Proof templates fetch successfully',
-      data: proofTemplates,
+      data: proofTemplates[1].map((template) => ({ ...template, payload: parseStoredPayload(template.payload) })),
       pagination: {
         total: proofTemplates[0],
         pageSize: proofTemplates[1].length,

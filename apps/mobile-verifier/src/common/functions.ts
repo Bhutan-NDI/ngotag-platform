@@ -40,3 +40,8 @@ export const getNextPrevPages = (totalItems: number, page: number, pageSize: num
   }
   return { nextPage, prevPage };
 };
+
+// Proof template payloads are stored as a JSON object. Rows written before that were stored as a
+// JSON-encoded string, so readers accept both.
+export const parseStoredPayload = (payload: unknown): unknown =>
+  'string' === typeof payload ? JSON.parse(payload) : payload;

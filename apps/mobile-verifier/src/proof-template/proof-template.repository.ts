@@ -21,6 +21,15 @@ export class ProofTemplateRepo {
     return roles.map((role) => role.id);
   }
 
+  // A role id that does not exist surfaces as P2025 or, for the mapping insert, as a foreign key
+  // violation (P2003) — both mean "the given role does not exist".
+  private isMissingRoleError(error: unknown): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (PrismaError.RecordDoesNotExist === error.code || PrismaError.ForeignKeyConstraintFailed === error.code)
+    );
+  }
+
   async createProofTemplate(
     proofTemplateDto: Prisma.mobile_verifier_proof_templateCreateInput
   ): Promise<ProofTemplate> {
@@ -72,7 +81,7 @@ export class ProofTemplateRepo {
         return { proofTemplate: createdRecord, mappedVerifierRoleAndProofTemplate: mappedRoleAndTemplateIDs };
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error?.code === PrismaError.RecordDoesNotExist) {
+      if (this.isMissingRoleError(error)) {
         throw new HttpException('The given role/roles does not exist', HttpStatus.BAD_REQUEST);
       }
       throw error;
@@ -115,7 +124,7 @@ export class ProofTemplateRepo {
         return count;
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error?.code === PrismaError.RecordDoesNotExist) {
+      if (this.isMissingRoleError(error)) {
         throw new HttpException('The given role/roles does not exist', HttpStatus.BAD_REQUEST);
       }
       throw error;
