@@ -18,12 +18,25 @@ import { OrgRoles } from 'libs/org-roles/enums';
 export class ProofTemplateService {
   constructor(private readonly proofTemplateRepo: ProofTemplateRepo) {}
 
+  // A template may only be mapped to roles of its own organization; otherwise it would show up in
+  // another organization's role view.
+  private async assertRolesBelongToOrg(roleIds: string[] | undefined, orgId: string): Promise<void> {
+    if (!roleIds?.length) {
+      return;
+    }
+    const orgRoleIds = new Set(await this.proofTemplateRepo.getOrgRoleIds(orgId, roleIds));
+    if (roleIds.some((roleId) => !orgRoleIds.has(roleId))) {
+      throw new HttpException('The given role/roles does not exist', HttpStatus.BAD_REQUEST);
+    }
+  }
+
   async createProofTemplate(
     proofTemplateDto: ProofTemplateDto,
     loginOrgId: string,
     authorization: string
   ): Promise<ResponseType> {
     assertRole(authorization, loginOrgId, OrgRoles.ALLOW_PROOF_TEMPLATE);
+    await this.assertRolesBelongToOrg(proofTemplateDto.verifierRoleIds, loginOrgId);
 
     try {
       const { payload, verifierRoleIds, ...proofDetails } = proofTemplateDto;
@@ -72,6 +85,7 @@ export class ProofTemplateService {
     authorization: string
   ): Promise<ResponseType> {
     assertRole(authorization, loginOrgId, OrgRoles.ALLOW_PROOF_TEMPLATE);
+    await this.assertRolesBelongToOrg(proofTemplateDto.verifierRoleIds, loginOrgId);
 
     const { payload, verifierRoleIds, ...proofDetails } = proofTemplateDto;
 
@@ -173,7 +187,10 @@ export class ProofTemplateService {
     },
     loginOrgId: string
   ): Promise<ResponseType> {
-    const { page = 1, pageSize = 10, id, templateId, search } = params;
+    const { id, templateId, search } = params;
+    // `page`/`pageSize` arrive as strings from @Query; keep the pagination math numeric
+    const page = Number(params.page) || 1;
+    const pageSize = Number(params.pageSize) || 10;
     const orgAccessWhere: Prisma.mobile_verifier_proof_templateWhereInput = { orgId: loginOrgId };
 
     if (id || templateId) {
@@ -197,7 +214,7 @@ export class ProofTemplateService {
       };
     }
 
-    const { skip, take } = getSkipTake(Number(page), Number(pageSize));
+    const { skip, take } = getSkipTake(page, pageSize);
     const query: {
       skip?: number;
       take?: number;

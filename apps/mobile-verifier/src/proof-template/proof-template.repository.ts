@@ -12,6 +12,15 @@ import { PrismaError } from '../common/constants';
 export class ProofTemplateRepo {
   constructor(private readonly prismaService: PrismaService) {}
 
+  // Ids from `roleIds` that are roles of `orgId` — used to refuse role ids of another organization.
+  async getOrgRoleIds(orgId: string, roleIds: string[]): Promise<string[]> {
+    const roles = await this.prismaService.mobile_verifier_role.findMany({
+      where: { orgId, id: { in: roleIds } },
+      select: { id: true }
+    });
+    return roles.map((role) => role.id);
+  }
+
   async createProofTemplate(
     proofTemplateDto: Prisma.mobile_verifier_proof_templateCreateInput
   ): Promise<ProofTemplate> {
@@ -80,10 +89,12 @@ export class ProofTemplateRepo {
   ): Promise<number> {
     try {
       return await this.prismaService.$transaction(async (transactionContext) => {
-        const { count } = await transactionContext.mobile_verifier_proof_template.updateMany({
-          where: { id, orgId },
-          data
-        });
+        // updateMany with nothing to set reports 0 even for an existing row, so a roles-only
+        // update has to check that the template exists (in this org) another way.
+        const hasFieldUpdates = Object.values(data).some((value) => undefined !== value);
+        const count = hasFieldUpdates
+          ? (await transactionContext.mobile_verifier_proof_template.updateMany({ where: { id, orgId }, data })).count
+          : await transactionContext.mobile_verifier_proof_template.count({ where: { id, orgId } });
 
         if (0 === count) {
           return 0;
