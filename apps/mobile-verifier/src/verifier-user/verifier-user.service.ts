@@ -38,12 +38,29 @@ export class VerifierUserService {
     private readonly verifierRoleRepository: VerifierRoleRepository
   ) {}
 
+  // The client system stores the role name alongside the id (verifierRoleName is required on its
+  // create/update DTOs). Roles live in this platform's DB, so resolve the name here instead of
+  // making every caller send it, and refuse an id that isn't one of this organization's roles.
+  private async findOrgRole(
+    verifierRoleId: string,
+    loginOrgId: string
+  ): Promise<{ id: string; role: string } | undefined> {
+    return (
+      (await this.verifierRoleRepository.getVerifierRoleByWhere({ id: verifierRoleId, orgId: loginOrgId })) ?? undefined
+    );
+  }
+
   async createVerifierUser(
     userPayload: CreateVerifierUser,
     loginOrgId: string,
     authorization: string
   ): Promise<ResponseType> {
     assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+
+    const role = await this.findOrgRole(userPayload.verifierRoleId, loginOrgId);
+    if (!role) {
+      return { statusCode: HttpStatus.BAD_REQUEST, message: 'Verifier role not found for this organization' };
+    }
 
     const webhook = await this.verifierWebhookRepository.getWebhook(loginOrgId);
 
@@ -74,7 +91,8 @@ export class VerifierUserService {
           username: userPayload.username,
           foundationID: userPayload.foundationID,
           email: userPayload.email,
-          verifierRoleId: userPayload.verifierRoleId
+          verifierRoleId: userPayload.verifierRoleId,
+          verifierRoleName: role.role
         },
         { headers: { Authorization: authorizationHeader, 'Content-Type': 'application/json' } }
       );
@@ -118,56 +136,90 @@ export class VerifierUserService {
     }
 
     if (id) {
+      let verifierUser: ExternalVerifierUser | undefined;
       try {
-        const verifierUser = await this.getExternalVerifierUser(webhook, authorization, id);
-
-        if (!verifierUser) {
-          return {
-            statusCode: HttpStatus.NOT_FOUND,
-            message: 'Verifier user not found'
-          };
-        }
-
-        return {
-          statusCode: HttpStatus.OK,
-          message: 'Verifier user fetched successfully',
-          data: verifierUser
-        };
+        verifierUser = await this.getExternalVerifierUser(webhook, authorization, id);
       } catch (error) {
         return {
           statusCode: HttpStatus.BAD_GATEWAY,
           message: 'Failed to fetch verifier user from the registered webhook'
         };
       }
-    }
 
-    try {
-      const url = `${webhook.webhookUrl}/v1/verifier-user?page=${page}&pageSize=${pageSize}`;
-      const response = await this.commonService.httpGet(url, { headers: { Authorization: authorization } });
+      if (!verifierUser) {
+        return {
+          statusCode: HttpStatus.NOT_FOUND,
+          message: 'Verifier user not found'
+        };
+      }
 
-      // The external contract wraps a [total, rows[]] tuple as `data` — unwrap defensively
-      // in case a future version of the external service returns a plain array instead.
-      const rawData = response?.data;
-      const verifierUsers = Array.isArray(rawData?.[1]) ? rawData[1] : Array.isArray(rawData) ? rawData : [];
+      const [verifierUserWithOrgRole] = await this.withOrgRoleNames([verifierUser], loginOrgId);
 
       return {
         statusCode: HttpStatus.OK,
-        message: response?.message ?? 'Verifier users fetched successfully',
-        data: verifierUsers,
-        pagination: response?.pagination ?? {
-          total: verifierUsers.length,
-          pageSize: verifierUsers.length,
-          currentPage: Number(page),
-          nextPage: null,
-          prevPage: null
-        }
+        message: 'Verifier user fetched successfully',
+        data: verifierUserWithOrgRole
       };
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let response: any;
+    try {
+      const url = `${webhook.webhookUrl}/v1/verifier-user?page=${page}&pageSize=${pageSize}`;
+      response = await this.commonService.httpGet(url, { headers: { Authorization: authorization } });
     } catch (error) {
       return {
         statusCode: HttpStatus.BAD_GATEWAY,
         message: 'Failed to fetch verifier users from the registered webhook'
       };
     }
+
+    // The external contract wraps a [total, rows[]] tuple as `data` — unwrap defensively
+    // in case a future version of the external service returns a plain array instead.
+    const rawData = response?.data;
+    const externalUsers: ExternalVerifierUser[] = Array.isArray(rawData?.[1])
+      ? rawData[1]
+      : Array.isArray(rawData)
+        ? rawData
+        : [];
+    const verifierUsers = await this.withOrgRoleNames(externalUsers, loginOrgId);
+
+    return {
+      statusCode: HttpStatus.OK,
+      message: response?.message ?? 'Verifier users fetched successfully',
+      data: verifierUsers,
+      pagination: response?.pagination ?? {
+        total: verifierUsers.length,
+        pageSize: verifierUsers.length,
+        currentPage: Number(page),
+        nextPage: null,
+        prevPage: null
+      }
+    };
+  }
+
+  // verifierRoleName comes from the client system's own record, which can be stale: the role may
+  // since have been removed, or the stored id may belong to another organization. Keep the stored
+  // name only when the user's verifierRoleId is one of THIS organization's roles; otherwise blank it.
+  private async withOrgRoleNames<T extends { verifierRoleId?: string | null; verifierRoleName?: string | null }>(
+    users: T[],
+    loginOrgId: string
+  ): Promise<T[]> {
+    const roleIds = [...new Set(users.map((user) => user.verifierRoleId).filter((id): id is string => Boolean(id)))];
+    const orgRoleIds = new Set<string>();
+
+    if (0 < roleIds.length) {
+      const [, orgRoles] = await this.verifierRoleRepository.getVerifierRoles({
+        where: { orgId: loginOrgId, id: { in: roleIds } }
+      });
+      orgRoles.forEach((orgRole) => orgRoleIds.add(orgRole.id));
+    }
+
+    return users.map((user) => ({
+      ...user,
+      verifierRoleName:
+        user.verifierRoleId && orgRoleIds.has(user.verifierRoleId) ? (user.verifierRoleName ?? null) : null
+    }));
   }
 
   async inviteVerifierUser(email: string, loginOrgId: string, authorization: string): Promise<ResponseType> {
@@ -308,6 +360,11 @@ export class VerifierUserService {
   ): Promise<ResponseType> {
     assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
+    const role = await this.findOrgRole(userPayload.verifierRoleId, loginOrgId);
+    if (!role) {
+      return { statusCode: HttpStatus.BAD_REQUEST, message: 'Verifier role not found for this organization' };
+    }
+
     const webhook = await this.verifierWebhookRepository.getWebhook(loginOrgId);
 
     if (!webhook) {
@@ -337,7 +394,8 @@ export class VerifierUserService {
           username: userPayload.username,
           foundationID: userPayload.foundationID,
           email: userPayload.email,
-          verifierRoleId: userPayload.verifierRoleId
+          verifierRoleId: userPayload.verifierRoleId,
+          verifierRoleName: role.role
         },
         { headers: { Authorization: authorizationHeader, 'Content-Type': 'application/json' } }
       );
