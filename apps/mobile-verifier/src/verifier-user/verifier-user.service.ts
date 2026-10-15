@@ -15,8 +15,6 @@ import { VerifierWebhookRepository } from '../verifier-webhook/verifier-webhook.
 import { VerifierRoleRepository } from '../verifier-role/verifier-role.repository';
 import { mobile_verifier_webhook_config as VerifierWebhookConfig } from '@prisma/client';
 
-const MOBILE_VERIFIER_SCHEMA_URL = 'https://dev-schema.ngotag.com/schemas/288eb950-1c0f-4203-beed-55a68593a1bd';
-
 // The verifier-user record itself lives in the org's registered client system (see
 // verifier-webhook), not the platform's own DB — mobile-verifier only owns role/proof-template
 // config here. Shape mirrors CreateVerifierUser/UpdateVerifierUser plus an assigned verifierRoleId.
@@ -165,7 +163,8 @@ export class VerifierUserService {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let response: any;
     try {
-      const url = `${webhook.webhookUrl}/v1/verifier-user?page=${page}&pageSize=${pageSize}`;
+      const query = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+      const url = `${webhook.webhookUrl}/v1/verifier-user?${query.toString()}`;
       response = await this.commonService.httpGet(url, { headers: { Authorization: authorization } });
     } catch (error) {
       return {
@@ -293,7 +292,8 @@ export class VerifierUserService {
     }
 
     try {
-      const url = `${webhook.webhookUrl}/v1/verifier-user/revoke_suspend?id=${id}&status=${status}`;
+      const query = new URLSearchParams({ id, status });
+      const url = `${webhook.webhookUrl}/v1/verifier-user/revoke_suspend?${query.toString()}`;
       const response = await this.commonService.httpPost(url, {}, { headers: { Authorization: authorizationHeader } });
 
       return {
@@ -347,7 +347,7 @@ export class VerifierUserService {
     authorizationHeader: string,
     id: string
   ): Promise<ExternalVerifierUser | undefined> {
-    const url = `${webhook.webhookUrl}/v1/verifier-user/${id}`;
+    const url = `${webhook.webhookUrl}/v1/verifier-user/${encodeURIComponent(id)}`;
     const response = await this.commonService.httpGet(url, { headers: { Authorization: authorizationHeader } });
     return response?.data ?? response;
   }
@@ -385,7 +385,7 @@ export class VerifierUserService {
     }
 
     try {
-      const url = `${webhook.webhookUrl}/v1/verifier-user/${id}`;
+      const url = `${webhook.webhookUrl}/v1/verifier-user/${encodeURIComponent(id)}`;
       const response = await this.commonService.httpPatch(
         url,
         {
@@ -415,6 +415,15 @@ export class VerifierUserService {
 
   async sendCredentialIssuance(id: string, loginOrgId: string, authorization: string): Promise<ResponseType> {
     assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+
+    // JSON-LD schema of the Mobile Verifier credential; differs per environment (dev/stage/prod).
+    const schemaUrl = process.env.MOBILE_VERIFIER_SCHEMA_URL;
+    if (!schemaUrl) {
+      return {
+        statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+        message: 'MOBILE_VERIFIER_SCHEMA_URL is not configured'
+      };
+    }
 
     const webhook = await this.verifierWebhookRepository.getWebhook(loginOrgId);
 
@@ -495,7 +504,7 @@ export class VerifierUserService {
         {
           emailId: verifierUser.email,
           credential: {
-            '@context': ['https://www.w3.org/2018/credentials/v1', MOBILE_VERIFIER_SCHEMA_URL],
+            '@context': ['https://www.w3.org/2018/credentials/v1', schemaUrl],
             type: ['VerifiableCredential', 'Mobile Verifier'],
             issuer: { id: primaryDid.did },
             issuanceDate: new Date().toISOString(),
