@@ -23,9 +23,10 @@ export class VerifierWebhookService {
     });
   }
 
-  async getVerifierWebhook(loginOrgId: string, webhookId?: string): Promise<IResponse> {
+  async getVerifierWebhook(loginOrgId: string, authorization: string, webhookId?: string): Promise<IResponse> {
     return this.natsClient.sendNatsMessage(this.mobileVerifierProxy, 'get-verifier-webhook', {
       loginOrgId,
+      authorization,
       webhookId
     });
   }

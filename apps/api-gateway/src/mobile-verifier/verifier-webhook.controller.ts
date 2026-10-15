@@ -29,17 +29,20 @@ export class VerifierWebhookController {
   }
 
   @UseGuards(AuthGuard('jwt'))
-  @ApiOperation({ summary: 'Gets mobile-verifier’s webhook registration for this organization' })
+  @ApiOperation({
+    summary: 'Gets mobile-verifier’s webhook registration for this organization (secrets are masked)'
+  })
   @ApiQuery({ name: 'orgId', required: true })
   @ApiQuery({ name: 'webhookId', required: false })
   @Get()
   async getVerifierWebhook(
     @Query() data: { orgId?: string; webhookId?: string },
+    @Headers('authorization') authorization: string,
     @Req() req: Request,
     @Res() res: Response
   ): Promise<Response> {
     const loginOrgId = resolveNgotagOrgId(req.user as Record<string, unknown>, data.orgId);
-    const result = await this.verifierWebhookService.getVerifierWebhook(loginOrgId, data.webhookId);
+    const result = await this.verifierWebhookService.getVerifierWebhook(loginOrgId, authorization, data.webhookId);
     return res.status(result.statusCode ?? HttpStatus.OK).json(result);
   }
 }

@@ -22,7 +22,11 @@ export class VerifierWebhookController {
   }
 
   @MessagePattern({ cmd: 'get-verifier-webhook' })
-  async getVerifierWebhook(payload: { loginOrgId: string; webhookId?: string }): Promise<ResponseType> {
-    return this.verifierWebhookService.getWebhook(payload.loginOrgId, payload.webhookId);
+  async getVerifierWebhook(payload: {
+    loginOrgId: string;
+    authorization: string;
+    webhookId?: string;
+  }): Promise<ResponseType> {
+    return this.verifierWebhookService.getWebhook(payload.loginOrgId, payload.authorization, payload.webhookId);
   }
 }

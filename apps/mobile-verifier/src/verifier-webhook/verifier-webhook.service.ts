@@ -1,12 +1,15 @@
-import { BadRequestException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { VerifierWebhookRepository } from './verifier-webhook.repository';
 import { ResponseType } from '../common/response';
 import { CreateVerifierWebhook } from './dto/create-verifier-webhook.dto';
 import { assertRole } from '../common/keycloak-roles.util';
 import { OrgRoles } from 'libs/org-roles/enums';
-import { encryptClientCredential, decryptClientCredential } from '@credebl/common/cast.helper';
+import { encryptClientCredential } from '@credebl/common/cast.helper';
 import { decryptIfEncrypted } from '../common/functions';
 import { Prisma } from '@prisma/client';
+
+// Secrets (OAuth2 clientSecret / bearer token) are write-only: they are never sent back to callers.
+const SECRET_MASK = '********';
 
 @Injectable()
 export class VerifierWebhookService {
@@ -38,7 +41,9 @@ export class VerifierWebhookService {
     };
   }
 
-  async getWebhook(loginOrgId: string, webhookId?: string): Promise<ResponseType> {
+  async getWebhook(loginOrgId: string, authorization: string, webhookId?: string): Promise<ResponseType> {
+    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+
     const webhook = await this.verifierWebhookRepository.getWebhook(loginOrgId, webhookId);
 
     if (!webhook) {
@@ -64,7 +69,10 @@ export class VerifierWebhookService {
     if ('v1' === version) {
       const { url, grantType, clientId, clientSecret } = data ?? {};
       if (!url || !grantType || !clientId || !clientSecret) {
-        throw new BadRequestException('url, grantType, clientId and clientSecret are required for OAuth2 v1');
+        throw new HttpException(
+          'url, grantType, clientId and clientSecret are required for OAuth2 v1',
+          HttpStatus.BAD_REQUEST
+        );
       }
       return {
         url: await encryptClientCredential(url),
@@ -76,7 +84,7 @@ export class VerifierWebhookService {
 
     const { token } = data ?? {};
     if (!token) {
-      throw new BadRequestException('token is required for OAuth2 v2');
+      throw new HttpException('token is required for OAuth2 v2', HttpStatus.BAD_REQUEST);
     }
     return { token: await encryptClientCredential(token) };
   }
@@ -89,15 +97,15 @@ export class VerifierWebhookService {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const authData = webhook.authData as any;
 
-    const decryptedData =
+    const responseAuthData =
       'v1' === webhook.authVersion
         ? {
             ...authData,
             url: await decryptIfEncrypted(authData.url),
             clientId: await decryptIfEncrypted(authData.clientId),
-            clientSecret: await decryptClientCredential(authData.clientSecret)
+            clientSecret: SECRET_MASK
           }
-        : { token: await decryptClientCredential(authData.token) };
+        : { token: SECRET_MASK };
 
     return {
       webhookId: webhook.webhookId,
@@ -105,7 +113,7 @@ export class VerifierWebhookService {
       authentication: {
         type: webhook.authType,
         version: webhook.authVersion,
-        data: decryptedData
+        data: responseAuthData
       }
     };
   }
