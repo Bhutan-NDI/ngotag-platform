@@ -80,3 +80,11 @@ ALTER TABLE "mobile_verifier_role_to_proof_template" ADD CONSTRAINT "mobile_veri
 
 -- AddForeignKey
 ALTER TABLE "mobile_verifier_role_to_proof_template" ADD CONSTRAINT "mobile_verifier_role_to_proof_template_proofTemplateId_fkey" FOREIGN KEY ("proofTemplateId") REFERENCES "mobile_verifier_proof_template"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- Permission roles gating mobile-verifier writes. The seed only inserts org_roles into an empty
+-- table, so a database that was seeded before these existed would never get them and
+-- updateUserRoles could not map the Keycloak client roles. Idempotent (name is unique).
+INSERT INTO "org_roles" ("id", "name", "description") VALUES
+    (gen_random_uuid(), 'ALLOW_PROOF_TEMPLATE', 'Allows creating mobile-verifier proof templates for this organization'),
+    (gen_random_uuid(), 'ALLOW_VERIFIER', 'Allows creating mobile-verifier verifier roles for this organization')
+ON CONFLICT ("name") DO NOTHING;

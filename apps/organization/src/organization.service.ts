@@ -1473,6 +1473,12 @@ export class OrganizationService {
       }
     );
 
+    // A client role with no org_roles row would make the mapping below throw — after the user's
+    // existing roles were already deleted. Refuse up front, before anything is touched.
+    if (rolesPayload.some((role) => null === role)) {
+      throw new NotFoundException(ResponseMessages.organisation.error.orgRoleIdNotFound);
+    }
+
     const userData = await this.getUserUserId(userId);
 
     const [, deletedUserRoleRecords] = await Promise.all([

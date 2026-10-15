@@ -96,9 +96,14 @@ const createOrgRoles = async (): Promise<void> => {
       }
     });
 
-    if (0 === existOrgRole.length) {
+    // Insert only the roles that are missing, so roles added to the master data later (e.g. the
+    // mobile-verifier ALLOW_* roles) also reach databases that were seeded before they existed.
+    const existingNames = new Set(existOrgRole.map((role) => role.name));
+    const missingOrgRoles = orgRoleData.filter((role) => !existingNames.has(role.name));
+
+    if (0 < missingOrgRoles.length) {
       const orgRoles = await prisma.org_roles.createMany({
-        data: orgRoleData
+        data: missingOrgRoles
       });
 
       logger.log(orgRoles);
