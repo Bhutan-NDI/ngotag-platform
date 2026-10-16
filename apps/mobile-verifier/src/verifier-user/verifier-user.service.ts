@@ -22,8 +22,23 @@ interface ExternalVerifierUser {
   id: string;
   email: string;
   verifierRoleId?: string;
+  // Numeric status kept by the client system: 1 CREATED, 2 INVITED, 3 ACTIVE, 4 SUSPENDED, 5 REVOKED.
+  statusId?: number;
+  revocationStatus?: string;
   [key: string]: unknown;
 }
+
+const SUSPENDED_STATUS_ID = 4;
+const REVOKED_STATUS_ID = 5;
+
+// A fresh credential for a suspended or revoked user would undo the suspension/revocation.
+const isSuspendedOrRevoked = (verifierUser: ExternalVerifierUser): boolean => {
+  if (SUSPENDED_STATUS_ID === verifierUser.statusId || REVOKED_STATUS_ID === verifierUser.statusId) {
+    return true;
+  }
+  const status = verifierUser.revocationStatus?.toUpperCase();
+  return 'SUSPENDED' === status || 'REVOKED' === status;
+};
 
 @Injectable()
 export class VerifierUserService {
@@ -347,9 +362,12 @@ export class VerifierUserService {
     authorizationHeader: string,
     id: string
   ): Promise<ExternalVerifierUser | undefined> {
-    const url = `${webhook.webhookUrl}/v1/verifier-user/${encodeURIComponent(id)}`;
+    // The client system has no GET /verifier-user/:id: it looks a user up with GET /verifier-user?id=,
+    // and answers a missing user with HTTP 200 and a `statusCode: 404` body, so trust the body's status.
+    const query = new URLSearchParams({ id });
+    const url = `${webhook.webhookUrl}/v1/verifier-user?${query.toString()}`;
     const response = await this.commonService.httpGet(url, { headers: { Authorization: authorizationHeader } });
-    return response?.data ?? response;
+    return HttpStatus.OK === response?.statusCode ? response.data : undefined;
   }
 
   async updateVerifierUser(
@@ -458,6 +476,13 @@ export class VerifierUserService {
       return {
         statusCode: HttpStatus.NOT_FOUND,
         message: 'Verifier user not found'
+      };
+    }
+
+    if (isSuspendedOrRevoked(verifierUser)) {
+      return {
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: 'Cannot send an issuance invitation to a suspended or revoked verifier user'
       };
     }
 
