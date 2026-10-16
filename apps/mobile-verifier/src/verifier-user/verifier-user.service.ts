@@ -22,8 +22,23 @@ interface ExternalVerifierUser {
   id: string;
   email: string;
   verifierRoleId?: string;
+  // Numeric status kept by the client system: 1 CREATED, 2 INVITED, 3 ACTIVE, 4 SUSPENDED, 5 REVOKED.
+  statusId?: number;
+  revocationStatus?: string;
   [key: string]: unknown;
 }
+
+const SUSPENDED_STATUS_ID = 4;
+const REVOKED_STATUS_ID = 5;
+
+// A fresh credential for a suspended or revoked user would undo the suspension/revocation.
+const isSuspendedOrRevoked = (verifierUser: ExternalVerifierUser): boolean => {
+  if (SUSPENDED_STATUS_ID === verifierUser.statusId || REVOKED_STATUS_ID === verifierUser.statusId) {
+    return true;
+  }
+  const status = verifierUser.revocationStatus?.toUpperCase();
+  return 'SUSPENDED' === status || 'REVOKED' === status;
+};
 
 @Injectable()
 export class VerifierUserService {
@@ -458,6 +473,13 @@ export class VerifierUserService {
       return {
         statusCode: HttpStatus.NOT_FOUND,
         message: 'Verifier user not found'
+      };
+    }
+
+    if (isSuspendedOrRevoked(verifierUser)) {
+      return {
+        statusCode: HttpStatus.BAD_REQUEST,
+        message: 'Cannot send an issuance invitation to a suspended or revoked verifier user'
       };
     }
 
