@@ -1,5 +1,6 @@
 import { Injectable, Logger, ConflictException } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
+import { findReuseInvitationDids, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 // eslint-disable-next-line camelcase
 import { agent_invitations, org_agents, platform_config, shortening_url } from '@prisma/client';
 import { IConnectionSearchCriteria, ICreateConnection, OrgAgent } from './interfaces/connection.interfaces';
@@ -90,7 +91,6 @@ export class ConnectionRepository {
     }
   }
 
-
   async getConnectionRecordsCount(orgId: string): Promise<number> {
     try {
       const connectionRecordsCount = await this.prisma.connections.count({
@@ -104,7 +104,6 @@ export class ConnectionRepository {
       throw error;
     }
   }
-
 
   /**
    * Description: Save connection details
@@ -333,7 +332,7 @@ export class ConnectionRepository {
 
         if (0 < referencedTables.length) {
           let errorMessage = `Organization ID ${orgId} is referenced in the following table(s): ${referencedTables.join(', ')}`;
-        
+
           if (1 === referencedTables.length) {
             if (referencedTables.includes(`${PrismaTables.PRESENTATIONS}`)) {
               errorMessage += `, ${ResponseMessages.verification.error.removeVerificationData}`;
@@ -343,34 +342,31 @@ export class ConnectionRepository {
           } else if (2 === referencedTables.length) {
             errorMessage += `, ${ResponseMessages.connection.error.removeConnectionReferences}`;
           }
-        
+
           throw new ConflictException(errorMessage);
         }
-  
-        const getConnectionRecords = await prisma.connections.findMany(
-          { 
-            where: { 
-              orgId 
-            },
-            select: {
-              createDateTime: true,
-              createdBy: true,
-              connectionId: true,
-              theirLabel: true,
-              state: true,
-              orgId: true
 
-            }
-          });
+        const getConnectionRecords = await prisma.connections.findMany({
+          where: {
+            orgId
+          },
+          select: {
+            createDateTime: true,
+            createdBy: true,
+            connectionId: true,
+            theirLabel: true,
+            state: true,
+            orgId: true
+          }
+        });
 
-        const deleteConnectionRecords = await prisma.connections.deleteMany(
-          { 
-            where: { 
-              orgId 
-            }
-          });
+        const deleteConnectionRecords = await prisma.connections.deleteMany({
+          where: {
+            orgId
+          }
+        });
 
-        return {getConnectionRecords, deleteConnectionRecords };
+        return { getConnectionRecords, deleteConnectionRecords };
       });
     } catch (error) {
       this.logger.error(`Error in deleting connection records: ${error.message}`);
@@ -378,29 +374,7 @@ export class ConnectionRepository {
     }
   }
 
-   // eslint-disable-next-line camelcase
-   async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations> {
-    try {
-      return this.prisma.agent_invitations.findFirst({
-        where: {
-          AND: [
-            {
-              orgId
-            },
-            {
-              invitationDid: {
-                not: null
-              }
-            }
-          ]
-        },
-        orderBy: {
-          createDateTime: 'asc'
-        }
-      });
-    } catch (error) {
-      this.logger.error(`Error in getInvitationDid in connection repository: ${error.message}`);
-      throw error;
-    }
+  getReuseInvitationDids(orgId: string): Promise<ReuseInvitationDids> {
+    return findReuseInvitationDids(this.prisma, orgId);
   }
 }
