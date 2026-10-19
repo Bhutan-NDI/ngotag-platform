@@ -452,6 +452,8 @@ export const ResponseMessages = {
       agentTokenNoRole: 'The supplied token carries no role claim',
       agentTokenRoleMismatch: 'The supplied token does not carry the role this organization agent requires',
       agentRowChanged: 'The organization agent changed while the token was being verified -- please retry',
+      orgAgentMigrating: 'ORG_AGENT_MIGRATING: the organization agent is being migrated and is temporarily unavailable',
+      agentRowChangedDuringMigration: 'The organization agent changed during the migration cutover',
       walletDoesNotExists: 'Organization wallet does not exists',
       requiredDomain: 'Domain is required for Web method',
       requiredNetwork: 'Network is required',

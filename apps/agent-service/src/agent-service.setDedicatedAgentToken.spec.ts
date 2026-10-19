@@ -49,6 +49,7 @@ const buildService = (
     );
 
   const repository = {
+    isOrgAgentMigrationFrozen: jest.fn().mockResolvedValue(false),
     getAgentApiKey: jest.fn().mockResolvedValue({
       orgAgentTypeId: overrides.orgAgentTypeId ?? DEDICATED_TYPE_ID,
       agentEndPoint: AGENT_ENDPOINT

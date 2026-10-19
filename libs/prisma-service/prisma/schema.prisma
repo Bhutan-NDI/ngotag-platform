@@ -167,6 +167,7 @@ model organisation {
   marketplaceSubscriptions  marketplace_subscription[]
   marketplaceUsageEvents    marketplace_usage_event[]
   billingUsageEvents        billing_usage_event[]
+  org_agent_migrations      org_agent_migrations[]
 }
 
 model org_invitations {
@@ -251,6 +252,55 @@ model org_agents {
   oidc_issuer         oidc_issuer[]
   x509_certificates   x509_certificates[]
   oid4vp_verifiers    oid4vp_verifier[]
+}
+
+model org_agent_migrations {
+  id                     String                       @id @default(uuid()) @db.Uuid
+  createDateTime         DateTime                     @default(now()) @db.Timestamptz(6)
+  lastChangedDateTime    DateTime                     @default(now()) @db.Timestamptz(6)
+  orgId                  String                       @db.Uuid
+  status                 String                       @default("CREATED") @db.VarChar(32)
+  phase                  String?                      @db.VarChar(32)
+  startedBy              String                       @db.Uuid
+  sourceOrgAgentSnapshot Json?
+  tenantId               String?
+  targetAdminEndpoint    String?                      @db.VarChar
+  targetDidcommEndpoint  String?                      @db.VarChar
+  newInvitationDid       String?                      @db.VarChar
+  legacyInvitationDid    String?                      @db.VarChar
+  exportJobId            String?                      @db.VarChar
+  importJobId            String?                      @db.VarChar
+  rotationJobId          String?                      @db.VarChar
+  counts                 Json?
+  checksum               String?                      @db.VarChar
+  importKeyFingerprint   String?                      @db.VarChar
+  releaseVersion         String?                      @db.VarChar
+  storageVersion         String?                      @db.VarChar
+  rehearsalDurationMs    Int?
+  predictedFreezeMs      Int?
+  freezeDeadline         DateTime?                    @db.Timestamptz(6)
+  stabilisationEndsAt    DateTime?                    @db.Timestamptz(6)
+  purgedAt               DateTime?                    @db.Timestamptz(6)
+  error                  String?                      @db.VarChar
+  organisation           organisation                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  events                 org_agent_migration_events[]
+
+  // At most one non-terminal migration per org: a partial unique index on (orgId) WHERE status NOT IN
+  // ('COMPLETED','FAILED','DISASTER_RESTORED'), created in the raw migration; Prisma's DSL can't express it.
+  @@index([orgId])
+  @@index([status])
+}
+
+model org_agent_migration_events {
+  id             String               @id @default(uuid()) @db.Uuid
+  createDateTime DateTime             @default(now()) @db.Timestamptz(6)
+  migrationId    String               @db.Uuid
+  fromStatus     String?              @db.VarChar(32)
+  toStatus       String               @db.VarChar(32)
+  actor          String?              @db.VarChar
+  migration      org_agent_migrations @relation(fields: [migrationId], references: [id], onDelete: Cascade)
+
+  @@index([migrationId])
 }
 
 model org_dids {

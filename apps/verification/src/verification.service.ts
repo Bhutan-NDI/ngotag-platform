@@ -12,7 +12,6 @@ import {
 } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import {
-  IGetAllProofPresentations,
   IProofRequestSearchCriteria,
   IGetProofPresentationById,
   IProofPresentation,
@@ -189,22 +188,6 @@ export class VerificationService {
         `[getVerificationRecords ] [NATS call]- error in get verification records count : ${JSON.stringify(error)}`
       );
       throw new RpcException(error.response ? error.response : error);
-    }
-  }
-
-  /**
-   * Consume agent API for get all proof presentations
-   * @param payload
-   * @returns Get all proof presentation
-   */
-  async _getProofPresentations(payload: IGetAllProofPresentations): Promise<object> {
-    try {
-      const pattern = { cmd: 'agent-get-proof-presentations' };
-      const result = await this.natsClient.send<object>(this.verificationServiceProxy, pattern, payload);
-      return result;
-    } catch (error) {
-      this.logger.error(`[_getProofPresentations] - error in get proof presentations : ${JSON.stringify(error)}`);
-      throw error;
     }
   }
 

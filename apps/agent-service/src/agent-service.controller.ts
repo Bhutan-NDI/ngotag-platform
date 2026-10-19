@@ -140,22 +140,10 @@ export class AgentServiceController {
   }
 
   //DONE
-  @MessagePattern({ cmd: 'agent-get-all-issued-credentials' })
-  async getIssueCredentials(payload: { url: string; apiKey: string }): Promise<object> {
-    return this.agentServiceService.getIssueCredentials(payload.url, payload.apiKey);
-  }
-
-  //DONE
   @MessagePattern({ cmd: 'agent-get-issued-credentials-by-credentialDefinitionId' })
   async getIssueCredentialsbyCredentialRecordId(payload: { url: string; orgId: string }): Promise<object> {
     return this.agentServiceService.getIssueCredentialsbyCredentialRecordId(payload.url, payload.orgId);
   }
-  //DONE
-  @MessagePattern({ cmd: 'agent-get-proof-presentations' })
-  async getProofPresentations(payload: { url: string; apiKey: string }): Promise<object> {
-    return this.agentServiceService.getProofPresentations(payload.url, payload.apiKey);
-  }
-
   //DONE
   @MessagePattern({ cmd: 'agent-get-proof-presentation-by-id' })
   async getProofPresentationById(payload: { url: string; orgId: string }): Promise<object> {
