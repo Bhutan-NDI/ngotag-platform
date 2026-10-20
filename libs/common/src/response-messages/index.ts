@@ -396,7 +396,12 @@ export const ResponseMessages = {
       createKeys: 'Key-pair created successfully',
       walletDelete: 'The wallet has been deleted.',
       webhookUrlUpdate: 'Webhook Url updated successfully',
-      dedicatedAgentToken: 'Agent token updated successfully'
+      dedicatedAgentToken: 'Agent token updated successfully',
+      migrationCreated: 'Wallet move created',
+      migrationChecked: 'Wallet move checks completed',
+      migrationRehearsalStarted: 'Wallet move rehearsal started',
+      migrationFetched: 'Wallet move fetched successfully',
+      migrationsFetched: 'Wallet moves fetched successfully'
     },
     error: {
       exists: 'An agent name is already exist',
