@@ -23,6 +23,8 @@ import { OrgAgentMigrationController } from './migration/org-agent-migration.con
 import { OrgAgentMigrationService } from './migration/org-agent-migration.service';
 import { OrgAgentMigrationPreflightService } from './migration/org-agent-migration.preflight.service';
 import { OrgAgentMigrationRehearsalService } from './migration/org-agent-migration.rehearsal.service';
+import { OrgAgentMigrationAlertService } from './migration/org-agent-migration.alert.service';
+import { OrgAgentMigrationAuthorizer } from './migration/org-agent-migration.authorizer';
 import { MigrationAgentAccess } from './migration/migration-agent-access';
 import { MigrationAgentClient } from './migration/migration-agent.client';
 import { OrgAgentMigrationRepository } from './repositories/org-agent-migration.repository';
@@ -59,6 +61,8 @@ import { OrgAgentMigrationRepository } from './repositories/org-agent-migration.
     OrgAgentMigrationService,
     OrgAgentMigrationPreflightService,
     OrgAgentMigrationRehearsalService,
+    OrgAgentMigrationAlertService,
+    OrgAgentMigrationAuthorizer,
     MigrationAgentAccess,
     MigrationAgentClient,
     OrgAgentMigrationRepository,

@@ -1,10 +1,13 @@
 /* eslint-disable camelcase */
 import { Controller, Logger } from '@nestjs/common';
-import { MessagePattern } from '@nestjs/microservices';
-import { RpcException } from '@nestjs/microservices';
+import { MessagePattern, RpcException } from '@nestjs/microservices';
+import { org_agent_migrations } from '@prisma/client';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 import { OrgAgentMigrationPreflightService } from './org-agent-migration.preflight.service';
 import { OrgAgentMigrationRehearsalService } from './org-agent-migration.rehearsal.service';
+import { OrgAgentMigrationAuthorizer } from './org-agent-migration.authorizer';
+import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
+import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import {
   ICreateOrgAgentMigration,
   IListOrgAgentMigrations,
@@ -25,17 +28,28 @@ export class OrgAgentMigrationController {
     private readonly migrationService: OrgAgentMigrationService,
     private readonly preflightService: OrgAgentMigrationPreflightService,
     private readonly rehearsalService: OrgAgentMigrationRehearsalService,
+    private readonly authorizer: OrgAgentMigrationAuthorizer,
+    private readonly alertService: OrgAgentMigrationAlertService,
+    private readonly migrationRepository: OrgAgentMigrationRepository,
     private readonly logger: Logger
   ) {}
 
-  // Creates the migration and runs the first preflight, so the owner sees the checks as soon as it exists.
+  // Creates the migration, tells the alert recipients a move has started, and runs the first preflight so the owner
+  // sees the checks as soon as it exists.
   @MessagePattern({ cmd: 'migrate-org-agent' })
   async createMigration(
     payload: ICreateOrgAgentMigration
   ): Promise<{ migration: IOrgAgentMigration; preflight: IPreflightReport | null }> {
-    const created = await this.migrationService.createMigration(payload);
     try {
-      const { migration, report } = await this.preflightService.run(created.id, payload);
+      await this.authorizer.assertOwner(payload.orgId, payload.userId);
+    } catch (error) {
+      throw new RpcException(error.response ?? error);
+    }
+
+    const created = await this.migrationService.createMigration(payload);
+    await this.announceMove(created, payload.userId);
+    try {
+      const { migration, report } = await this.preflightService.run(created.id, payload, payload.userId);
       return { migration: toPublicMigration(migration), preflight: report };
     } catch (error) {
       // The migration exists; the owner can re-run the checks.
@@ -51,8 +65,9 @@ export class OrgAgentMigrationController {
     payload: IPreflightOrgAgentMigration
   ): Promise<{ migration: IOrgAgentMigration; preflight: IPreflightReport }> {
     try {
+      await this.authorizer.assertOwner(payload.orgId, payload.userId);
       const active = await this.migrationService.getMigration(payload.orgId);
-      const { migration, report } = await this.preflightService.run(active.id, payload);
+      const { migration, report } = await this.preflightService.run(active.id, payload, payload.userId);
       return { migration: toPublicMigration(migration), preflight: report };
     } catch (error) {
       throw new RpcException(error.response ?? error);
@@ -62,6 +77,7 @@ export class OrgAgentMigrationController {
   @MessagePattern({ cmd: 'rehearse-org-agent-migration' })
   async rehearse(payload: IRehearseOrgAgentMigration): Promise<IOrgAgentMigration> {
     try {
+      await this.authorizer.assertOwner(payload.orgId, payload.userId);
       return toPublicMigration(await this.rehearsalService.start(payload.orgId, payload.userId));
     } catch (error) {
       throw new RpcException(error.response ?? error);
@@ -77,5 +93,19 @@ export class OrgAgentMigrationController {
   async listMigrations(payload: IListOrgAgentMigrations): Promise<{ total: number; migrations: IOrgAgentMigration[] }> {
     const { total, migrations } = await this.migrationService.listMigrations(payload);
     return { total, migrations: migrations.map(toPublicMigration) };
+  }
+
+  // Best effort: the alert that gates each export is the one that matters, and it fails closed there.
+  private async announceMove(migration: org_agent_migrations, actor: string): Promise<void> {
+    try {
+      const alert = await this.alertService.alertKeyExport(migration, KeyExportAlertKind.MOVE_STARTED, actor);
+      await this.migrationRepository.recordEvent(migration.id, {
+        action: 'MOVE_STARTED_ALERT',
+        actor,
+        detail: { alertsSent: alert.sent, recipients: alert.recipients }
+      });
+    } catch (error) {
+      this.logger.error(`[migrate-org-agent] alert failed: ${error instanceof Error ? error.message : 'failed'}`);
+    }
   }
 }
