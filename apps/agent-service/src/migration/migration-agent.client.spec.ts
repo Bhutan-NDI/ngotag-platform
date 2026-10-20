@@ -1,0 +1,161 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { HttpService } from '@nestjs/axios';
+import * as http from 'http';
+import { AddressInfo } from 'net';
+import { MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
+
+interface Seen {
+  method: string;
+  url: string;
+  authorization?: string;
+  body: string;
+}
+
+describe('MigrationAgentClient against a real HTTP server', () => {
+  let server: http.Server;
+  let baseUrl: string;
+  let seen: Seen[];
+  let respond: (request: Seen) => { status: number; body?: unknown };
+  const client = new MigrationAgentClient(new HttpService());
+
+  beforeAll(async () => {
+    server = http.createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk) => chunks.push(chunk));
+      request.on('end', () => {
+        const entry: Seen = {
+          method: request.method,
+          url: request.url,
+          authorization: request.headers.authorization,
+          body: Buffer.concat(chunks).toString()
+        };
+        seen.push(entry);
+        const { status, body } = respond(entry);
+        response.writeHead(status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(body ?? {}));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  beforeEach(() => {
+    seen = [];
+    respond = () => ({ status: 200, body: {} });
+  });
+
+  it('exchanges the API key for a token, sending the key as the authorization header', async () => {
+    respond = () => ({ status: 200, body: { token: 'root-token' } });
+
+    await expect(client.createToken(`${baseUrl}/`, 'the-api-key')).resolves.toBe('root-token');
+
+    expect(seen[0]).toMatchObject({ method: 'POST', url: '/agent/token', authorization: 'the-api-key' });
+  });
+
+  it('reads the agent info with the token', async () => {
+    respond = () => ({ status: 200, body: { endpoints: ['https://agent.example.org'], isInitialized: true } });
+
+    await expect(client.getAgentInfo(baseUrl, 'tok')).resolves.toMatchObject({ isInitialized: true });
+
+    expect(seen[0]).toMatchObject({ method: 'GET', url: '/agent', authorization: 'tok' });
+  });
+
+  it('starts a sealed export for the tenant, sealed to the recipient key', async () => {
+    respond = () => ({ status: 200, body: { jobId: 'j1', status: 'pending' } });
+
+    await client.startSealedExport(baseUrl, 'tok', 'tenant-1', 'cmVjaXBpZW50');
+
+    expect(seen[0]).toMatchObject({ method: 'POST', url: '/multi-tenancy/export/tenant-1' });
+    expect(JSON.parse(seen[0].body)).toEqual({ recipientPublicKey: 'cmVjaXBpZW50' });
+  });
+
+  it('reads an export job, deletes an export and probes a relay target on the documented routes', async () => {
+    await client.getExportJob(baseUrl, 'tok', 'tenant-1', 'job-1');
+    await client.deleteExport(baseUrl, 'tok', 'tenant-1', 'job-1');
+    await client.probeRelayTarget(baseUrl, 'tok', 'tenant-1', 'https://org.example.org/didcomm');
+    await client.getRelayHealth(baseUrl, 'tok');
+    await client.getEndpointSchemes(baseUrl, 'tok', 'tenant-1');
+
+    expect(seen.map(({ method, url }) => `${method} ${url}`)).toEqual([
+      'GET /multi-tenancy/export/tenant-1/status/job-1',
+      'DELETE /multi-tenancy/export/tenant-1/job-1',
+      'POST /multi-tenancy/relay/tenant-1/probe',
+      'GET /multi-tenancy/relay/health',
+      'GET /multi-tenancy/tenant-1/endpoint-schemes'
+    ]);
+    expect(JSON.parse(seen[2].body)).toEqual({ target: 'https://org.example.org/didcomm' });
+  });
+
+  it('creates an import session, starts an import and polls it on the documented routes', async () => {
+    const body = {
+      sessionId: 's1',
+      exportUrl: 'https://bucket.s3.amazonaws.com/x',
+      checksum: 'a'.repeat(64),
+      sealedStoreKey: 'a2V5',
+      storageVersion: '0.5',
+      dryRun: true
+    };
+
+    await client.createImportSession(baseUrl, 'tok');
+    await client.startImport(baseUrl, 'tok', body);
+    await client.getImportJob(baseUrl, 'tok', 'job 1');
+
+    expect(seen.map(({ method, url }) => `${method} ${url}`)).toEqual([
+      'POST /agent/wallet/import-session',
+      'POST /agent/wallet/import',
+      'GET /agent/wallet/import/status/job%201'
+    ]);
+    expect(JSON.parse(seen[1].body)).toEqual(body);
+  });
+
+  it.each([
+    [401, 'REJECTED'],
+    [403, 'REJECTED'],
+    [404, 'NOT_FOUND'],
+    [409, 'CONFLICT'],
+    [500, 'FAILED']
+  ])('classifies a %s answer as %s', async (status, kind) => {
+    respond = () => ({ status, body: { message: 'TARGET_NOT_PRISTINE' } });
+
+    const error = await client.createImportSession(baseUrl, 'tok').catch((e) => e);
+
+    expect(error).toBeInstanceOf(MigrationAgentError);
+    expect(error).toMatchObject({ kind, status });
+  });
+
+  it("carries the agent's own code on a conflict", async () => {
+    respond = () => ({ status: 409, body: { message: 'TARGET_NOT_PRISTINE' } });
+
+    const error = await client.createImportSession(baseUrl, 'tok').catch((e) => e);
+
+    expect(error.agentCode).toBe('TARGET_NOT_PRISTINE');
+  });
+
+  it('reports an agent that cannot be reached', async () => {
+    const closed = http.createServer();
+    await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));
+    const { port } = closed.address() as AddressInfo;
+    await new Promise((resolve) => closed.close(resolve));
+
+    const error = await client.getAgentInfo(`http://127.0.0.1:${port}`, 'tok').catch((e) => e);
+
+    expect(error).toMatchObject({ kind: 'UNREACHABLE' });
+  });
+
+  it('never lets the token or API key into an error, its message or its serialised form', async () => {
+    respond = () => ({ status: 401 });
+
+    const failures = [
+      await client.getAgentInfo(baseUrl, 'SECRET-TOKEN').catch((e) => e),
+      await client.createToken(baseUrl, 'SECRET-API-KEY').catch((e) => e)
+    ];
+
+    for (const failure of failures) {
+      expect(`${failure.message} ${JSON.stringify(failure)} ${failure.stack}`).not.toMatch(/SECRET/);
+    }
+  });
+});

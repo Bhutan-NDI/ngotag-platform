@@ -4,6 +4,7 @@ import { Prisma, org_agent_migrations } from '@prisma/client';
 import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { PrismaService } from '@credebl/prisma-service';
 import { ResponseMessages } from '@credebl/common/response-messages';
+import { FileUploadStatus } from 'apps/api-gateway/src/enum';
 import { phaseFor, TERMINAL_STATUSES } from '../migration/org-agent-migration.state-machine';
 
 type MigrationRow = org_agent_migrations;
@@ -15,6 +16,7 @@ export type OrgAgentMigrationPatch = Omit<
 >;
 
 const UNIQUE_VIOLATION = 'P2002';
+export const REHEARSAL_RUNNING = 'RUNNING';
 
 @Injectable()
 export class OrgAgentMigrationRepository {
@@ -148,6 +150,60 @@ export class OrgAgentMigrationRepository {
       );
       throw error;
     }
+  }
+
+  /** Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). */
+  async update(id: string, patch: OrgAgentMigrationPatch): Promise<MigrationRow> {
+    return this.prisma.org_agent_migrations.update({
+      where: { id },
+      data: { ...patch, lastChangedDateTime: new Date() }
+    });
+  }
+
+  /**
+   * Marks a rehearsal as running unless one already is. A run that started before `staleBefore` is treated as dead
+   * (the process died mid-rehearsal) and may be replaced.
+   * @returns false when a live rehearsal already holds it
+   */
+  async tryStartRehearsal(id: string, staleBefore: Date): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: {
+        id,
+        OR: [
+          { rehearsalStatus: null },
+          { rehearsalStatus: { not: REHEARSAL_RUNNING } },
+          { rehearsalStartedAt: { lt: staleBefore } }
+        ]
+      },
+      data: {
+        rehearsalStatus: REHEARSAL_RUNNING,
+        rehearsalStartedAt: new Date(),
+        rehearsal: Prisma.JsonNull,
+        lastChangedDateTime: new Date()
+      }
+    });
+    return 1 === count;
+  }
+
+  /** True while the org has a bulk issuance that has started or been restarted and not yet finished. */
+  async hasActiveBulkIssuance(orgId: string): Promise<boolean> {
+    const active = await this.prisma.file_upload.findFirst({
+      where: { orgId, deletedAt: null, status: { in: [FileUploadStatus.started, FileUploadStatus.retry] } },
+      select: { id: true }
+    });
+    return Boolean(active);
+  }
+
+  /** How many OID4VC, x509, AnonCreds and status-list records the org has; the move supports none of them. */
+  async countOutOfScopeArtefacts(orgId: string): Promise<Record<string, number>> {
+    const [oidcIssuers, oid4vpVerifiers, x509Certificates, credentialDefinitions, statusLists] = await Promise.all([
+      this.prisma.oidc_issuer.count({ where: { orgAgent: { orgId } } }),
+      this.prisma.oid4vp_verifier.count({ where: { orgAgent: { orgId } } }),
+      this.prisma.x509_certificates.count({ where: { org_agents: { orgId } } }),
+      this.prisma.credential_definition.count({ where: { orgId } }),
+      this.prisma.status_list_allocation.count({ where: { orgId } })
+    ]);
+    return { oidcIssuers, oid4vpVerifiers, x509Certificates, credentialDefinitions, statusLists };
   }
 
   private async currentScheduledFor(tx: Prisma.TransactionClient, id: string): Promise<Date | null> {
