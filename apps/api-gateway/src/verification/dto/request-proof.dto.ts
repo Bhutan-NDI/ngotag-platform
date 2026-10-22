@@ -18,7 +18,7 @@ import {
   IsUrl,
   IsInt,
   Min,
-  Max
+  ValidateBy
 } from 'class-validator';
 import { REDIRECT_URI_VALIDATION_OPTIONS } from './redirect-uris.dto';
 import { trim } from '@credebl/common/cast.helper';
@@ -29,33 +29,53 @@ import { AutoAccept } from '@credebl/enum/enum';
 import { IProofFormats } from '../interfaces/verification.interface';
 import { ProofRequestType } from '../enum/verification.enum';
 
-// Bounds for expiresInSeconds (phase 2 decision, option c, 2 Oct 2026). Minimum: delivery time plus a
-// person reading the request. Maximum: the agent-controller purge ceiling, PURGE_CRON_ABANDONED_TTL_SECONDS
-// (7 days by default) minus a margin. agent-controller re-checks both bounds against its own config.
-// TODO: the 1-hour margin is a placeholder pending confirmation.
+// Matches agent-controller's ceiling with its default purge TTL (7 days minus 1 hour); set
+// PROOF_REQUEST_EXPIRY_MAX_SECONDS when a deployment changes its purge TTLs.
 export const MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS = 300;
-const PURGE_CEILING_SECONDS = 604_800; // 7 days, the default PURGE_CRON_ABANDONED_TTL_SECONDS
-const PURGE_CEILING_MARGIN_SECONDS = 3_600;
-export const MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS = PURGE_CEILING_SECONDS - PURGE_CEILING_MARGIN_SECONDS;
+export const DEFAULT_MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS = 601_200;
+export const PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV = 'PROOF_REQUEST_EXPIRY_MAX_SECONDS';
+
+/** Read per call, not at import, because main.ts loads .env after the DTO modules are imported. */
+export function getMaxProofRequestExpiresInSeconds(): number {
+  const raw = process.env[PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV];
+  if (raw === undefined || '' === raw.trim()) {
+    return DEFAULT_MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS) {
+    throw new Error(
+      `${PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV} must be a whole number of seconds, at least ${MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS}, got: "${raw}"`
+    );
+  }
+  return value;
+}
+
+function MaxProofRequestExpiresInSeconds(): PropertyDecorator {
+  return ValidateBy({
+    name: 'maxProofRequestExpiresInSeconds',
+    validator: {
+      validate: (value): boolean => 'number' !== typeof value || value <= getMaxProofRequestExpiresInSeconds(),
+      defaultMessage: (): string => `expiresInSeconds must be at most ${getMaxProofRequestExpiresInSeconds()}`
+    }
+  });
+}
 
 /** Optional expiresInSeconds, validated the same way on connection-based and out-of-band requests. */
 function ExpiresInSecondsProperty(): PropertyDecorator {
   return applyDecorators(
     ApiPropertyOptional({
+      type: Number,
+      nullable: true,
       example: 1800,
       minimum: MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS,
-      maximum: MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS,
-      description:
-        'Seconds until the proof request expires. Omit (or null) to use the agent deployment default. Out-of-range or non-integer values are rejected, never adjusted.'
+      description: `Seconds until the proof request expires. Omit (or null) to use the agent deployment default. The maximum depends on the deployment's purge settings (${DEFAULT_MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS} by default). Out-of-range or non-integer values are rejected, never adjusted.`
     }),
     IsOptional(),
     IsInt({ message: 'expiresInSeconds must be a whole number of seconds' }),
     Min(MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS, {
       message: `expiresInSeconds must be at least ${MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS}`
     }),
-    Max(MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS, {
-      message: `expiresInSeconds must be at most ${MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS}`
-    })
+    MaxProofRequestExpiresInSeconds()
   );
 }
 

@@ -1,10 +1,3 @@
-// The root jest config has no mapping for bare `apps/...` imports.
-jest.mock(
-  'apps/api-gateway/src/verification/enum/verification.enum',
-  () => jest.requireActual('../../../api-gateway/src/verification/enum/verification.enum'),
-  { virtual: true }
-);
-
 import { VerificationService } from '../verification.service';
 
 const ORG_ID = 'org-1';

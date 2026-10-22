@@ -1,8 +1,10 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import {
-  MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS,
+  DEFAULT_MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS,
   MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS,
+  PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV,
+  getMaxProofRequestExpiresInSeconds,
   RequestProofDtoV1,
   RequestProofDtoV2,
   SendProofRequestPayload
@@ -25,9 +27,14 @@ describe.each([
 ] as [string, ProofRequestBody][])('%s expiresInSeconds', (_name, dto) => {
   const expiresInSecondsErrors = (body: object): Promise<string[]> => errorsFor(dto, body);
 
-  it('uses 7 days minus a 1-hour margin as the maximum', () => {
+  afterEach(() => {
+    delete process.env[PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV];
+  });
+
+  it('defaults the maximum to 7 days minus a 1-hour margin', () => {
     expect(MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS).toBe(300);
-    expect(MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS).toBe(601_200);
+    expect(DEFAULT_MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS).toBe(601_200);
+    expect(getMaxProofRequestExpiresInSeconds()).toBe(601_200);
   });
 
   it.each([{}, { expiresInSeconds: undefined }, { expiresInSeconds: null }])(
@@ -51,6 +58,21 @@ describe.each([
     expect(await expiresInSecondsErrors({ expiresInSeconds: 601_201 })).toContain(
       'expiresInSeconds must be at most 601200'
     );
+  });
+
+  it(`takes the maximum from ${PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV} when set`, async () => {
+    process.env[PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV] = '86400';
+
+    expect(await expiresInSecondsErrors({ expiresInSeconds: 86_400 })).toEqual([]);
+    expect(await expiresInSecondsErrors({ expiresInSeconds: 86_401 })).toContain(
+      'expiresInSeconds must be at most 86400'
+    );
+  });
+
+  it.each(['abc', '1.5', '299'])(`rejects %p as ${PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV}`, (value) => {
+    process.env[PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV] = value;
+
+    expect(() => getMaxProofRequestExpiresInSeconds()).toThrow(PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV);
   });
 
   it.each([1.5, '600', 'abc', true])('rejects %p as not a whole number', async (value) => {
