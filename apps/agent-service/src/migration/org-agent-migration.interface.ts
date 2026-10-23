@@ -30,6 +30,11 @@ export interface IRehearseOrgAgentMigration {
   userId: string;
 }
 
+export interface IRestoreOrgAgentMigration {
+  orgId: string;
+  userId: string;
+}
+
 export interface ICancelOrgAgentMigration {
   orgId: string;
   userId: string;

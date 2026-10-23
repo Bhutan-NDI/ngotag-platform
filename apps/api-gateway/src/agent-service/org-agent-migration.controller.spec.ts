@@ -47,6 +47,7 @@ describe('wallet move routes', () => {
     rehearse: jest.fn(),
     start: jest.fn(),
     cancel: jest.fn(),
+    disasterRestore: jest.fn(),
     get: jest.fn(),
     list: jest.fn()
   };
@@ -343,6 +344,57 @@ describe('wallet move routes', () => {
       const response = await request(app.getHttpServer()).get(`/orgs/${ORG_ID}/agents/migrate`);
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('POST /agents/migrations/:targetOrgId/disaster-restore', () => {
+    const admin = () => userWith([membership(PLATFORM_ORG_ID, 'platform_admin')]);
+    const restore = (orgId = ORG_ID, body: object = { acknowledgeLosses: true }) =>
+      request(app.getHttpServer()).post(`/agents/migrations/${orgId}/disaster-restore`).send(body);
+
+    it('lets a platform admin who is not a member of the org roll its move back, as the user in the token', async () => {
+      currentUser = admin();
+
+      const response = await restore();
+
+      expect(response.status).toBe(200);
+      expect(service.disasterRestore).toHaveBeenCalledWith(ORG_ID, 'user-1');
+    });
+
+    it('refuses an owner of that very organisation: only the platform team can roll back', async () => {
+      const response = await restore();
+
+      expect(response.status).toBe(403);
+      expect(service.disasterRestore).not.toHaveBeenCalled();
+    });
+
+    it.each(['admin', 'super_admin', 'issuer', 'member'])('refuses a %s of the organisation', async (role) => {
+      currentUser = userWith([membership(ORG_ID, role)]);
+
+      const response = await restore();
+
+      expect(response.status).toBe(403);
+    });
+
+    it.each([
+      ['no acknowledgement', {}],
+      ['an acknowledgement of false', { acknowledgeLosses: false }],
+      ['an acknowledgement that is not a boolean', { acknowledgeLosses: 'yes' }]
+    ])('refuses %s: the losses must be acknowledged', async (_name, body) => {
+      currentUser = admin();
+
+      const response = await restore(ORG_ID, body);
+
+      expect(response.status).toBe(400);
+      expect(service.disasterRestore).not.toHaveBeenCalled();
+    });
+
+    it('rejects an org id that is not a UUID', async () => {
+      currentUser = admin();
+
+      const response = await restore('not-a-uuid');
+
+      expect(response.status).toBe(400);
     });
   });
 

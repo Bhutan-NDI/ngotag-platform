@@ -167,6 +167,18 @@ describe('MigrationAgentClient against a real HTTP server', () => {
     expect(seen.every(({ authorization }) => 'tok' === authorization)).toBe(true);
   });
 
+  it('restores a relay on the documented route', async () => {
+    respond = () => ({ status: 200, body: { injected: 2, failed: 0 } });
+
+    await expect(client.restoreRelay(baseUrl, 'tok', 'tenant-1')).resolves.toEqual({ injected: 2, failed: 0 });
+
+    expect(seen[0]).toMatchObject({
+      method: 'POST',
+      url: '/multi-tenancy/relay/tenant-1/restore',
+      authorization: 'tok'
+    });
+  });
+
   it.each([
     [401, 'REJECTED'],
     [403, 'REJECTED'],

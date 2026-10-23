@@ -37,6 +37,7 @@ import { OrgRolesGuard } from '../authz/guards/org-roles.guard';
 import { StepUpAuthGuard } from '../authz/guards/step-up.guard';
 import {
   CreateOrgAgentMigrationDto,
+  DisasterRestoreDto,
   ListOrgAgentMigrationsDto,
   PreflightOrgAgentMigrationDto,
   StartOrgAgentMigrationDto
@@ -222,6 +223,44 @@ export class OrgAgentMigrationController {
    * Platform admins see moves across organisations. The org filter is `targetOrgId`, not `orgId`: the role guard
    * treats an `orgId` as "check membership of that org", which would refuse an admin who is not a member.
    */
+  /**
+   * The org filter is `targetOrgId` in the path for the same reason as in the list: the role guard treats an `orgId`
+   * as "check membership of that org", which would refuse a platform admin who is not a member.
+   */
+  @Post('/agents/migrations/:targetOrgId/disaster-restore')
+  @ApiOperation({
+    summary: 'Roll a wallet move back to the shared agent',
+    description:
+      'For platform admins, during the stabilisation window only, when the new agent is lost for good. The organisation goes back to the shared agent and the wallet it kept. Lossy: what the new agent recorded since the switch is gone, and connections made since then break.'
+  })
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @Roles(OrgRoles.PLATFORM_ADMIN)
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async disasterRestore(
+    @Param(
+      'targetOrgId',
+      TrimStringParamPipe,
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    targetOrgId: string,
+    @Body() _dto: DisasterRestoreDto,
+    @User() reqUser: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const data = await this.migrationService.disasterRestore(targetOrgId, reqUser.id);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.agent.success.migrationRestored,
+      data
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
   @Get('/agents/migrations')
   @ApiOperation({
     summary: 'List wallet moves across organisations',

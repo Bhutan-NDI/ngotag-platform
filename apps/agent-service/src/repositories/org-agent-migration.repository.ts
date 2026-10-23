@@ -320,6 +320,96 @@ export class OrgAgentMigrationRepository {
     return event?.actor ?? null;
   }
 
+  async isPlatformAdmin(userId: string): Promise<boolean> {
+    const admin = await this.prisma.user_org_roles.findFirst({
+      where: { userId, orgRole: { name: OrgRoles.PLATFORM_ADMIN } },
+      select: { id: true }
+    });
+    return Boolean(admin);
+  }
+
+  /**
+   * Gives the org back to the shared agent (SAD E.7): the org's agent row is set back to what it was before the move,
+   * the migration becomes DISASTER_RESTORED, and the invitation made on the lost agent is removed, all in one
+   * transaction. The agent row only matches while it is still the dedicated one the move created; its token is cleared
+   * so the platform mints a fresh tenant token from the base wallet, as it does for any shared org.
+   * @throws ConflictException when the agent row or the migration changed in the meantime; nothing is written
+   */
+  async restoreOrgAgent(params: {
+    migrationId: string;
+    orgId: string;
+    expectedAgentEndPoint: string;
+    sharedOrgAgentTypeId: string;
+    dedicatedOrgAgentTypeId: string;
+    agentEndPoint: string;
+    tenantId: string;
+    walletName: string;
+    lastChangedBy: string;
+    actor: string;
+    newInvitationDid: string | null;
+  }): Promise<{ migration: MigrationRow; invitationsRemoved: number }> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const agent = await tx.org_agents.updateMany({
+          where: {
+            orgId: params.orgId,
+            orgAgentTypeId: params.dedicatedOrgAgentTypeId,
+            agentEndPoint: params.expectedAgentEndPoint
+          },
+          data: {
+            orgAgentTypeId: params.sharedOrgAgentTypeId,
+            agentEndPoint: params.agentEndPoint,
+            tenantId: params.tenantId,
+            walletName: params.walletName,
+            apiKey: null,
+            lastChangedBy: params.lastChangedBy,
+            lastChangedDateTime: new Date()
+          }
+        });
+        if (1 !== agent.count) {
+          throw new ConflictException(ResponseMessages.agent.error.agentRowChangedDuringMigration);
+        }
+
+        const migration = await tx.org_agent_migrations.updateMany({
+          where: { id: params.migrationId, status: OrgAgentMigrationStatus.STABILISING },
+          data: {
+            status: OrgAgentMigrationStatus.DISASTER_RESTORED,
+            phase: phaseFor(OrgAgentMigrationStatus.DISASTER_RESTORED),
+            error: null,
+            lastChangedDateTime: new Date()
+          }
+        });
+        if (1 !== migration.count) {
+          throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
+        }
+
+        await tx.org_agent_migration_events.create({
+          data: {
+            migrationId: params.migrationId,
+            fromStatus: OrgAgentMigrationStatus.STABILISING,
+            toStatus: OrgAgentMigrationStatus.DISASTER_RESTORED,
+            actor: params.actor
+          }
+        });
+
+        const removed = params.newInvitationDid
+          ? await tx.agent_invitations.deleteMany({
+              where: { orgId: params.orgId, invitationDid: params.newInvitationDid }
+            })
+          : { count: 0 };
+        return {
+          migration: await tx.org_agent_migrations.findUniqueOrThrow({ where: { id: params.migrationId } }),
+          invitationsRemoved: removed.count
+        };
+      });
+    } catch (error) {
+      this.logger.error(
+        `[OrgAgentMigrationRepository.restoreOrgAgent] - ${error instanceof Error ? error.message : 'failed'}`
+      );
+      throw error;
+    }
+  }
+
   /** Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). */
   async update(id: string, patch: OrgAgentMigrationPatch): Promise<MigrationRow> {
     return this.prisma.org_agent_migrations.update({
