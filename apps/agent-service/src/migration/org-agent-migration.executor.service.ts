@@ -64,22 +64,19 @@ const stabilisationMs = (): number => {
 };
 
 /**
- * Whether the move brought over about as much as the rehearsal did. Records can fall between the rehearsal and the
- * move (the cron purge removes old ones), so a small drop is tolerated; a large one means the merge lost something.
+ * Whether the move brought over what the rehearsal did. Records can fall between the rehearsal and the move (the cron
+ * purge removes old ones), so a small drop in entries is tolerated. Keys are the org's identity and are never purged,
+ * so none may be missing. With no rehearsal to compare with there is nothing to vouch for the move.
  */
 export const countsMatchRehearsal = (
   rehearsal: IMoveCounts | null | undefined,
   moved: IMoveCounts | null | undefined,
   tolerance: number
 ): boolean => {
-  if (!moved || !Number.isFinite(moved.entries) || !Number.isFinite(moved.keys)) {
+  if (!moved || !rehearsal || !Number.isFinite(moved.entries) || !Number.isFinite(moved.keys)) {
     return false;
   }
-  if (!rehearsal) {
-    return true;
-  }
-  const floorOf = (value: number): number => Math.floor(value * (1 - tolerance));
-  return moved.entries >= floorOf(rehearsal.entries) && moved.keys >= floorOf(rehearsal.keys);
+  return moved.entries >= Math.floor(rehearsal.entries * (1 - tolerance)) && moved.keys >= rehearsal.keys;
 };
 
 /**

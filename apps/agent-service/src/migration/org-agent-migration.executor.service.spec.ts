@@ -267,11 +267,12 @@ describe('countsMatchRehearsal', () => {
   it.each([
     [{ entries: 100, keys: 10 }, true],
     [{ entries: 250, keys: 30 }, true],
-    [{ entries: 80, keys: 8 }, true],
+    [{ entries: 80, keys: 10 }, true],
     [{ entries: 79, keys: 10 }, false],
+    [{ entries: 100, keys: 9 }, false],
     [{ entries: 100, keys: 7 }, false],
     [{ entries: 0, keys: 0 }, false]
-  ])('moved %j against a 20%% tolerance is %s', (moved, expected) => {
+  ])('moved %j against a 20%% tolerance on entries is %s', (moved, expected) => {
     expect(countsMatchRehearsal(rehearsal, moved, 0.2)).toBe(expected);
   });
 
@@ -280,8 +281,9 @@ describe('countsMatchRehearsal', () => {
     expect(countsMatchRehearsal(rehearsal, { entries: Number.NaN, keys: 1 }, 0.2)).toBe(false);
   });
 
-  it('accepts any count when there is nothing to compare with', () => {
-    expect(countsMatchRehearsal(null, { entries: 1, keys: 0 }, 0.2)).toBe(true);
+  it('refuses a move when there is no rehearsal to compare with', () => {
+    expect(countsMatchRehearsal(null, { entries: 1, keys: 0 }, 0.2)).toBe(false);
+    expect(countsMatchRehearsal(undefined, { entries: 100, keys: 10 }, 0.2)).toBe(false);
   });
 });
 
