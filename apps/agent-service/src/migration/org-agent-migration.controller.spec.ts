@@ -25,7 +25,11 @@ const build = () => {
   const preflightService = { run: jest.fn().mockResolvedValue({ migration: row({ id: 'm1' }), report }) };
   const rehearsalService = { start: jest.fn().mockResolvedValue(row({ rehearsalStatus: 'RUNNING' })) };
   const scheduleService = { confirm: jest.fn().mockResolvedValue(row({ status: 'REHEARSED', scheduledFor: 'slot' })) };
-  const authorizer = { assertOwner: jest.fn().mockResolvedValue(undefined) };
+  const restoreService = { restore: jest.fn().mockResolvedValue(row({ status: 'DISASTER_RESTORED' })) };
+  const authorizer = {
+    assertOwner: jest.fn().mockResolvedValue(undefined),
+    assertPlatformAdmin: jest.fn().mockResolvedValue(undefined)
+  };
   const alertService = { alertKeyExport: jest.fn().mockResolvedValue({ recipients: 2, sent: 2 }) };
   const migrationRepository = { recordEvent: jest.fn().mockResolvedValue(undefined) };
   const logger = { error: jest.fn() };
@@ -34,6 +38,7 @@ const build = () => {
     preflightService as never,
     rehearsalService as never,
     scheduleService as never,
+    restoreService as never,
     authorizer as never,
     alertService as never,
     migrationRepository as never,
@@ -45,6 +50,7 @@ const build = () => {
     preflightService,
     rehearsalService,
     scheduleService,
+    restoreService,
     authorizer,
     alertService,
     migrationRepository,
@@ -60,6 +66,7 @@ describe('OrgAgentMigrationController', () => {
     ['rehearse', 'rehearse-org-agent-migration'],
     ['start', 'start-org-agent-migration'],
     ['cancel', 'cancel-org-agent-migration'],
+    ['disasterRestore', 'disaster-restore-org-agent-migration'],
     ['getMigration', 'get-org-agent-migration'],
     ['listMigrations', 'list-org-agent-migrations']
   ];
@@ -303,6 +310,36 @@ describe('OrgAgentMigrationController', () => {
       migrationService.cancel.mockRejectedValue(new Error('already started'));
 
       await expect(controller.cancel({ orgId: ORG_ID, userId: USER_ID })).rejects.toBeInstanceOf(RpcException);
+    });
+  });
+
+  describe('disaster-restore-org-agent-migration', () => {
+    it('checks the caller is a platform admin, then restores as them and hides the token', async () => {
+      const { controller, authorizer, restoreService } = build();
+
+      const result = await controller.disasterRestore({ orgId: ORG_ID, userId: USER_ID });
+
+      expect(authorizer.assertPlatformAdmin).toHaveBeenCalledWith(ORG_ID, USER_ID);
+      expect(authorizer.assertOwner).not.toHaveBeenCalled();
+      expect(restoreService.restore).toHaveBeenCalledWith(ORG_ID, USER_ID);
+      expect(result).toMatchObject({ status: 'DISASTER_RESTORED' });
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+    });
+
+    it('restores nothing for anyone who is not a platform admin, owners included', async () => {
+      const { controller, authorizer, restoreService } = build();
+      authorizer.assertPlatformAdmin.mockRejectedValue(new RpcException('Only a platform admin can roll a move back'));
+
+      await expect(controller.disasterRestore({ orgId: ORG_ID, userId: USER_ID })).rejects.toBeInstanceOf(RpcException);
+
+      expect(restoreService.restore).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a refusal as an RPC error', async () => {
+      const { controller, restoreService } = build();
+      restoreService.restore.mockRejectedValue(new Error('window over'));
+
+      await expect(controller.disasterRestore({ orgId: ORG_ID, userId: USER_ID })).rejects.toBeInstanceOf(RpcException);
     });
   });
 

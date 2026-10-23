@@ -37,4 +37,26 @@ export class OrgAgentMigrationAuthorizer {
     }
     throw new ForbiddenException(ResponseMessages.agent.error.migrationOwnerRequired);
   }
+
+  /**
+   * Rolling a move back is for the platform team alone: it throws away what the new agent did since the switch.
+   * @throws ForbiddenException when the user is not a platform admin; the refusal is audited on the org's active
+   * migration when there is one
+   */
+  async assertPlatformAdmin(orgId: string, userId: string): Promise<void> {
+    if (userId && (await this.migrationRepository.isPlatformAdmin(userId))) {
+      return;
+    }
+
+    this.logger.warn(`[migration] refused a non-admin: orgId ${orgId}, userId ${userId ?? 'none'}`);
+    try {
+      const active = await this.migrationRepository.getActiveByOrgId(orgId);
+      if (active) {
+        await this.migrationRepository.recordEvent(active.id, { action: 'ACCESS_DENIED', actor: userId ?? null });
+      }
+    } catch (error) {
+      this.logger.error(`[migration] could not audit a refusal: ${error instanceof Error ? error.message : 'failed'}`);
+    }
+    throw new ForbiddenException(ResponseMessages.agent.error.migrationPlatformAdminRequired);
+  }
 }

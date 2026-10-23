@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  Equals,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -85,6 +86,17 @@ export class StartOrgAgentMigrationDto {
   @IsOptional()
   @IsDateString({}, { message: 'scheduledFor must be an ISO 8601 date.' })
   scheduledFor?: string;
+}
+
+export class DisasterRestoreDto {
+  @ApiProperty({
+    example: true,
+    description:
+      'Must be true. Confirms you know what a restore loses: everything the new agent recorded since the switch, and the connections made since then.'
+  })
+  @IsBoolean({ message: 'acknowledgeLosses must be a boolean.' })
+  @Equals(true, { message: 'acknowledgeLosses must be true to restore.' })
+  acknowledgeLosses: boolean;
 }
 
 export class ListOrgAgentMigrationsDto {

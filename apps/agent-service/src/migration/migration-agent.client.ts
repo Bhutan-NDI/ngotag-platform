@@ -278,6 +278,17 @@ export class MigrationAgentClient {
     return this.request('post', adminEndpoint, '/didcomm/oob/create-invitation', token, body);
   }
 
+  // Takes the relay off for good, even a forwarding one: queued messages go back to the tenant first.
+  restoreRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<{ injected: number; failed: number }> {
+    return this.request(
+      'post',
+      sharedEndpoint,
+      `/multi-tenancy/relay/${encodeURIComponent(tenantId)}/restore`,
+      token,
+      {}
+    );
+  }
+
   getRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<IRelayEntry> {
     return this.request('get', sharedEndpoint, `/multi-tenancy/relay/${encodeURIComponent(tenantId)}`, token);
   }
