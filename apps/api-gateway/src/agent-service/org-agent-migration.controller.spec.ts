@@ -46,6 +46,7 @@ describe('wallet move routes', () => {
     preflight: jest.fn(),
     rehearse: jest.fn(),
     start: jest.fn(),
+    cancel: jest.fn(),
     get: jest.fn(),
     list: jest.fn()
   };
@@ -274,6 +275,46 @@ describe('wallet move routes', () => {
 
       expect(response.status).toBe(400);
       expect(service.start).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /orgs/:orgId/agents/migrate/cancel', () => {
+    it('lets an owner cancel the move, as the user in the token', async () => {
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/cancel`).send();
+
+      expect(response.status).toBe(200);
+      expect(service.cancel).toHaveBeenCalledWith(ORG_ID, 'user-1');
+    });
+
+    it('does not ask for a fresh sign-in', async () => {
+      currentUser = owner({ sessionCreatedAt: minutesAgo(240) });
+
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/cancel`).send();
+
+      expect(response.status).toBe(200);
+    });
+
+    it.each(['admin', 'super_admin', 'issuer', 'verifier', 'member'])('refuses a %s', async (role) => {
+      currentUser = userWith([membership(ORG_ID, role)]);
+
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/cancel`).send();
+
+      expect(response.status).toBe(403);
+      expect(service.cancel).not.toHaveBeenCalled();
+    });
+
+    it('refuses an owner of a different organisation', async () => {
+      currentUser = userWith([membership(OTHER_ORG_ID, 'owner')]);
+
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/cancel`).send();
+
+      expect(response.status).toBe(403);
+    });
+
+    it('rejects an org id that is not a UUID', async () => {
+      const response = await request(app.getHttpServer()).post('/orgs/not-a-uuid/agents/migrate/cancel').send();
+
+      expect(response.status).toBe(400);
     });
   });
 
