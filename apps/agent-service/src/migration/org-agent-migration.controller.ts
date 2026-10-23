@@ -10,6 +10,7 @@ import { OrgAgentMigrationScheduleService } from './org-agent-migration.schedule
 import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import {
+  ICancelOrgAgentMigration,
   ICreateOrgAgentMigration,
   IListOrgAgentMigrations,
   IOrgAgentMigration,
@@ -93,6 +94,17 @@ export class OrgAgentMigrationController {
     try {
       await this.authorizer.assertOwner(payload.orgId, payload.userId);
       return toPublicMigration(await this.scheduleService.confirm(payload));
+    } catch (error) {
+      throw new RpcException(error.response ?? error);
+    }
+  }
+
+  // The owner calls the move off before it starts. The org stays exactly as it was.
+  @MessagePattern({ cmd: 'cancel-org-agent-migration' })
+  async cancel(payload: ICancelOrgAgentMigration): Promise<IOrgAgentMigration> {
+    try {
+      await this.authorizer.assertOwner(payload.orgId, payload.userId);
+      return toPublicMigration(await this.migrationService.cancel(payload.orgId, payload.userId));
     } catch (error) {
       throw new RpcException(error.response ?? error);
     }

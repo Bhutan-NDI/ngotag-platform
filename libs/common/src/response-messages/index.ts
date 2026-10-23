@@ -401,6 +401,7 @@ export const ResponseMessages = {
       migrationChecked: 'Wallet move checks completed',
       migrationRehearsalStarted: 'Wallet move rehearsal started',
       migrationStarted: 'Wallet move confirmed',
+      migrationCancelled: 'Wallet move cancelled',
       migrationFetched: 'Wallet move fetched successfully',
       migrationsFetched: 'Wallet moves fetched successfully'
     },
@@ -468,6 +469,7 @@ export const ResponseMessages = {
       migrationEndpointInvalid: 'The dedicated agent admin and DIDComm addresses must be distinct HTTPS URLs',
       migrationPreflightNotPassed: 'The preflight checks must pass before the rehearsal can run',
       migrationRehearsalRunning: 'A rehearsal is already running for this migration',
+      migrationCancelNotAllowed: 'The move can only be cancelled before it starts',
       migrationNotRehearsed: 'The move can only be confirmed after a rehearsal has finished',
       migrationConfirmationMismatch: 'The organization name typed does not match',
       migrationSlotInvalid: 'The slot must be a future time within the booking window',

@@ -1,5 +1,5 @@
 /* eslint-disable camelcase */
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OrgAgentMigrationStatus, OrgAgentType } from '@credebl/enum/enum';
 import { RpcException } from '@nestjs/microservices';
 import { org_agent_migrations } from '@prisma/client';
@@ -132,7 +132,8 @@ export class OrgAgentMigrationService {
 
   /**
    * Cancels a migration that has not reached the switch: the org stays exactly as it was. `errorCode` is a
-   * stable, sanitised code (for example VERIFICATION_FAILED), never raw error text.
+   * stable, sanitised code (for example VERIFICATION_FAILED), never raw error text. The stored token for the dedicated
+   * agent is dropped: a finished migration has no use for a credential.
    */
   async abort(migrationId: string, errorCode: string, actor: string | null): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
@@ -147,7 +148,39 @@ export class OrgAgentMigrationService {
       from: migration.status as OrgAgentMigrationStatus,
       to: OrgAgentMigrationStatus.FAILED,
       actor,
-      patch: { error: errorCode }
+      patch: { error: errorCode, targetTokenEncrypted: null }
     });
+  }
+
+  /**
+   * The owner calls the move off before it starts. Once the org is frozen the executor owns the move, so this only
+   * applies while it is being prepared or waiting for its slot.
+   * @throws when there is no move, or it has already started
+   */
+  async cancel(orgId: string, userId: string): Promise<org_agent_migrations> {
+    const migration = await this.migrationRepository.getActiveByOrgId(orgId);
+    if (!migration) {
+      throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
+    }
+    if (![OrgAgentMigrationStatus.CREATED, OrgAgentMigrationStatus.REHEARSED].includes(migration.status as never)) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationCancelNotAllowed);
+    }
+
+    let cancelled: org_agent_migrations;
+    try {
+      cancelled = await this.abort(migration.id, 'CANCELLED_BY_OWNER', userId);
+    } catch (error) {
+      // The scheduler claimed it between the read and the write.
+      if (error instanceof ConflictException) {
+        throw new BadRequestException(ResponseMessages.agent.error.migrationCancelNotAllowed);
+      }
+      throw error;
+    }
+    await this.migrationRepository.recordEvent(migration.id, {
+      action: 'MOVE_CANCELLED',
+      actor: userId,
+      detail: { by: 'OWNER' }
+    });
+    return cancelled;
   }
 }

@@ -3,7 +3,7 @@
  *   npx jest apps/agent-service/src/migration/org-agent-migration.service.spec.ts
  */
 /* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type, implicit-arrow-linebreak */
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { OrgAgentMigrationStatus as Status } from '@credebl/enum/enum';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -28,7 +28,7 @@ const sharedAgentRow = {
   agentOptions: Buffer.from('options')
 };
 
-const buildService = (options: { agent?: unknown; migration?: unknown } = {}) => {
+const buildService = (options: { agent?: unknown; migration?: unknown; active?: unknown } = {}) => {
   const agentRepository = {
     getAgentDetailsByOrgId: jest.fn().mockResolvedValue('agent' in options ? options.agent : sharedAgentRow),
     getOrgAgentTypeDetails: jest.fn().mockResolvedValue('shared-type-id')
@@ -39,6 +39,10 @@ const buildService = (options: { agent?: unknown; migration?: unknown } = {}) =>
       .fn()
       .mockResolvedValue('migration' in options ? options.migration : { id: MIGRATION_ID, status: Status.CREATED }),
     getLatestByOrgId: jest.fn(),
+    getActiveByOrgId: jest
+      .fn()
+      .mockResolvedValue('active' in options ? options.active : { id: MIGRATION_ID, status: Status.REHEARSED }),
+    recordEvent: jest.fn().mockResolvedValue(undefined),
     list: jest.fn().mockResolvedValue({ total: 0, migrations: [] }),
     transition: jest.fn().mockResolvedValue({ id: MIGRATION_ID })
   };
@@ -203,7 +207,79 @@ describe('OrgAgentMigrationService', () => {
     });
   });
 
+  describe('cancel', () => {
+    it.each([Status.CREATED, Status.REHEARSED])('lets the owner call off a move in %s', async (status) => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status },
+        active: { id: MIGRATION_ID, status }
+      });
+
+      await service.cancel(ORG_ID, USER_ID);
+
+      expect(migrationRepository.transition).toHaveBeenCalledWith({
+        id: MIGRATION_ID,
+        from: status,
+        to: Status.FAILED,
+        actor: USER_ID,
+        patch: { error: 'CANCELLED_BY_OWNER', targetTokenEncrypted: null }
+      });
+    });
+
+    it('records who cancelled it', async () => {
+      const { service, migrationRepository } = buildService();
+
+      await service.cancel(ORG_ID, USER_ID);
+
+      expect(migrationRepository.recordEvent).toHaveBeenCalledWith(MIGRATION_ID, {
+        action: 'MOVE_CANCELLED',
+        actor: USER_ID,
+        detail: { by: 'OWNER' }
+      });
+    });
+
+    it.each([
+      Status.FROZEN,
+      Status.EXPORTING,
+      Status.IMPORTING,
+      Status.VERIFYING,
+      Status.CUTOVER,
+      Status.STABILISING,
+      Status.ROTATING
+    ])('refuses once the move is in %s, because the move itself owns it by then', async (status) => {
+      const { service, migrationRepository } = buildService({ active: { id: MIGRATION_ID, status } });
+
+      await expect(service.cancel(ORG_ID, USER_ID)).rejects.toThrow(BadRequestException);
+
+      expect(migrationRepository.transition).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the scheduler started the move between the read and the write', async () => {
+      const { service, migrationRepository } = buildService();
+      migrationRepository.transition.mockRejectedValue(new ConflictException('changed'));
+
+      await expect(service.cancel(ORG_ID, USER_ID)).rejects.toThrow(BadRequestException);
+
+      expect(migrationRepository.recordEvent).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the org has no active move', async () => {
+      const { service } = buildService({ active: null });
+
+      await expect(service.cancel(ORG_ID, USER_ID)).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('abort', () => {
+    it('drops the stored token of the dedicated agent, since a finished migration has no use for it', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.EXPORTING }
+      });
+
+      await service.abort(MIGRATION_ID, 'EXPORT_FAILED', null);
+
+      expect(migrationRepository.transition.mock.calls[0][0].patch).toMatchObject({ targetTokenEncrypted: null });
+    });
+
     it.each([Status.CREATED, Status.REHEARSED, Status.FROZEN, Status.EXPORTING, Status.IMPORTING, Status.VERIFYING])(
       'cancels a migration in %s with the error code recorded',
       async (status) => {
@@ -216,7 +292,7 @@ describe('OrgAgentMigrationService', () => {
           from: status,
           to: Status.FAILED,
           actor: null,
-          patch: { error: 'VERIFICATION_FAILED' }
+          patch: { error: 'VERIFICATION_FAILED', targetTokenEncrypted: null }
         });
       }
     );
