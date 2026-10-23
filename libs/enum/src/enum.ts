@@ -127,6 +127,14 @@ export const ORG_AGENT_MIGRATION_FROZEN_STATUSES: readonly OrgAgentMigrationStat
   OrgAgentMigrationStatus.CUTOVER
 ];
 
+// Once the org row points at the dedicated agent: new reuse requests use the invitation created there.
+export const ORG_AGENT_MIGRATION_POST_CUTOVER_STATUSES: readonly OrgAgentMigrationStatus[] = [
+  OrgAgentMigrationStatus.CUTOVER,
+  OrgAgentMigrationStatus.STABILISING,
+  OrgAgentMigrationStatus.ROTATING,
+  OrgAgentMigrationStatus.COMPLETED
+];
+
 export enum AgentSpinUpStatus {
   PENDING = 0,
   WALLET_CREATED = 1,
