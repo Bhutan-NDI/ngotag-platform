@@ -38,7 +38,8 @@ import { StepUpAuthGuard } from '../authz/guards/step-up.guard';
 import {
   CreateOrgAgentMigrationDto,
   ListOrgAgentMigrationsDto,
-  PreflightOrgAgentMigrationDto
+  PreflightOrgAgentMigrationDto,
+  StartOrgAgentMigrationDto
 } from './dto/org-agent-migration.dto';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 
@@ -139,6 +140,31 @@ export class OrgAgentMigrationController {
       data
     };
     return res.status(HttpStatus.ACCEPTED).json(finalResponse);
+  }
+
+  @Post('/orgs/:orgId/agents/migrate/start')
+  @ApiOperation({
+    summary: 'Confirm the move and book its slot',
+    description:
+      'After a finished rehearsal, the owner types the organisation name and picks a slot within 14 days, or starts at once. Confirming again before the slot moves it. The final checks run just before the move starts.'
+  })
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @Roles(OrgRoles.OWNER)
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async startMigration(
+    @Param('orgId', ...orgIdPipes) orgId: string,
+    @Body() dto: StartOrgAgentMigrationDto,
+    @User() reqUser: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const data = await this.migrationService.start(orgId, reqUser.id, dto);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.agent.success.migrationStarted,
+      data
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   @Get('/orgs/:orgId/agents/migrate')

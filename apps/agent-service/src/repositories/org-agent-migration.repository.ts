@@ -18,6 +18,7 @@ export type OrgAgentMigrationPatch = Omit<
 
 const UNIQUE_VIOLATION = 'P2002';
 export const REHEARSAL_RUNNING = 'RUNNING';
+export const REHEARSAL_DONE = 'DONE';
 
 @Injectable()
 export class OrgAgentMigrationRepository {
@@ -223,6 +224,75 @@ export class OrgAgentMigrationRepository {
       this.logger.error(`[OrgAgentMigrationRepository.cutover] - ${error instanceof Error ? error.message : 'failed'}`);
       throw error;
     }
+  }
+
+  /**
+   * Takes the lease on a migration unless another replica holds it. The lease expires on its own, so a replica that
+   * dies holding it does not block the migration for long.
+   * @returns false when someone else holds a live lease
+   */
+  async tryAcquireLease(id: string, leaseMs: number): Promise<boolean> {
+    const now = new Date();
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] },
+      data: { leaseUntil: new Date(now.getTime() + leaseMs) }
+    });
+    return 1 === count;
+  }
+
+  /** Confirmed moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
+  async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.REHEARSED,
+        rehearsalStatus: REHEARSAL_DONE,
+        scheduledFor: { lte: now },
+        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+      },
+      orderBy: { scheduledFor: 'asc' },
+      take
+    });
+  }
+
+  /**
+   * Moves that nobody seems to be running any more: frozen past their deadline, or switched over without finishing.
+   * `graceMs` leaves room for a live run that is about to give up or finish on its own.
+   */
+  async findStalled(now: Date, graceMs: number): Promise<MigrationRow[]> {
+    const cutoff = new Date(now.getTime() - graceMs);
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        AND: [
+          { OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] },
+          {
+            OR: [
+              {
+                status: {
+                  in: [
+                    OrgAgentMigrationStatus.FROZEN,
+                    OrgAgentMigrationStatus.EXPORTING,
+                    OrgAgentMigrationStatus.IMPORTING,
+                    OrgAgentMigrationStatus.VERIFYING
+                  ]
+                },
+                freezeDeadline: { lt: cutoff }
+              },
+              { status: OrgAgentMigrationStatus.CUTOVER, lastChangedDateTime: { lt: cutoff } }
+            ]
+          }
+        ]
+      }
+    });
+  }
+
+  /** Who confirmed the move most recently: the owner the export alert should name. */
+  async getConfirmingActor(migrationId: string): Promise<string | null> {
+    const event = await this.prisma.org_agent_migration_events.findFirst({
+      where: { migrationId, action: 'MOVE_CONFIRMED' },
+      orderBy: { createDateTime: 'desc' },
+      select: { actor: true }
+    });
+    return event?.actor ?? null;
   }
 
   /** Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). */
