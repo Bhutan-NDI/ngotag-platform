@@ -13,6 +13,7 @@ import { org_agent_migrations } from '@prisma/client';
 import { createHash } from 'crypto';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
+import { envMs, JobPollFailure, jobTimeoutMs, pollJob } from './migration-job-poller';
 import { IPortabilityJob, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
 import { IPreflightReport, IRehearsalRecord } from './org-agent-migration.interface';
 import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
@@ -22,16 +23,10 @@ const MINUTE_MS = 60 * 1000;
 const FREEZE_FACTOR = 1.5;
 const FREEZE_FLOOR_MS = 15 * MINUTE_MS;
 const FREEZE_CAP_MS = 120 * MINUTE_MS;
-const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 
 /** The pause to promise the owner, and the budget the move gets: 1.5 x the rehearsal, between 15 and 120 minutes. */
 export const predictFreezeMs = (rehearsalDurationMs: number): number =>
   Math.min(FREEZE_CAP_MS, Math.max(FREEZE_FLOOR_MS, Math.round(rehearsalDurationMs * FREEZE_FACTOR)));
-
-const envMs = (name: string, fallback: number): number => {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && 0 < value ? value : fallback;
-};
 
 // Stable codes the studio maps to a message; never raw error text.
 class RehearsalFailure extends Error {
@@ -200,35 +195,21 @@ export class OrgAgentMigrationRehearsalService {
     return `${step}_FAILED`;
   }
 
-  // Polls a job to completion. A few failed polls in a row are tolerated: the job runs on the agent either way.
+  // Polls a job to completion, mapping why it gave up onto the step it belongs to.
   private async waitFor(step: 'EXPORT' | 'IMPORT', fetchJob: () => Promise<IPortabilityJob>): Promise<IPortabilityJob> {
-    const deadline = Date.now() + envMs('ORG_MIGRATION_JOB_TIMEOUT_MS', 60 * MINUTE_MS);
-    const intervalMs = envMs('ORG_MIGRATION_POLL_INTERVAL_MS', 5000);
-    let failedPolls = 0;
-
-    for (;;) {
-      try {
-        const job = await fetchJob();
-        failedPolls = 0;
-        if ('completed' === job.status) {
-          return job;
-        }
-        if ('failed' === job.status) {
+    try {
+      return await pollJob(fetchJob, Date.now() + jobTimeoutMs());
+    } catch (error) {
+      if (error instanceof JobPollFailure) {
+        if ('JOB_FAILED' === error.reason) {
           throw new RehearsalFailure(step, `${step}_FAILED`);
         }
-      } catch (error) {
-        if (error instanceof RehearsalFailure) {
-          throw error;
-        }
-        failedPolls += 1;
-        if (MAX_CONSECUTIVE_POLL_FAILURES <= failedPolls) {
-          throw new RehearsalFailure(step, this.failureCode(step, error));
-        }
+        throw new RehearsalFailure(
+          step,
+          'TIMEOUT' === error.reason ? 'REHEARSAL_TIMEOUT' : this.failureCode(step, error.cause)
+        );
       }
-      if (Date.now() >= deadline) {
-        throw new RehearsalFailure(step, 'REHEARSAL_TIMEOUT');
-      }
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      throw error;
     }
   }
 

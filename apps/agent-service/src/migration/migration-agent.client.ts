@@ -41,6 +41,21 @@ export interface IEndpointSchemes {
   schemes: { scheme: string; count: number; exampleDids: string[] }[];
 }
 
+export interface IRelayEntry {
+  mode: 'HOLD' | 'FORWARD';
+  target?: string;
+  holdCount?: number;
+}
+
+export interface ISelfAttestedCredential {
+  credential: Record<string, unknown>;
+}
+
+export interface ICreatedInvitation {
+  invitationUrl: string;
+  invitationDid?: string;
+}
+
 export type AgentErrorKind = 'UNREACHABLE' | 'REJECTED' | 'CONFLICT' | 'NOT_FOUND' | 'FAILED';
 
 /**
@@ -72,7 +87,7 @@ export class MigrationAgentClient {
   constructor(private readonly httpService: HttpService) {}
 
   private async request<T>(
-    method: 'get' | 'post' | 'delete',
+    method: 'get' | 'post' | 'put' | 'delete',
     baseUrl: string,
     path: string,
     token: string,
@@ -193,5 +208,57 @@ export class MigrationAgentClient {
       `/multi-tenancy/${encodeURIComponent(tenantId)}/endpoint-schemes`,
       token
     );
+  }
+
+  putRelay(
+    sharedEndpoint: string,
+    token: string,
+    tenantId: string,
+    body: { mode: 'HOLD' | 'FORWARD'; target?: string }
+  ): Promise<IRelayEntry> {
+    return this.request('put', sharedEndpoint, `/multi-tenancy/relay/${encodeURIComponent(tenantId)}`, token, body);
+  }
+
+  reinjectRelay(
+    sharedEndpoint: string,
+    token: string,
+    tenantId: string
+  ): Promise<{ injected: number; failed: number }> {
+    return this.request(
+      'post',
+      sharedEndpoint,
+      `/multi-tenancy/relay/${encodeURIComponent(tenantId)}/reinject`,
+      token,
+      {}
+    );
+  }
+
+  async deleteRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<void> {
+    await this.request('delete', sharedEndpoint, `/multi-tenancy/relay/${encodeURIComponent(tenantId)}`, token);
+  }
+
+  // The agent signs with its own default DID, so only the claims are given.
+  createSelfAttestedCredential(
+    adminEndpoint: string,
+    token: string,
+    body: { '@context': string[]; type: string[]; credentialSubject: Record<string, unknown>; proofType: string }
+  ): Promise<ISelfAttestedCredential> {
+    return this.request('post', adminEndpoint, '/agent/credential/self-attested', token, body);
+  }
+
+  verifyCredential(
+    adminEndpoint: string,
+    token: string,
+    credential: Record<string, unknown>
+  ): Promise<{ isValid?: boolean }> {
+    return this.request('post', adminEndpoint, '/agent/credential/verify', token, { credential });
+  }
+
+  createConnectionInvitation(
+    adminEndpoint: string,
+    token: string,
+    body: { multiUseInvitation: boolean; autoAcceptConnection: boolean; label: string; imageUrl?: string }
+  ): Promise<ICreatedInvitation> {
+    return this.request('post', adminEndpoint, '/didcomm/oob/create-invitation', token, body);
   }
 }
