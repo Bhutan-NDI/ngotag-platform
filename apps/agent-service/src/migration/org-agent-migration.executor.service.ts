@@ -1,6 +1,6 @@
 /* eslint-disable camelcase */
 import { Injectable, Logger } from '@nestjs/common';
-import { OrgAgentMigrationStatus, OrgAgentType } from '@credebl/enum/enum';
+import { DidMethod, OrgAgentMigrationStatus, OrgAgentType, ProofType } from '@credebl/enum/enum';
 import { org_agent_migrations } from '@prisma/client';
 import { createHash } from 'crypto';
 import { ConnectionRepository } from '../../../connection/src/connection.repository';
@@ -62,6 +62,10 @@ const stabilisationMs = (): number => {
       : DEFAULT_STABILISATION_HOURS) * HOUR_MS
   );
 };
+
+// The signature suite follows the key behind the DID, as platform issuance picks it.
+const signingProofType = (orgDid: string): ProofType =>
+  orgDid.includes(DidMethod.POLYGON) ? ProofType.POLYGON_PROOFTYPE : ProofType.NO_LEDGER_PROOFTYPE;
 
 /**
  * Whether the move brought over what the rehearsal did. Records can fall between the rehearsal and the move (the cron
@@ -337,7 +341,7 @@ export class OrgAgentMigrationExecutor {
         '@context': ['https://www.w3.org/2018/credentials/v1'],
         type: ['VerifiableCredential'],
         credentialSubject: {},
-        proofType: 'Ed25519Signature2018'
+        proofType: signingProofType(orgDid)
       })
     );
     const issuer = credential?.issuer as string | { id?: string } | undefined;

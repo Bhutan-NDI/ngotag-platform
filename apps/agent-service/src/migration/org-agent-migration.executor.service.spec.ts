@@ -794,13 +794,32 @@ describe('move day: signing check', () => {
       '@context': ['https://www.w3.org/2018/credentials/v1'],
       type: ['VerifiableCredential'],
       credentialSubject: {},
-      proofType: 'Ed25519Signature2018'
+      proofType: 'EcdsaSecp256k1Signature2019'
     });
     expect(world.agentClient.verifyCredential).toHaveBeenCalledWith(DEDICATED.endpoint, DEDICATED.token, {
       issuer: ORG_DID,
       id: 'urn:uuid:1'
     });
   });
+
+  it.each(['did:indy:bcovrin:abc', 'did:key:z6Mk', 'did:web:org.example.com'])(
+    'signs a %s with the Ed25519 suite',
+    async (orgDid) => {
+      const world = buildWorld({
+        sourceOrgAgentSnapshot: { agentEndPoint: SHARED.endpoint, walletName: 'org-wallet', orgDid }
+      });
+      world.agentClient.createSelfAttestedCredential.mockResolvedValue({ credential: { issuer: orgDid } });
+
+      await world.executor.run(MIGRATION_ID, USER_ID);
+
+      expect(world.agentClient.createSelfAttestedCredential).toHaveBeenCalledWith(
+        DEDICATED.endpoint,
+        DEDICATED.token,
+        expect.objectContaining({ proofType: 'Ed25519Signature2018' })
+      );
+      expect(world.world.row.status).toBe(Status.STABILISING);
+    }
+  );
 
   it('accepts an issuer given as an object', async () => {
     const world = buildWorld();
