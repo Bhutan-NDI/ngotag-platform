@@ -152,6 +152,21 @@ describe('MigrationAgentClient against a real HTTP server', () => {
     expect(JSON.parse(seen[2].body)).toEqual({ multiUseInvitation: true, autoAcceptConnection: true, label: 'Acme' });
   });
 
+  it('reads a relay, purges a profile, and starts and reads the rotation on the documented routes', async () => {
+    await client.getRelay(baseUrl, 'tok', 'tenant-1');
+    await client.purgeProfile(baseUrl, 'tok', 'tenant-1');
+    await client.startRotation(baseUrl, 'tok');
+    await client.getRotationStatus(baseUrl, 'tok');
+
+    expect(seen.map(({ method, url }) => `${method} ${url}`)).toEqual([
+      'GET /multi-tenancy/relay/tenant-1',
+      'POST /multi-tenancy/tenant-1/purge-profile',
+      'POST /didcomm/connections/rotate-all',
+      'GET /didcomm/connections/rotate-all/status'
+    ]);
+    expect(seen.every(({ authorization }) => 'tok' === authorization)).toBe(true);
+  });
+
   it.each([
     [401, 'REJECTED'],
     [403, 'REJECTED'],

@@ -293,6 +293,8 @@ model org_agent_migrations {
   rehearsal              Json?
   // Held by whichever agent-service replica is starting or recovering this migration, so two do not do it at once.
   leaseUntil             DateTime?                    @db.Timestamptz(6)
+  // Progress of the connection rotation after the switch: the agent's job and its counts, as last polled.
+  rotation               Json?
   organisation           organisation                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
   events                 org_agent_migration_events[]
 

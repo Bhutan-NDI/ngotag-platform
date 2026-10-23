@@ -56,6 +56,22 @@ export interface ICreatedInvitation {
   invitationDid?: string;
 }
 
+export interface IRotationCounts {
+  total: number;
+  pending: number;
+  retrying: number;
+  failed: number;
+  waiting: number;
+  stale: number;
+  refused: number;
+  updated: number;
+}
+
+export interface IRotationStatus {
+  job: { status: 'idle' | 'running' | 'completed'; startedAt?: string; completedAt?: string };
+  counts: IRotationCounts;
+}
+
 export type AgentErrorKind = 'UNREACHABLE' | 'REJECTED' | 'CONFLICT' | 'NOT_FOUND' | 'FAILED';
 
 /**
@@ -260,5 +276,28 @@ export class MigrationAgentClient {
     body: { multiUseInvitation: boolean; autoAcceptConnection: boolean; label: string; imageUrl?: string }
   ): Promise<ICreatedInvitation> {
     return this.request('post', adminEndpoint, '/didcomm/oob/create-invitation', token, body);
+  }
+
+  getRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<IRelayEntry> {
+    return this.request('get', sharedEndpoint, `/multi-tenancy/relay/${encodeURIComponent(tenantId)}`, token);
+  }
+
+  purgeProfile(sharedEndpoint: string, token: string, tenantId: string): Promise<{ profileRemoved: boolean }> {
+    return this.request(
+      'post',
+      sharedEndpoint,
+      `/multi-tenancy/${encodeURIComponent(tenantId)}/purge-profile`,
+      token,
+      {}
+    );
+  }
+
+  // Starts the rotation of every connection, or returns the job if one is already running.
+  startRotation(adminEndpoint: string, token: string): Promise<IRotationStatus> {
+    return this.request('post', adminEndpoint, '/didcomm/connections/rotate-all', token, {});
+  }
+
+  getRotationStatus(adminEndpoint: string, token: string): Promise<IRotationStatus> {
+    return this.request('get', adminEndpoint, '/didcomm/connections/rotate-all/status', token);
   }
 }
