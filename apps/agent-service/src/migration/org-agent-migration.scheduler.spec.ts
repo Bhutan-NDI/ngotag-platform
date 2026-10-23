@@ -179,6 +179,51 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
   });
 });
 
+describe('OrgAgentMigrationScheduler: a missed slot', () => {
+  it('cancels a move whose checks pass but that is found after its start window, without freezing anything', async () => {
+    const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: new Date(Date.now() - 6 * 60 * MINUTE) })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null);
+    expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
+      action: 'MOVE_CANCELLED',
+      actor: null,
+      detail: { reason: 'SLOT_MISSED' }
+    });
+    expect(preflightService.run).toHaveBeenCalled();
+    expect(executor.run).not.toHaveBeenCalled();
+  });
+
+  it('still runs a move that is a little late, within the start window', async () => {
+    const { scheduler, executor, migrationService, migrationRepository } = build();
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: new Date(Date.now() - 20 * MINUTE) })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationService.abort).not.toHaveBeenCalled();
+    expect(executor.run).toHaveBeenCalledWith('m1', 'owner-1');
+  });
+
+  it('reads the start window from the environment', async () => {
+    process.env.ORG_MIGRATION_START_WINDOW_MS = String(2 * MINUTE);
+    const { scheduler, executor, migrationService, migrationRepository } = build();
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: new Date(Date.now() - 5 * MINUTE) })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null);
+    expect(executor.run).not.toHaveBeenCalled();
+  });
+});
+
 describe('OrgAgentMigrationScheduler: the final checks', () => {
   const failing = (id: string) => ({
     report: {

@@ -116,6 +116,10 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
       await this.deferOrCancel(migration, failedCheck);
       return;
     }
+    if (this.waited(migration) > this.startWindowMs()) {
+      await this.cancel(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
+      return;
+    }
 
     const actor = (await this.migrationRepository.getConfirmingActor(migration.id)) ?? migration.startedBy;
     this.active.add(migration.id);
@@ -141,17 +145,32 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
 
   // A failed check is retried until the start window closes, then the move cancels itself and nothing changes.
   private async deferOrCancel(migration: org_agent_migrations, failedCheck: string): Promise<void> {
-    const waited = Date.now() - (migration.scheduledFor?.getTime() ?? Date.now());
-    if (waited <= envMs('ORG_MIGRATION_START_WINDOW_MS', 30 * MINUTE_MS)) {
+    if (this.waited(migration) <= this.startWindowMs()) {
       this.logger.warn(`[migration-scheduler] ${migration.id}: final check ${failedCheck} failed; trying again later`);
       return;
     }
-    await this.migrationService.abort(migration.id, `PREFLIGHT_FAILED:${failedCheck}`, null);
-    await this.migrationRepository.recordEvent(migration.id, {
-      action: 'MOVE_CANCELLED',
-      actor: null,
-      detail: { reason: 'FINAL_CHECK_FAILED', check: failedCheck }
+    await this.cancel(migration, `PREFLIGHT_FAILED:${failedCheck}`, {
+      reason: 'FINAL_CHECK_FAILED',
+      check: failedCheck
     });
+  }
+
+  // The slot was chosen to keep citizens undisturbed, so a move that missed it is not started at some other time.
+  private async cancel(
+    migration: org_agent_migrations,
+    errorCode: string,
+    detail: Record<string, string>
+  ): Promise<void> {
+    await this.migrationService.abort(migration.id, errorCode, null);
+    await this.migrationRepository.recordEvent(migration.id, { action: 'MOVE_CANCELLED', actor: null, detail });
+  }
+
+  private waited(migration: org_agent_migrations): number {
+    return Date.now() - (migration.scheduledFor?.getTime() ?? Date.now());
+  }
+
+  private startWindowMs(): number {
+    return envMs('ORG_MIGRATION_START_WINDOW_MS', 30 * MINUTE_MS);
   }
 
   private async recoverStalledMoves(): Promise<void> {
