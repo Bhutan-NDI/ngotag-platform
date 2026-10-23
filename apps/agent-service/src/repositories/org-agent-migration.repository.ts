@@ -254,6 +254,31 @@ export class OrgAgentMigrationRepository {
     });
   }
 
+  /** Moves in the stabilisation window whose window has ended, earliest first. */
+  async findWindowEnded(now: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.STABILISING,
+        stabilisationEndsAt: { lte: now },
+        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+      },
+      orderBy: { stabilisationEndsAt: 'asc' },
+      take
+    });
+  }
+
+  /** Moves whose connections are being rotated, oldest first. */
+  async findRotating(now: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.ROTATING,
+        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+      },
+      orderBy: { createDateTime: 'asc' },
+      take
+    });
+  }
+
   /**
    * Moves that nobody seems to be running any more: frozen past their deadline, or switched over without finishing.
    * `graceMs` leaves room for a live run that is about to give up or finish on its own.

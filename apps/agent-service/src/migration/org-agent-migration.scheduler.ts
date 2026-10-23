@@ -8,15 +8,19 @@ import { envMs } from './migration-job-poller';
 import { OrgAgentMigrationExecutor } from './org-agent-migration.executor.service';
 import { OrgAgentMigrationPreflightService } from './org-agent-migration.preflight.service';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
+import { OrgAgentMigrationSwitchOverService } from './org-agent-migration.switch-over.service';
 
 const MINUTE_MS = 60 * 1000;
 const INTERVAL_NAME = 'org-agent-migration-tick';
 const DEFAULT_MAX_CONCURRENT = 2;
+const BATCH = 10;
 
 /**
- * Drives move day from the clock. Each tick it starts confirmed moves whose slot has arrived, and it looks for moves
+ * Drives a move from the clock. Each tick it starts confirmed moves whose slot has arrived, and it looks for moves
  * that nobody is running any more: one frozen past its deadline is undone, one that was switched over but never
- * finished is finished. Without the second half, a restart in the middle of a move would leave an org frozen.
+ * finished is finished. Without that, a restart in the middle of a move would leave an org frozen. After the move it
+ * ends each stabilisation window (purging the shared copy and starting the rotation) and watches each rotation until
+ * it has settled.
  *
  * Every replica of agent-service ticks. Starting is made exclusive by the status change that claims the move, and
  * recovery by a short lease on the migration.
@@ -33,6 +37,7 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
     private readonly migrationService: OrgAgentMigrationService,
     private readonly preflightService: OrgAgentMigrationPreflightService,
     private readonly executor: OrgAgentMigrationExecutor,
+    private readonly switchOverService: OrgAgentMigrationSwitchOverService,
     private readonly logger: Logger
   ) {}
 
@@ -66,6 +71,8 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
     try {
       await this.guarded('recovery', () => this.recoverStalledMoves());
       await this.guarded('start', () => this.startDueMoves());
+      await this.guarded('switch-over', () => this.switchOverEndedWindows());
+      await this.guarded('rotation', () => this.driveRotations());
     } finally {
       this.ticking = false;
     }
@@ -152,6 +159,45 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
       actor: null,
       detail: { reason: 'FINAL_CHECK_FAILED', check: failedCheck }
     });
+  }
+
+  // The window has ended: switch the org over for good, if it is safe, and carry straight on into the rotation.
+  private async switchOverEndedWindows(): Promise<void> {
+    for (const migration of await this.migrationRepository.findWindowEnded(new Date(), BATCH)) {
+      try {
+        if (
+          !(await this.migrationRepository.tryAcquireLease(
+            migration.id,
+            envMs('ORG_MIGRATION_SWITCHOVER_RETRY_MS', 2 * MINUTE_MS)
+          ))
+        ) {
+          continue;
+        }
+        if ('STARTED' === (await this.switchOverService.beginSwitchOver(migration.id))) {
+          await this.switchOverService.advanceRotation(migration.id);
+        }
+      } catch (error) {
+        this.logger.error(`[migration-scheduler] ${migration.id}: switch-over failed: ${this.describe(error)}`);
+      }
+    }
+  }
+
+  // Purge and start quickly while there is something to do; once the rotation is running, only look in now and then.
+  private async driveRotations(): Promise<void> {
+    for (const migration of await this.migrationRepository.findRotating(new Date(), BATCH)) {
+      try {
+        const watching = Boolean(migration.purgedAt && migration.rotationJobId);
+        const leaseMs = watching
+          ? envMs('ORG_MIGRATION_ROTATION_POLL_MS', 10 * MINUTE_MS)
+          : envMs('ORG_MIGRATION_SWITCHOVER_RETRY_MS', 2 * MINUTE_MS);
+        if (!(await this.migrationRepository.tryAcquireLease(migration.id, leaseMs))) {
+          continue;
+        }
+        await this.switchOverService.advanceRotation(migration.id);
+      } catch (error) {
+        this.logger.error(`[migration-scheduler] ${migration.id}: rotation step failed: ${this.describe(error)}`);
+      }
+    }
   }
 
   private async recoverStalledMoves(): Promise<void> {
