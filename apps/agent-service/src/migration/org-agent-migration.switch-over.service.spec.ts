@@ -425,6 +425,27 @@ describe('after the window: purge, rotate, complete', () => {
       expect(world.row.rotation).toMatchObject({ job: { status: 'running' } });
     });
 
+    it('starts the rotation again when its job has finished but a holder connected after it', async () => {
+      const { service, world, agentClient } = rotating({ purgedAt: new Date(), rotationJobId: 'rotate-all:x' });
+      agentClient.getRotationStatus.mockResolvedValue(rotation('completed', { pending: 2, waiting: 4, updated: 6 }));
+      agentClient.startRotation.mockResolvedValue(rotation('running', { pending: 2, waiting: 4, updated: 6 }));
+
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(agentClient.startRotation).toHaveBeenCalledTimes(1);
+      expect(world.row.status).toBe(Status.ROTATING);
+      expect(world.row.rotation).toMatchObject({ job: { status: 'running' }, counts: { pending: 2 } });
+    });
+
+    it('leaves a finished job alone while only holders that have been sent the change are left', async () => {
+      const { service, agentClient } = rotating({ purgedAt: new Date(), rotationJobId: 'rotate-all:x' });
+      agentClient.getRotationStatus.mockResolvedValue(rotation('completed', { waiting: 4, failed: 1, updated: 5 }));
+
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(agentClient.startRotation).not.toHaveBeenCalled();
+    });
+
     it('does nothing for a migration that is not rotating', async () => {
       const { service, agentClient } = buildWorld({ status: Status.STABILISING });
 

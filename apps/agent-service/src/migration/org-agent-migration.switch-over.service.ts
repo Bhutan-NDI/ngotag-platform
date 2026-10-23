@@ -189,8 +189,9 @@ export class OrgAgentMigrationSwitchOverService {
       return;
     }
 
-    // The agent lost its job (a restart that dropped it): start it again rather than wait for nothing.
-    if ('idle' === status.job.status) {
+    // The agent lost its job (a restart that dropped it), or finished it before a holder connected: start it again
+    // rather than wait for nothing.
+    if ('idle' === status.job.status || ('completed' === status.job.status && this.hasUnsent(status))) {
       try {
         status = await this.agentClient.startRotation(dedicated.endpoint, dedicated.token);
       } catch {
@@ -215,6 +216,10 @@ export class OrgAgentMigrationSwitchOverService {
       return;
     }
     await this.audit(migration.id, 'MOVE_COMPLETED', { ...status.counts });
+  }
+
+  private hasUnsent(status: IRotationStatus): boolean {
+    return 0 < status.counts.pending || 0 < status.counts.retrying;
   }
 
   // Said once per change, not once per tick, so a long outage does not flood the audit trail.
