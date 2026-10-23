@@ -9,7 +9,8 @@ import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration
 
 export enum KeyExportAlertKind {
   MOVE_STARTED = 'MOVE_STARTED',
-  REHEARSAL_EXPORT = 'REHEARSAL_EXPORT'
+  REHEARSAL_EXPORT = 'REHEARSAL_EXPORT',
+  MOVE_EXPORT = 'MOVE_EXPORT'
 }
 
 export interface IKeyExportAlertResult {
@@ -21,6 +22,10 @@ const DESCRIPTIONS: Record<KeyExportAlertKind, { subject: string; what: string }
   [KeyExportAlertKind.MOVE_STARTED]: {
     subject: 'A wallet move was started',
     what: 'started a move of the organisation’s wallet to its own agent'
+  },
+  [KeyExportAlertKind.MOVE_EXPORT]: {
+    subject: 'The organisation’s signing keys were exported for the move',
+    what: 'exported the organisation’s wallet, including its signing keys, to move it to its own agent'
   },
   [KeyExportAlertKind.REHEARSAL_EXPORT]: {
     subject: 'The organisation’s signing keys were exported for a rehearsal',

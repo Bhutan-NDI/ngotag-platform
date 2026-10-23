@@ -153,6 +153,78 @@ export class OrgAgentMigrationRepository {
     }
   }
 
+  /**
+   * The switch (ADR-WM-009): points the org's agent row at the dedicated agent and moves the migration to CUTOVER in
+   * one transaction. Done together so a crash cannot leave the org on the new agent while the migration still says it
+   * can be aborted. The agent row only matches while it is still the shared one the move was prepared against.
+   * @throws ConflictException when the agent row or the migration changed in the meantime; nothing is written
+   */
+  async cutover(params: {
+    migrationId: string;
+    orgId: string;
+    expectedAgentEndPoint: string;
+    expectedTenantId: string;
+    sharedOrgAgentTypeId: string;
+    dedicatedOrgAgentTypeId: string;
+    agentEndPoint: string;
+    encryptedToken: string;
+    walletName: string;
+    lastChangedBy: string;
+    actor: string | null;
+    patch?: OrgAgentMigrationPatch;
+  }): Promise<MigrationRow> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const agent = await tx.org_agents.updateMany({
+          where: {
+            orgId: params.orgId,
+            orgAgentTypeId: params.sharedOrgAgentTypeId,
+            agentEndPoint: params.expectedAgentEndPoint,
+            tenantId: params.expectedTenantId
+          },
+          data: {
+            orgAgentTypeId: params.dedicatedOrgAgentTypeId,
+            agentEndPoint: params.agentEndPoint,
+            apiKey: params.encryptedToken,
+            tenantId: null,
+            walletName: params.walletName,
+            lastChangedBy: params.lastChangedBy,
+            lastChangedDateTime: new Date()
+          }
+        });
+        if (1 !== agent.count) {
+          throw new ConflictException(ResponseMessages.agent.error.agentRowChangedDuringMigration);
+        }
+
+        const migration = await tx.org_agent_migrations.updateMany({
+          where: { id: params.migrationId, status: OrgAgentMigrationStatus.VERIFYING },
+          data: {
+            ...params.patch,
+            status: OrgAgentMigrationStatus.CUTOVER,
+            phase: phaseFor(OrgAgentMigrationStatus.CUTOVER),
+            lastChangedDateTime: new Date()
+          }
+        });
+        if (1 !== migration.count) {
+          throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
+        }
+
+        await tx.org_agent_migration_events.create({
+          data: {
+            migrationId: params.migrationId,
+            fromStatus: OrgAgentMigrationStatus.VERIFYING,
+            toStatus: OrgAgentMigrationStatus.CUTOVER,
+            actor: params.actor
+          }
+        });
+        return tx.org_agent_migrations.findUniqueOrThrow({ where: { id: params.migrationId } });
+      });
+    } catch (error) {
+      this.logger.error(`[OrgAgentMigrationRepository.cutover] - ${error instanceof Error ? error.message : 'failed'}`);
+      throw error;
+    }
+  }
+
   /** Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). */
   async update(id: string, patch: OrgAgentMigrationPatch): Promise<MigrationRow> {
     return this.prisma.org_agent_migrations.update({
