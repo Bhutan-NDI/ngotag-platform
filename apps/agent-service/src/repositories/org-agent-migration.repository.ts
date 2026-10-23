@@ -1,0 +1,157 @@
+/* eslint-disable camelcase */
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { Prisma, org_agent_migrations } from '@prisma/client';
+import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
+import { PrismaService } from '@credebl/prisma-service';
+import { ResponseMessages } from '@credebl/common/response-messages';
+import { phaseFor, TERMINAL_STATUSES } from '../migration/org-agent-migration.state-machine';
+
+type MigrationRow = org_agent_migrations;
+
+// Everything a step may record on the row except what the state machine owns.
+export type OrgAgentMigrationPatch = Omit<
+  Prisma.org_agent_migrationsUncheckedUpdateManyInput,
+  'id' | 'orgId' | 'status' | 'phase' | 'createDateTime' | 'lastChangedDateTime'
+>;
+
+const UNIQUE_VIOLATION = 'P2002';
+
+@Injectable()
+export class OrgAgentMigrationRepository {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly logger: Logger
+  ) {}
+
+  /**
+   * Creates a migration in CREATED, with its first event. The partial unique index on orgId rejects a second
+   * non-terminal migration for the same org.
+   * @throws ConflictException when the org already has an active migration
+   */
+  async create(params: {
+    orgId: string;
+    startedBy: string;
+    tenantId: string | null;
+    sourceOrgAgentSnapshot: Prisma.InputJsonValue;
+    targetAdminEndpoint: string;
+    targetDidcommEndpoint: string;
+  }): Promise<MigrationRow> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const migration = await tx.org_agent_migrations.create({
+          data: {
+            orgId: params.orgId,
+            startedBy: params.startedBy,
+            status: OrgAgentMigrationStatus.CREATED,
+            phase: phaseFor(OrgAgentMigrationStatus.CREATED),
+            tenantId: params.tenantId,
+            sourceOrgAgentSnapshot: params.sourceOrgAgentSnapshot,
+            targetAdminEndpoint: params.targetAdminEndpoint,
+            targetDidcommEndpoint: params.targetDidcommEndpoint
+          }
+        });
+        await tx.org_agent_migration_events.create({
+          data: { migrationId: migration.id, fromStatus: null, toStatus: migration.status, actor: params.startedBy }
+        });
+        return migration;
+      });
+    } catch (error) {
+      if (UNIQUE_VIOLATION === error?.code) {
+        throw new ConflictException(ResponseMessages.agent.error.migrationAlreadyActive);
+      }
+      this.logger.error(`[OrgAgentMigrationRepository.create] - ${error instanceof Error ? error.message : 'failed'}`);
+      throw error;
+    }
+  }
+
+  async getById(id: string): Promise<MigrationRow | null> {
+    return this.prisma.org_agent_migrations.findUnique({ where: { id } });
+  }
+
+  async getActiveByOrgId(orgId: string): Promise<MigrationRow | null> {
+    return this.prisma.org_agent_migrations.findFirst({
+      where: { orgId, status: { notIn: [...TERMINAL_STATUSES] } }
+    });
+  }
+
+  // The active migration if there is one, otherwise the most recent finished one.
+  async getLatestByOrgId(orgId: string): Promise<MigrationRow | null> {
+    return (
+      (await this.getActiveByOrgId(orgId)) ??
+      this.prisma.org_agent_migrations.findFirst({ where: { orgId }, orderBy: { createDateTime: 'desc' } })
+    );
+  }
+
+  async list(params: {
+    orgId?: string;
+    status?: OrgAgentMigrationStatus;
+    skip: number;
+    take: number;
+  }): Promise<{ total: number; migrations: MigrationRow[] }> {
+    const where: Prisma.org_agent_migrationsWhereInput = {
+      ...(params.orgId ? { orgId: params.orgId } : {}),
+      ...(params.status ? { status: params.status } : {})
+    };
+    const [total, migrations] = await this.prisma.$transaction([
+      this.prisma.org_agent_migrations.count({ where }),
+      this.prisma.org_agent_migrations.findMany({
+        where,
+        orderBy: { createDateTime: 'desc' },
+        skip: params.skip,
+        take: params.take
+      })
+    ]);
+    return { total, migrations };
+  }
+
+  /**
+   * Moves a migration from one state to another and records the transition, in one transaction. The update
+   * only matches while the row is still in `from`, so two actors racing on the same migration cannot both win.
+   * The caller has already checked the transition is allowed by the state machine.
+   * @throws ConflictException when the migration is no longer in `from`
+   */
+  async transition(params: {
+    id: string;
+    from: OrgAgentMigrationStatus;
+    to: OrgAgentMigrationStatus;
+    actor: string | null;
+    patch?: OrgAgentMigrationPatch;
+  }): Promise<MigrationRow> {
+    const { id, from, to, actor, patch } = params;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        // The phase depends on whether a slot is booked, which this patch may be setting or clearing.
+        const scheduledFor =
+          patch && 'scheduledFor' in patch
+            ? (patch.scheduledFor as Date | null)
+            : await this.currentScheduledFor(tx, id);
+        const { count } = await tx.org_agent_migrations.updateMany({
+          where: { id, status: from },
+          data: {
+            ...patch,
+            status: to,
+            phase: phaseFor(to, scheduledFor),
+            lastChangedDateTime: new Date()
+          }
+        });
+        if (1 !== count) {
+          throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
+        }
+        await tx.org_agent_migration_events.create({
+          data: { migrationId: id, fromStatus: from, toStatus: to, actor }
+        });
+        return tx.org_agent_migrations.findUniqueOrThrow({ where: { id } });
+      });
+    } catch (error) {
+      this.logger.error(
+        `[OrgAgentMigrationRepository.transition] - ${from} -> ${to}: ${error instanceof Error ? error.message : 'failed'}`
+      );
+      throw error;
+    }
+  }
+
+  private async currentScheduledFor(tx: Prisma.TransactionClient, id: string): Promise<Date | null> {
+    const row = await tx.org_agent_migrations.findUnique({ where: { id }, select: { scheduledFor: true } });
+    return row?.scheduledFor ?? null;
+  }
+}
