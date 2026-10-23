@@ -1487,18 +1487,6 @@ export class AgentServiceService {
       throw error;
     }
   }
-  async getProofPresentations(url: string, apiKey: string): Promise<object> {
-    try {
-      const getProofPresentationsData = await this.commonService
-        .httpGet(url, { headers: { authorization: apiKey } })
-        .then(async (response) => response);
-
-      return getProofPresentationsData;
-    } catch (error) {
-      this.logger.error(`Error in proof presentations in agent service : ${JSON.stringify(error)}`);
-      throw error;
-    }
-  }
 
   async oidcIssuerCreate(issueData, url: string, orgId: string): Promise<object> {
     try {
@@ -1642,18 +1630,6 @@ export class AgentServiceService {
       return data;
     } catch (error) {
       this.logger.error(`Error in oidcIssuerTemplate in agent service : ${JSON.stringify(error)}`);
-      throw error;
-    }
-  }
-
-  async getIssueCredentials(url: string, apiKey: string): Promise<object> {
-    try {
-      const data = await this.commonService
-        .httpGet(url, { headers: { authorization: apiKey } })
-        .then(async (response) => response);
-      return data;
-    } catch (error) {
-      this.logger.error(`Error in getIssueCredentials in agent service : ${JSON.stringify(error)}`);
       throw error;
     }
   }
@@ -1991,6 +1967,7 @@ export class AgentServiceService {
 
   async deleteWallet(orgId: string, user: user): Promise<object> {
     try {
+      await this.assertOrgNotMigrating(orgId);
       // Retrieve the API key and agent information
       const [getApiKeyResult, orgAgentResult] = await Promise.allSettled([
         this.getOrgAgentApiKey(orgId),
@@ -2151,6 +2128,7 @@ export class AgentServiceService {
   async setDedicatedAgentToken(payload: ISetDedicatedAgentToken): Promise<IDedicatedAgentTokenResult> {
     const { targetOrgId, agentToken, agentEndPoint, userId } = payload;
     try {
+      await this.assertOrgNotMigrating(targetOrgId);
       const [orgAgentDetails, dedicatedAgentTypeId, organizationDetails] = await Promise.all([
         this.agentServiceRepository.getAgentApiKey(targetOrgId),
         this.agentServiceRepository.getOrgAgentTypeDetails(OrgAgentType.DEDICATED),
@@ -2273,7 +2251,21 @@ export class AgentServiceService {
     }
   }
 
+  private async assertOrgNotMigrating(orgId: string): Promise<void> {
+    if (await this.agentServiceRepository.isOrgAgentMigrationFrozen(orgId)) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.LOCKED,
+          message: ResponseMessages.agent.error.orgAgentMigrating,
+          error: 'ORG_AGENT_MIGRATING'
+        },
+        HttpStatus.LOCKED
+      );
+    }
+  }
+
   async getOrgAgentApiKey(orgId: string): Promise<string> {
+    await this.assertOrgNotMigrating(orgId);
     try {
       const orgAgentDetails = await this.agentServiceRepository.getAgentApiKey(orgId);
       const orgAgentId = await this.agentServiceRepository.getOrgAgentTypeDetails(OrgAgentType.SHARED);
