@@ -23,6 +23,9 @@ import { OrgAgentMigrationController } from './migration/org-agent-migration.con
 import { OrgAgentMigrationService } from './migration/org-agent-migration.service';
 import { OrgAgentMigrationPreflightService } from './migration/org-agent-migration.preflight.service';
 import { OrgAgentMigrationRehearsalService } from './migration/org-agent-migration.rehearsal.service';
+import { ScheduleModule } from '@nestjs/schedule';
+import { OrgAgentMigrationScheduleService } from './migration/org-agent-migration.schedule.service';
+import { OrgAgentMigrationScheduler } from './migration/org-agent-migration.scheduler';
 import { OrgAgentMigrationExecutor } from './migration/org-agent-migration.executor.service';
 import { OrgAgentMigrationAlertService } from './migration/org-agent-migration.alert.service';
 import { OrgAgentMigrationAuthorizer } from './migration/org-agent-migration.authorizer';
@@ -53,6 +56,7 @@ import { OrgAgentMigrationRepository } from './repositories/org-agent-migration.
     // let AxiosError.toJSON() -- and CommonService.httpGet's JSON.stringify(error) -- write the
     // submitted agent token's authorization header into logs.
     HttpModule,
+    ScheduleModule.forRoot(),
     CacheModule.register()
   ],
   controllers: [AgentServiceController, OrgAgentMigrationController],
@@ -64,6 +68,8 @@ import { OrgAgentMigrationRepository } from './repositories/org-agent-migration.
     OrgAgentMigrationRehearsalService,
     OrgAgentMigrationAlertService,
     OrgAgentMigrationExecutor,
+    OrgAgentMigrationScheduleService,
+    OrgAgentMigrationScheduler,
     OrgAgentMigrationAuthorizer,
     MigrationAgentAccess,
     MigrationAgentClient,

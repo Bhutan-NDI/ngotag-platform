@@ -30,6 +30,14 @@ export interface IRehearseOrgAgentMigration {
   userId: string;
 }
 
+export interface IStartOrgAgentMigration {
+  orgId: string;
+  userId: string;
+  confirmationName: string;
+  // When to start. Left out, the move starts at once.
+  scheduledFor?: string | Date;
+}
+
 export enum PreflightCheckId {
   ORG_IS_SHARED = 'ORG_IS_SHARED',
   AGENT_REACHABLE = 'AGENT_REACHABLE',

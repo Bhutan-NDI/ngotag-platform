@@ -6,6 +6,7 @@ import { OrgAgentMigrationService } from './org-agent-migration.service';
 import { OrgAgentMigrationPreflightService } from './org-agent-migration.preflight.service';
 import { OrgAgentMigrationRehearsalService } from './org-agent-migration.rehearsal.service';
 import { OrgAgentMigrationAuthorizer } from './org-agent-migration.authorizer';
+import { OrgAgentMigrationScheduleService } from './org-agent-migration.schedule.service';
 import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import {
@@ -15,6 +16,7 @@ import {
   IPreflightOrgAgentMigration,
   IPreflightReport,
   IRehearseOrgAgentMigration,
+  IStartOrgAgentMigration,
   toPublicMigration
 } from './org-agent-migration.interface';
 
@@ -28,6 +30,7 @@ export class OrgAgentMigrationController {
     private readonly migrationService: OrgAgentMigrationService,
     private readonly preflightService: OrgAgentMigrationPreflightService,
     private readonly rehearsalService: OrgAgentMigrationRehearsalService,
+    private readonly scheduleService: OrgAgentMigrationScheduleService,
     private readonly authorizer: OrgAgentMigrationAuthorizer,
     private readonly alertService: OrgAgentMigrationAlertService,
     private readonly migrationRepository: OrgAgentMigrationRepository,
@@ -79,6 +82,17 @@ export class OrgAgentMigrationController {
     try {
       await this.authorizer.assertOwner(payload.orgId, payload.userId);
       return toPublicMigration(await this.rehearsalService.start(payload.orgId, payload.userId));
+    } catch (error) {
+      throw new RpcException(error.response ?? error);
+    }
+  }
+
+  // The owner's commitment: the typed org name and a slot. The scheduler starts the move when the slot arrives.
+  @MessagePattern({ cmd: 'start-org-agent-migration' })
+  async start(payload: IStartOrgAgentMigration): Promise<IOrgAgentMigration> {
+    try {
+      await this.authorizer.assertOwner(payload.orgId, payload.userId);
+      return toPublicMigration(await this.scheduleService.confirm(payload));
     } catch (error) {
       throw new RpcException(error.response ?? error);
     }
