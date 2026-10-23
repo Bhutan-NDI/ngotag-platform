@@ -81,7 +81,8 @@ export class OrgAgentMigrationPreflightService {
    */
   async run(
     migrationId: string,
-    input: { apiKey?: string; backupsConfirmed?: boolean }
+    input: { apiKey?: string; backupsConfirmed?: boolean },
+    actor: string | null = null
   ): Promise<{ migration: org_agent_migrations; report: IPreflightReport }> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
@@ -129,7 +130,23 @@ export class OrgAgentMigrationPreflightService {
         ? { releaseVersion: dedicatedInfo.releaseVersion, storageVersion: dedicatedInfo.storageVersion }
         : {})
     });
+    await this.auditRun(migration.id, actor, report);
     return { migration: updated, report };
+  }
+
+  private async auditRun(migrationId: string, actor: string | null, report: IPreflightReport): Promise<void> {
+    try {
+      await this.migrationRepository.recordEvent(migrationId, {
+        action: 'PREFLIGHT_RUN',
+        actor,
+        detail: {
+          passed: report.passed,
+          failed: report.checks.filter((check) => 'FAIL' === check.status).map((check) => check.id)
+        }
+      });
+    } catch (error) {
+      this.logger.error(`[preflight] could not audit the run: ${error instanceof Error ? error.message : 'failed'}`);
+    }
   }
 
   private buildReport(checks: Map<PreflightCheckId, Check>): IPreflightReport {

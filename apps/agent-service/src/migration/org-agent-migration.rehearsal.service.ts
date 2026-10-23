@@ -1,5 +1,12 @@
 /* eslint-disable camelcase */
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException
+} from '@nestjs/common';
 import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { org_agent_migrations } from '@prisma/client';
@@ -8,6 +15,7 @@ import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration
 import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
 import { IPortabilityJob, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
 import { IPreflightReport, IRehearsalRecord } from './org-agent-migration.interface';
+import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 
 const MINUTE_MS = 60 * 1000;
@@ -49,6 +57,7 @@ export class OrgAgentMigrationRehearsalService {
     private readonly migrationService: OrgAgentMigrationService,
     private readonly access: MigrationAgentAccess,
     private readonly agentClient: MigrationAgentClient,
+    private readonly alertService: OrgAgentMigrationAlertService,
     private readonly logger: Logger
   ) {}
 
@@ -76,6 +85,18 @@ export class OrgAgentMigrationRehearsalService {
       throw new ConflictException(ResponseMessages.agent.error.migrationRehearsalRunning);
     }
 
+    // The rehearsal is a real export of the org's keys, so the alert goes out first and is not optional: if nobody
+    // could be told, the export does not run.
+    const alert = await this.alertService.alertKeyExport(migration, KeyExportAlertKind.REHEARSAL_EXPORT, actor);
+    await this.audit(migration.id, actor, 'REHEARSAL_STARTED', {
+      alertsSent: alert.sent,
+      recipients: alert.recipients
+    });
+    if (1 > alert.sent) {
+      await this.recordFailure(migration.id, actor, { code: 'ALERT_FAILED' });
+      throw new ServiceUnavailableException(ResponseMessages.agent.error.migrationAlertFailed);
+    }
+
     void this.execute(migration, actor).catch((error) => {
       this.logger.error(`[rehearsal] ${migration.id} crashed: ${error instanceof Error ? error.message : 'failed'}`);
     });
@@ -86,7 +107,7 @@ export class OrgAgentMigrationRehearsalService {
     const shared = await this.access.shared();
     const dedicated = await this.access.dedicated(migration);
     if (!shared || !dedicated) {
-      await this.recordFailure(migration.id, { code: 'AGENT_UNAVAILABLE' });
+      await this.recordFailure(migration.id, actor, { code: 'AGENT_UNAVAILABLE' });
       return;
     }
 
@@ -142,12 +163,16 @@ export class OrgAgentMigrationRehearsalService {
         rehearsalStatus: 'DONE',
         rehearsal: record as never
       });
+      await this.audit(migration.id, actor, 'REHEARSAL_FINISHED', {
+        outcome: 'DONE',
+        exportCleanup: record.exportCleanup ?? 'DELETED'
+      });
     } catch (error) {
       if (exportJobId) {
         record.exportCleanup = await this.deleteExport(shared, migration.tenantId, exportJobId);
       }
       const failure = error instanceof RehearsalFailure ? error : new RehearsalFailure('EXPORT', 'REHEARSAL_FAILED');
-      await this.recordFailure(migration.id, { ...record, step: failure.step, code: failure.code });
+      await this.recordFailure(migration.id, actor, { ...record, step: failure.step, code: failure.code });
     }
   }
 
@@ -219,7 +244,11 @@ export class OrgAgentMigrationRehearsalService {
     }
   }
 
-  private async recordFailure(migrationId: string, record: IRehearsalRecord & { code: string }): Promise<void> {
+  private async recordFailure(
+    migrationId: string,
+    actor: string,
+    record: IRehearsalRecord & { code: string }
+  ): Promise<void> {
     try {
       await this.migrationRepository.update(migrationId, {
         rehearsalStatus: 'FAILED',
@@ -227,6 +256,25 @@ export class OrgAgentMigrationRehearsalService {
       });
     } catch (error) {
       this.logger.error(`[rehearsal] could not record failure: ${error instanceof Error ? error.message : 'failed'}`);
+    }
+    await this.audit(migrationId, actor, 'REHEARSAL_FINISHED', {
+      outcome: 'FAILED',
+      code: record.code,
+      ...(record.step ? { step: record.step } : {}),
+      ...(record.exportCleanup ? { exportCleanup: record.exportCleanup } : {})
+    });
+  }
+
+  private async audit(
+    migrationId: string,
+    actor: string,
+    action: string,
+    detail: Record<string, string | number | boolean>
+  ): Promise<void> {
+    try {
+      await this.migrationRepository.recordEvent(migrationId, { action, actor, detail });
+    } catch (error) {
+      this.logger.error(`[rehearsal] could not audit ${action}: ${error instanceof Error ? error.message : 'failed'}`);
     }
   }
 }

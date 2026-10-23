@@ -2,6 +2,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { OrgAgentMigrationStatus as Status } from '@credebl/enum/enum';
 import { createHash } from 'crypto';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { MigrationAgentError } from './migration-agent.client';
 import { OrgAgentMigrationRehearsalService, predictFreezeMs } from './org-agent-migration.rehearsal.service';
 
@@ -44,7 +45,8 @@ const build = (options: { migration?: object | null } = {}) => {
     getActiveByOrgId: jest.fn().mockResolvedValue(migration),
     getById: jest.fn().mockResolvedValue(migration && { ...migration, rehearsalStatus: 'RUNNING' }),
     tryStartRehearsal: jest.fn().mockResolvedValue(true),
-    update: jest.fn().mockResolvedValue({})
+    update: jest.fn().mockResolvedValue({}),
+    recordEvent: jest.fn().mockResolvedValue(undefined)
   };
   const migrationService = { advance: jest.fn().mockResolvedValue({}) };
   const access = {
@@ -65,16 +67,18 @@ const build = (options: { migration?: object | null } = {}) => {
     getImportJob: track('getImportJob', completedImport),
     deleteExport: track('deleteExport', undefined)
   };
+  const alertService = { alertKeyExport: jest.fn().mockResolvedValue({ recipients: 3, sent: 3 }) };
   const logger = { error: jest.fn(), warn: jest.fn() };
   const service = new OrgAgentMigrationRehearsalService(
     migrationRepository as never,
     migrationService as never,
     access as never,
     agentClient as never,
+    alertService as never,
     logger as never
   );
   const execute = (row = migrationRow()) => (service as any).execute(row, USER_ID) as Promise<void>;
-  return { service, migrationRepository, migrationService, access, agentClient, logger, calls, execute };
+  return { service, migrationRepository, migrationService, access, agentClient, alertService, logger, calls, execute };
 };
 
 const failureRecorded = (migrationRepository: { update: jest.Mock }) =>
@@ -164,6 +168,92 @@ describe('OrgAgentMigrationRehearsalService.start', () => {
     migrationRepository.tryStartRehearsal.mockResolvedValue(false);
 
     await expect(service.start(ORG_ID, USER_ID)).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
+describe('OrgAgentMigrationRehearsalService key export controls', () => {
+  it('alerts the owners and the platform admins before the export runs, and audits the start', async () => {
+    const { service, alertService, migrationRepository } = build();
+    const order: string[] = [];
+    alertService.alertKeyExport.mockImplementation(async () => {
+      order.push('alert');
+      return { recipients: 3, sent: 3 };
+    });
+    jest.spyOn(service as any, 'execute').mockImplementation(async () => {
+      order.push('export');
+    });
+
+    await service.start(ORG_ID, USER_ID);
+
+    expect(alertService.alertKeyExport).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MIGRATION_ID }),
+      'REHEARSAL_EXPORT',
+      USER_ID
+    );
+    expect(order).toEqual(['alert', 'export']);
+    expect(migrationRepository.recordEvent).toHaveBeenCalledWith(MIGRATION_ID, {
+      action: 'REHEARSAL_STARTED',
+      actor: USER_ID,
+      detail: { alertsSent: 3, recipients: 3 }
+    });
+  });
+
+  it.each([
+    ['nobody could be told', { recipients: 0, sent: 0 }],
+    ['every alert failed', { recipients: 3, sent: 0 }]
+  ])('does not export when %s, and frees the rehearsal for another attempt', async (_name, result) => {
+    const { service, alertService, migrationRepository } = build();
+    alertService.alertKeyExport.mockResolvedValue(result);
+    const execute = jest.spyOn(service as any, 'execute').mockResolvedValue(undefined);
+
+    await expect(service.start(ORG_ID, USER_ID)).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(failureRecorded(migrationRepository)).toMatchObject({
+      rehearsal: expect.objectContaining({ code: 'ALERT_FAILED' })
+    });
+  });
+
+  it('still exports when only some of the alerts could be sent', async () => {
+    const { service, alertService } = build();
+    alertService.alertKeyExport.mockResolvedValue({ recipients: 3, sent: 1 });
+    const execute = jest.spyOn(service as any, 'execute').mockResolvedValue(undefined);
+
+    await service.start(ORG_ID, USER_ID);
+
+    expect(execute).toHaveBeenCalled();
+  });
+
+  it('audits how the rehearsal ended, against the user who started it', async () => {
+    const done = build();
+    await done.execute();
+    expect(done.migrationRepository.recordEvent).toHaveBeenCalledWith(MIGRATION_ID, {
+      action: 'REHEARSAL_FINISHED',
+      actor: USER_ID,
+      detail: { outcome: 'DONE', exportCleanup: 'DELETED' }
+    });
+
+    const failed = build();
+    failed.agentClient.getExportJob.mockResolvedValue({ ...completedExport, status: 'failed' });
+    await failed.execute();
+    expect(failed.migrationRepository.recordEvent).toHaveBeenCalledWith(
+      MIGRATION_ID,
+      expect.objectContaining({
+        action: 'REHEARSAL_FINISHED',
+        actor: USER_ID,
+        detail: expect.objectContaining({ outcome: 'FAILED', code: 'EXPORT_FAILED', step: 'EXPORT' })
+      })
+    );
+  });
+
+  it('keeps going when the audit write fails', async () => {
+    const { execute, migrationRepository, migrationService, logger } = build();
+    migrationRepository.recordEvent.mockRejectedValue(new Error('db down'));
+
+    await execute();
+
+    expect(migrationService.advance).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalled();
   });
 });
 
