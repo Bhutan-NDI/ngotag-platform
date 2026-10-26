@@ -3,27 +3,29 @@
 # Runs the release's database migration step as one standalone ECS task, before
 # any service changes. Application images never migrate at startup.
 #
-#   MODE=status  `prisma migrate status` from the release image. Fails when the
-#                database has migrations this release has not applied (or the
-#                check itself fails), so services never run ahead of the schema.
+#   MODE=status  `prisma migrate status` from the released service image. Fails
+#                when that image carries migrations the database has not applied
+#                (or the check itself fails), so a service never runs ahead of the
+#                schema. A database that is ahead of an older image passes.
 #   MODE=deploy  `prisma migrate deploy` then `migrate status`. Requires every
 #                writer service (the API gateway and seed) to be stopped at 0/0.
 #
-# The task is a copy of the migration service's current task definition (its
-# environment file, roles and network) in its own family, with only the image
-# replaced and the CPU architecture pinned. It runs on on-demand Fargate, never
+# The task is a copy of the template service's (API gateway's) current task
+# definition, for its environment file, roles and network, in its own family,
+# with only the image replaced by the released one and the CPU architecture pinned. It runs on on-demand Fargate, never
 # Spot. Its output can contain connection details, so it is not printed here;
 # read it in the task's CloudWatch log.
 #
 # Environment:
-#   CLUSTER, RELEASE_FILE (as deploy-services.sh), MIGRATION_SERVICE (service name),
+#   CLUSTER, IMAGE (the released image), TEMPLATE_FILE (the template service's
+#   manifest entry: {name, service, container, task_definition_family}),
 #   MIGRATION_FAMILY, WRITERS_FILE (JSON array of ECS service names), MODE,
 #   COMMAND (shell command run in the container), CPU_ARCHITECTURE,
 #   MIGRATION_TIMEOUT (seconds, default 3600), POLL_SECONDS (default 15)
 
 set -euo pipefail
 
-: "${CLUSTER:?}" "${RELEASE_FILE:?}" "${MIGRATION_SERVICE:?}" "${MIGRATION_FAMILY:?}" \
+: "${CLUSTER:?}" "${IMAGE:?}" "${TEMPLATE_FILE:?}" "${MIGRATION_FAMILY:?}" \
   "${WRITERS_FILE:?}" "${MODE:?}" "${COMMAND:?}" "${CPU_ARCHITECTURE:?}"
 timeout_seconds=${MIGRATION_TIMEOUT:-3600}
 poll_seconds=${POLL_SECONDS:-15}
@@ -33,15 +35,9 @@ case "$MODE" in status | deploy) ;; *) echo "unknown migration mode $MODE" >&2; 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-jq -e --arg name "$MIGRATION_SERVICE" '[.[] | select(.name == $name)] | length == 1' "$RELEASE_FILE" >/dev/null || {
-  echo "the release does not contain the migration service $MIGRATION_SERVICE" >&2
-  exit 1
-}
-entry() { jq -er --arg name "$MIGRATION_SERVICE" --arg field "$1" '.[] | select(.name == $name) | .[$field]' "$RELEASE_FILE"; }
-service=$(entry service)
-container=$(entry container)
-family=$(entry task_definition_family)
-image=$(entry image)
+service=$(jq -er '.service' "$TEMPLATE_FILE")
+container=$(jq -er '.container' "$TEMPLATE_FILE")
+family=$(jq -er '.task_definition_family' "$TEMPLATE_FILE")
 
 running=$(aws ecs list-tasks --cluster "$CLUSTER" --family "$MIGRATION_FAMILY" --desired-status RUNNING \
   --query 'length(taskArns)' --output text)
@@ -65,16 +61,16 @@ aws ecs describe-services --cluster "$CLUSTER" --services "$service" \
 current=$(jq -er '.taskDefinition' "$work/service.json")
 case "$current" in
   *":task-definition/${family}:"*) ;;
-  *) echo "the migration service's task definition does not belong to the manifest family" >&2; exit 1 ;;
+  *) echo "the template service's task definition does not belong to the manifest family" >&2; exit 1 ;;
 esac
 network=$(jq -ce '.networkConfiguration | select(.awsvpcConfiguration != null)' "$work/service.json") || {
-  echo "the migration service has no awsvpc network configuration to run the task in" >&2
+  echo "the template service has no awsvpc network configuration to run the task in" >&2
   exit 1
 }
 
 aws ecs describe-task-definition --task-definition "$current" \
   --query taskDefinition --output json > "$work/current.json"
-jq --arg container "$container" --arg image "$image" --arg cpu_architecture "$CPU_ARCHITECTURE" \
+jq --arg container "$container" --arg image "$IMAGE" --arg cpu_architecture "$CPU_ARCHITECTURE" \
   -f "$script_dir/render-task-definition.jq" "$work/current.json" \
   | jq --arg family "$MIGRATION_FAMILY" --arg container "$container" '
       .family = $family
@@ -110,8 +106,8 @@ exit_code=$(jq -r --arg container "$container" '.containers[] | select(.name == 
 elapsed=$(($(date +%s) - begun))
 if [ "$exit_code" != 0 ]; then
   if [ "$MODE" = status ]; then
-    echo "the database is not at this release's schema (migrate status exit $exit_code). Nothing was deployed." >&2
-    echo "If the release adds migrations, stop the writer services and run make deploy-<environment> MIGRATE=true." >&2
+    echo "the database lacks migrations this image carries (migrate status exit $exit_code). Nothing was deployed." >&2
+    echo "If the release adds migrations, stop the writer services and run make <environment>-<service> MIGRATE=true." >&2
   else
     echo "MIGRATION FAILED (exit $exit_code). Nothing was deployed. Do not retry; recover from the database backups." >&2
   fi

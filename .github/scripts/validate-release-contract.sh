@@ -14,27 +14,28 @@ test -f "$contract" || {
   exit 1
 }
 
-# QA releases come from develop, Stage from main, and Prod only promotes the
-# images Stage runs. Every service is published for the same single platform,
-# and the database migration runs from one of the released service images.
+# Every service is released on its own. QA releases come from develop, Stage
+# from main, and Prod only promotes the image Stage runs. Every service is
+# published for the same single platform. The database check and migration run
+# from the released image, in a copy of the template service's task definition.
 jq -e '
   def name: type == "string" and test("^[a-z][a-z0-9-]{0,62}$");
   .schema_version == 1 and
   (keys == ["ci", "environments", "migration", "release", "schema_version", "services"]) and
   (.release | keys == ["image_tag_prefix", "platform", "tag_prefix", "title"]) and
-  .release.tag_prefix == "platform/v" and
+  .release.tag_prefix == "platform/{service}/v" and
   .release.image_tag_prefix == "platform-" and
   .release.platform == "linux/arm64" and
   (.release.title | type == "string" and length > 0) and
   (.services | type == "object" and length > 0) and
   all(.services | to_entries[];
     (.key | name) and
-    (.value | keys == ["app", "dockerfile"]) and
+    (.value | keys - ["legacy_name"] == ["app", "dockerfile"]) and
     (.value.app | name) and
+    ((.value.legacy_name // .key) | name) and
     (.value.dockerfile | type == "string" and test("^Dockerfiles/Dockerfile\\.[a-z0-9-]+$"))) and
-  (.migration | keys == ["deploy_command", "service", "status_command"]) and
-  (.migration.service | name) and
-  (.migration.service as $service | .services | has($service)) and
+  (.migration | keys == ["deploy_command", "status_command", "template_service"]) and
+  (.migration.template_service as $service | .services | has($service)) and
   (.migration.status_command | type == "string" and test("prisma migrate status")) and
   (.migration.deploy_command | type == "string" and test("prisma migrate deploy")) and
   (.environments | keys == ["prod", "qa", "stage"]) and
@@ -42,7 +43,7 @@ jq -e '
     .value.tag_prefix != ("platform-" + .key + "-") or
     (.value.allowed_branch | test("^(develop|main)$") | not) or
     (.value.channel | IN("qa", "rc", "stable") | not) or
-    (.value.legacy_release_pattern | type) != "string"
+    (.value.legacy_release_pattern | type == "string" and contains("{legacy}") | not)
   )] | length == 0) and
   .environments.qa.allowed_branch == "develop" and
   .environments.qa.channel == "qa" and

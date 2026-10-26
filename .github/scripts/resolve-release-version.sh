@@ -3,10 +3,11 @@
 # Prints the GitHub Release this deployment publishes, as key=value lines:
 #   version, release_tag, previous_tag, reuse
 #
-# QA and Stage publish pre-releases of the next stable version
-# (vX.Y.Z-qa.N, vX.Y.Z-rc.N). X.Y.Z is the larger of the manifest's
-# next_version and the latest stable release plus one patch. Prod publishes
-# vX.Y.Z for the release candidate Stage runs and never reuses a version.
+# Every service has its own release series (platform/<service>/vX.Y.Z). QA and Stage
+# publish pre-releases of the service's next stable version (-qa.N, -rc.N).
+# X.Y.Z is the larger of the manifest's next_version and the service's latest
+# stable release plus one patch. Prod publishes vX.Y.Z for the release
+# candidate Stage runs and never reuses a version.
 #
 # A release of the same series on the same commit that was published after the
 # trigger tag was created belongs to an earlier attempt of this deployment and
@@ -14,17 +15,18 @@
 
 set -eu
 
-if [ "$#" -ne 6 ]; then
-  echo "usage: $0 <release-contract> <environment> <next-version|source-release-tag> <releases-json> <source-sha> <trigger-time>" >&2
+if [ "$#" -ne 7 ]; then
+  echo "usage: $0 <release-contract> <environment> <service> <next-version|source-release-tag> <releases-json> <source-sha> <trigger-time>" >&2
   exit 2
 fi
 
 contract=$1
 environment=$2
-requested=$3
-releases=$4
-source_sha=$5
-trigger_time=$6
+service=$3
+requested=$4
+releases=$5
+source_sha=$6
+trigger_time=$7
 
 test -f "$contract" || { echo "release contract does not exist: $contract" >&2; exit 1; }
 test -f "$releases" || { echo "release list does not exist: $releases" >&2; exit 1; }
@@ -38,6 +40,7 @@ jq -r -n \
   --slurpfile contract "$contract" \
   --slurpfile pages "$releases" \
   --arg environment "$environment" \
+  --arg service "$service" \
   --arg requested "$requested" \
   --arg source_sha "$source_sha" \
   --arg trigger_time "$trigger_time" '
@@ -47,7 +50,9 @@ jq -r -n \
 
   $contract[0] as $c
   | ($c.environments[$environment] // fail("unknown environment " + $environment)) as $env
-  | $c.release.tag_prefix as $prefix
+  | ($c.services[$service] // fail("unknown service " + $service)) as $svc
+  | ($c.release.tag_prefix | sub("\\{service\\}"; $service)) as $prefix
+  | ($env.legacy_release_pattern | sub("\\{legacy\\}"; ($svc.legacy_name // $service))) as $legacy_pattern
   | ($prefix | gsub("(?<c>[.\\\\/+*?()|\\[\\]{}^$])"; "\\\(.c)")) as $escaped
   | [$pages[] | if type == "array" then .[] else fail("release list must contain arrays of releases") end
       | select(.draft | not)] as $all
@@ -60,7 +65,7 @@ jq -r -n \
     def reusable($tag): $all | map(select(.tag_name == $tag and .target_commitish == $source_sha
       and published >= $trigger_time)) | length > 0;
     def previous($pattern; $tag): (newest([$all[] | select((.tag_name | test($pattern)) and .tag_name != $tag)]) // null)
-      // newest([$all[] | select(.tag_name | test($env.legacy_release_pattern))])
+      // newest([$all[] | select(.tag_name | test($legacy_pattern))])
       | .tag_name // "";
 
   if $env.channel == "stable" then

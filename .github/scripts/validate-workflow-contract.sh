@@ -63,12 +63,14 @@ fi
 
 # Shell patterns let '*' match '/', unlike GitHub's filters, so this check is
 # stricter than GitHub and never misses a match.
-release_prefix=$(jq -r '.release.tag_prefix' "$contract")
-samples=$(jq -r '.environments[].tag_prefix + "0000000000000000000000000000000000000000-000000000000-20260101T000000Z"' "$contract")
-samples="$samples
-${release_prefix}1.2.3
-${release_prefix}1.2.3-qa.1
-${release_prefix}1.2.3-rc.1"
+samples=$(jq -r '
+  .release.tag_prefix as $release_prefix
+  | .environments[].tag_prefix as $trigger_prefix
+  | .services | keys[] as $service
+  | ($trigger_prefix + $service + "-0000000000000000000000000000000000000000-000000000000-20260101T000000Z"),
+    ($trigger_prefix + $service + "-0000000000000000000000000000000000000000-000000000000-20260101T000000Z-migrate"),
+    (($release_prefix | sub("\\{service\\}"; $service)) as $prefix
+      | $prefix + "1.2.3", $prefix + "1.2.3-qa.1", $prefix + "1.2.3-rc.1")' "$contract" | LC_ALL=C sort -u)
 
 other_workflows=$(find "$workflow_directory" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | LC_ALL=C sort)
 # Tag globs must not expand against local files.

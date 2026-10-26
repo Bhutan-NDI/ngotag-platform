@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 
-# Records what was deployed in the private deployment manifest. The record is
-# written only after every service is stable and the GitHub Release is
-# published, and only if the reviewed part of the manifest is unchanged since
-# this deployment validated it.
+# Records what was deployed in the private deployment manifest, under the
+# service's entry of .release.deployed. The record is written only after the
+# service is stable and the GitHub Release is published, and only if the
+# reviewed part of the manifest is unchanged since this deployment validated it.
+# Records of other services are kept.
 #
 # Environment:
 #   GH_TOKEN, CONFIG_REPOSITORY, CONFIG_PATH, VALIDATED_MANIFEST (file),
-#   DEPLOYED_RECORD (file with the JSON object for .release.deployed), ENVIRONMENT
+#   DEPLOYED_RECORD (file with the JSON object for .release.deployed[SERVICE]),
+#   SERVICE, ENVIRONMENT
 
 set -euo pipefail
 
 : "${GH_TOKEN:?}" "${CONFIG_REPOSITORY:?}" "${CONFIG_PATH:?}" "${VALIDATED_MANIFEST:?}" \
-  "${DEPLOYED_RECORD:?}" "${ENVIRONMENT:?}"
+  "${DEPLOYED_RECORD:?}" "${SERVICE:?}" "${ENVIRONMENT:?}"
 
 expected_request=$(jq -cS 'del(.release.deployed)' "$VALIDATED_MANIFEST")
 release=$(jq -er '.github_release' "$DEPLOYED_RECORD")
@@ -25,7 +27,8 @@ for attempt in 1 2 3; do
     echo "the deployment manifest changed after this deployment started; refusing to overwrite its ledger" >&2
     exit 1
   }
-  updated=$(jq --slurpfile deployed "$DEPLOYED_RECORD" '.release.deployed = $deployed[0]' <<<"$current_config")
+  updated=$(jq --arg service "$SERVICE" --slurpfile deployed "$DEPLOYED_RECORD" \
+    '.release.deployed[$service] = $deployed[0]' <<<"$current_config")
   if printf '%s\n' "$updated" | base64 | tr -d '\n' > "$RUNNER_TEMP/ledger-content" &&
     gh api --method PUT "repos/$CONFIG_REPOSITORY/contents/$CONFIG_PATH" \
       -f message="chore(platform): record $ENVIRONMENT release $release" \

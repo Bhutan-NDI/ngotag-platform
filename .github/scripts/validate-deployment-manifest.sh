@@ -4,7 +4,7 @@
 # (platform/environments/<environment>.json). The manifest names the ECS
 # cluster, services, containers, task definition families and the migration
 # task, which never appear in this public repository, and records the last
-# deployed release.
+# deployed release of each service.
 
 set -eu
 
@@ -33,7 +33,8 @@ jq -e --arg environment "$environment" --slurpfile contract "$contract" '
     (if $policy.channel == "stable"
       then (.release | keys == ["deployed"])
       else (.release | keys == ["deployed", "next_version"]) and (.release.next_version | semver) end) and
-    (.release.deployed == null or (.release.deployed | type == "object")) and
+    (.release.deployed | type == "object") and
+    all(.release.deployed | to_entries[]; (.key as $service | $c.services | has($service)) and (.value | type == "object")) and
     (.deployment | keys == ["allowed_branch", "aws_region", "cluster", "cpu_architecture", "ecr_repository", "migration", "services"]) and
     .deployment.allowed_branch == $policy.allowed_branch and
     (.deployment.aws_region | type == "string" and test("^[a-z]{2}(-[a-z]+)+-[0-9]$")) and
@@ -54,10 +55,10 @@ jq -e --arg environment "$environment" --slurpfile contract "$contract" '
       | .deployment.services | all(.task_definition_family != $family)) and
     (.deployment.migration.writers | type == "array" and length > 0 and all(.[]; name)) and
     (.deployment.migration.writers | unique | length) == (.deployment.migration.writers | length) and
-    # The migration runs from the migration service image, and that service must
-    # be stopped while the schema changes.
-    ([.deployment.services[] | select(.name == $c.migration.service)] | length == 1) and
-    ([.deployment.services[] | select(.name == $c.migration.service) | .service][0] as $writer
+    # The migration task copies the template service, which must be stopped while
+    # the schema changes.
+    ([.deployment.services[] | select(.name == $c.migration.template_service)] | length == 1) and
+    ([.deployment.services[] | select(.name == $c.migration.template_service) | .service][0] as $writer
       | .deployment.migration.writers | index($writer) != null)
 ' "$manifest" >/dev/null || {
   echo "deployment manifest for $environment failed validation" >&2

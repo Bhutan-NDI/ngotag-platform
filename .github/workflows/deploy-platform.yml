@@ -1,14 +1,14 @@
 name: Deploy Platform
 run-name: Deploy Platform [${{ github.ref_name }}]
 
-# Releases the NGOTAG platform services to their ECS environments. Only
-# `make deploy-qa`, `make deploy-stage` and `make deploy-prod` create these
+# Releases one NGOTAG platform service to one ECS environment. Only
+# `make <environment>-<service>` (for example `make qa-agent`) creates these
 # trigger tags; CI keeps the globs synchronized with
 # .github/platform-release-contract.json.
 #
-# QA builds from develop and Stage from main: one linux/arm64 image per service,
-# built in parallel on native arm64 runners. Prod never rebuilds; it copies the
-# exact images Stage runs. Every release checks the database schema before any
+# QA builds from develop and Stage from main: one linux/arm64 image, built on a
+# native arm64 runner. Prod never rebuilds; it copies the exact image Stage runs.
+# Every release checks the database schema from the released image before the
 # service changes and applies migrations only when the trigger asks for it.
 #
 # This repository is public, and so are these logs. Cluster, service,
@@ -39,6 +39,7 @@ jobs:
       queue: max
     outputs:
       target_environment: ${{ steps.release.outputs.target_environment }}
+      service: ${{ steps.release.outputs.service }}
       channel: ${{ steps.release.outputs.channel }}
       manifest_ref: ${{ steps.release.outputs.manifest_ref }}
       source_sha: ${{ steps.release.outputs.source_sha }}
@@ -70,19 +71,24 @@ jobs:
           channel="$(jq -er --arg environment "$target_environment" '.environments[$environment].channel' "$contract")"
           tag_prefix="$(jq -er --arg environment "$target_environment" '.environments[$environment].tag_prefix' "$contract")"
 
-          tag_pattern='^([0-9a-f]{40})-([0-9a-f]{12})-([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z(-migrate)?$'
+          tag_pattern='^([a-z][a-z0-9-]*)-([0-9a-f]{40})-([0-9a-f]{12})-([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z(-migrate)?$'
           [[ "${GITHUB_REF_NAME#"$tag_prefix"}" =~ $tag_pattern ]] || {
             echo "release tag does not match the Makefile contract" >&2
             exit 1
           }
-          manifest_ref="${BASH_REMATCH[1]}"
-          test "${GITHUB_SHA:0:12}" = "${BASH_REMATCH[2]}" || {
+          service="${BASH_REMATCH[1]}"
+          jq -e --arg service "$service" '.services | has($service)' "$contract" >/dev/null || {
+            echo "release tag names an unknown service" >&2
+            exit 1
+          }
+          manifest_ref="${BASH_REMATCH[2]}"
+          test "${GITHUB_SHA:0:12}" = "${BASH_REMATCH[3]}" || {
             echo "tag-embedded source commit does not match the tagged commit" >&2
             exit 1
           }
-          trigger_time="${BASH_REMATCH[3]}-${BASH_REMATCH[4]}-${BASH_REMATCH[5]}T${BASH_REMATCH[6]}:${BASH_REMATCH[7]}:${BASH_REMATCH[8]}Z"
+          trigger_time="${BASH_REMATCH[4]}-${BASH_REMATCH[5]}-${BASH_REMATCH[6]}T${BASH_REMATCH[7]}:${BASH_REMATCH[8]}:${BASH_REMATCH[9]}Z"
           migrate=false
-          if [ -n "${BASH_REMATCH[9]}" ]; then migrate=true; fi
+          if [ -n "${BASH_REMATCH[10]}" ]; then migrate=true; fi
 
           branch_sha="$(git rev-parse --verify "refs/remotes/origin/${expected_branch}^{commit}")"
           if [ "$channel" = "stable" ]; then
@@ -100,6 +106,7 @@ jobs:
 
           {
             echo "target_environment=$target_environment"
+            echo "service=$service"
             echo "channel=$channel"
             echo "manifest_ref=$manifest_ref"
             echo "source_sha=$GITHUB_SHA"
@@ -107,80 +114,21 @@ jobs:
             echo "migrate=$migrate"
           } >> "$GITHUB_OUTPUT"
 
-  services:
+  build:
     needs: resolve
     if: needs.resolve.outputs.channel != 'stable'
-    name: Select services (${{ needs.resolve.outputs.target_environment }})
-    runs-on: ubuntu-latest
-    environment: ${{ needs.resolve.outputs.target_environment }}
-    timeout-minutes: 10
-    outputs:
-      names: ${{ steps.select.outputs.names }}
-    env:
-      TARGET_ENVIRONMENT: ${{ needs.resolve.outputs.target_environment }}
-      CONFIG_REPOSITORY: ${{ secrets.DEPLOYMENT_CONFIG_REPOSITORY }}
-      CONFIG_PATH: platform/environments/${{ needs.resolve.outputs.target_environment }}.json
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.resolve.outputs.source_sha }}
-          persist-credentials: false
-
-      # Scoped to the private manifest repository and revoked after the job.
-      - name: Create manifest-reader GitHub App token
-        id: manifest_token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.IAC_MANIFEST_APP_ID }}
-          private-key: ${{ secrets.IAC_MANIFEST_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ secrets.DEPLOYMENT_CONFIG_REPOSITORY_NAME }}
-          permission-contents: read
-
-      - name: Check out deployment manifest
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ env.CONFIG_REPOSITORY }}
-          ref: ${{ needs.resolve.outputs.manifest_ref }}
-          token: ${{ steps.manifest_token.outputs.token }}
-          path: deployment-config
-          fetch-depth: 0
-          persist-credentials: false
-
-      # Only the public service names leave this job.
-      - name: Select the services this environment runs
-        id: select
-        shell: bash
-        run: |
-          set -euo pipefail
-          manifest="deployment-config/$CONFIG_PATH"
-          git -C deployment-config merge-base --is-ancestor HEAD origin/main || {
-            echo "the manifest commit is not on the reviewed manifest main branch" >&2
-            exit 1
-          }
-          sh .github/scripts/validate-deployment-manifest.sh \
-            .github/platform-release-contract.json "$TARGET_ENVIRONMENT" "$manifest"
-          echo "names=$(jq -c '[.deployment.services[].name]' "$manifest")" >> "$GITHUB_OUTPUT"
-
-  build:
-    needs: [resolve, services]
-    name: Build ${{ matrix.service }} (${{ needs.resolve.outputs.target_environment }})
+    name: Build ${{ needs.resolve.outputs.service }} arm64 image (${{ needs.resolve.outputs.target_environment }})
     runs-on: ubuntu-24.04-arm
     environment: ${{ needs.resolve.outputs.target_environment }}
-    strategy:
-      fail-fast: true
-      matrix:
-        service: ${{ fromJSON(needs.services.outputs.names) }}
     concurrency:
-      group: platform-build-${{ needs.resolve.outputs.target_environment }}-${{ needs.resolve.outputs.source_sha }}-${{ matrix.service }}
+      group: platform-build-${{ needs.resolve.outputs.target_environment }}-${{ needs.resolve.outputs.source_sha }}-${{ needs.resolve.outputs.service }}
       cancel-in-progress: false
     timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
     env:
-      SERVICE: ${{ matrix.service }}
+      SERVICE: ${{ needs.resolve.outputs.service }}
       TARGET_ENVIRONMENT: ${{ needs.resolve.outputs.target_environment }}
       CONFIG_REPOSITORY: ${{ secrets.DEPLOYMENT_CONFIG_REPOSITORY }}
       CONFIG_PATH: platform/environments/${{ needs.resolve.outputs.target_environment }}.json
@@ -292,29 +240,30 @@ jobs:
           echo "Published this commit's $SERVICE arm64 image"
 
   deploy:
-    needs: [resolve, services, build]
+    needs: [resolve, build]
     if: >-
       !cancelled() && needs.resolve.result == 'success' &&
-      ((needs.services.result == 'success' && needs.build.result == 'success') ||
-       (needs.services.result == 'skipped' && needs.build.result == 'skipped' && needs.resolve.outputs.channel == 'stable'))
-    name: Deploy (${{ needs.resolve.outputs.target_environment }})
+      (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.resolve.outputs.channel == 'stable'))
+    name: Deploy ${{ needs.resolve.outputs.service }} (${{ needs.resolve.outputs.target_environment }})
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve.outputs.target_environment }}
+    # One release at a time per environment, so database checks, migrations and
+    # rollouts of different services never interleave.
     concurrency:
       group: platform-${{ needs.resolve.outputs.target_environment }}
       cancel-in-progress: false
       queue: max
-    # A migration can take up to an hour and every service up to about 21 minutes
-    # to roll out. The rollout script stops before a service whose window would
-    # outlast this job (minus 20 minutes kept for the release and the ledger) or
-    # the AWS session.
-    timeout-minutes: 240
+    # A migration can take up to an hour and a rollout about 21 minutes. The
+    # rollout script refuses to start if its window would outlast this job (minus
+    # 20 minutes kept for the release and the ledger) or the AWS session.
+    timeout-minutes: 120
     permissions:
       checks: read
       contents: read
       id-token: write
     env:
       TARGET_ENVIRONMENT: ${{ needs.resolve.outputs.target_environment }}
+      SERVICE: ${{ needs.resolve.outputs.service }}
       CHANNEL: ${{ needs.resolve.outputs.channel }}
       MIGRATE: ${{ needs.resolve.outputs.migrate }}
       MANIFEST_REF: ${{ needs.resolve.outputs.manifest_ref }}
@@ -325,7 +274,7 @@ jobs:
     steps:
       - name: Set the rollout deadline
         shell: bash
-        run: echo "ROLLOUT_DEADLINE=$(($(date +%s) + (240 - 20) * 60))" >> "$GITHUB_ENV"
+        run: echo "ROLLOUT_DEADLINE=$(($(date +%s) + (120 - 20) * 60))" >> "$GITHUB_ENV"
 
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -375,7 +324,7 @@ jobs:
           # Ledger updates are expected; any other change since the trigger must be redeployed.
           test "$(jq -cS 'del(.release.deployed)' "$manifest")" = \
             "$(git -C deployment-config show "origin/main:$CONFIG_PATH" | jq -cS 'del(.release.deployed)')" || {
-            echo "the manifest changed after the release was triggered; run make deploy-$TARGET_ENVIRONMENT again" >&2
+            echo "the manifest changed after the release was triggered; run make $TARGET_ENVIRONMENT-$SERVICE again" >&2
             exit 1
           }
           sh .github/scripts/validate-deployment-manifest.sh "$CONTRACT" "$TARGET_ENVIRONMENT" "$manifest"
@@ -411,12 +360,20 @@ jobs:
             echo "::add-mask::$private_name"
           done
 
-          jq '.deployment.services' "$manifest" > "$RUNNER_TEMP/services.json"
+          jq -e --arg service "$SERVICE" '[.deployment.services[] | select(.name == $service)] | select(length == 1)' \
+            "$manifest" > "$RUNNER_TEMP/services.json" || {
+            echo "$TARGET_ENVIRONMENT does not run $SERVICE" >&2
+            exit 1
+          }
+          jq --arg template "$(jq -r '.migration.template_service' "$CONTRACT")" \
+            '.deployment.services[] | select(.name == $template)' "$manifest" > "$RUNNER_TEMP/template.json"
           jq '.deployment.migration.writers' "$manifest" > "$RUNNER_TEMP/writers.json"
           {
             echo "MANIFEST=$manifest"
             echo "PRIVATE_NAMES_FILE=$private_names"
             echo "SERVICES_FILE=$RUNNER_TEMP/services.json"
+            echo "TEMPLATE_FILE=$RUNNER_TEMP/template.json"
+            echo "TITLE=$(jq -r '.release.title' "$CONTRACT") $SERVICE"
             echo "WRITERS_FILE=$RUNNER_TEMP/writers.json"
             echo "CLUSTER=$(jq -r '.deployment.cluster' "$manifest")"
             echo "ECR_REPOSITORY=$(jq -r '.deployment.ecr_repository' "$manifest")"
@@ -434,16 +391,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$CHANNEL" = "stable" ]; then
-            jq -e --arg sha "$GITHUB_SHA" --slurpfile services "$SERVICES_FILE" '
-              .release.deployed | type == "object" and .commit == $sha and
-              (.github_release | type == "string") and (.services | type == "object") and
-              all($services[0][].name as $name | .services[$name];
-                type == "object" and (.image_tag | type == "string") and
-                (.image_digest | type == "string" and test("^sha256:[0-9a-f]{64}$")))' "$SOURCE_MANIFEST" >/dev/null || {
-              echo "Stage has no automated release of this commit with every Prod service; run make deploy-prod again" >&2
+            jq -e --arg sha "$GITHUB_SHA" --arg service "$SERVICE" '
+              .release.deployed[$service] | type == "object" and .commit == $sha and
+              (.github_release | type == "string") and (.image_tag | type == "string") and
+              (.image_digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$SOURCE_MANIFEST" >/dev/null || {
+              echo "Stage has no automated release of $SERVICE on this commit; run make prod-$SERVICE again" >&2
               exit 1
             }
-            requested="$(jq -r '.release.deployed.github_release' "$SOURCE_MANIFEST")"
+            requested="$(jq -r --arg service "$SERVICE" '.release.deployed[$service].github_release' "$SOURCE_MANIFEST")"
             source_release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$requested")"
             jq -e --arg sha "$GITHUB_SHA" '.draft == false and .prerelease == true and .target_commitish == $sha' \
               <<<"$source_release" >/dev/null || {
@@ -455,7 +410,7 @@ jobs:
             requested="$(jq -r '.release.next_version' "$MANIFEST")"
           fi
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
-          sh .github/scripts/resolve-release-version.sh "$CONTRACT" "$TARGET_ENVIRONMENT" "$requested" \
+          sh .github/scripts/resolve-release-version.sh "$CONTRACT" "$TARGET_ENVIRONMENT" "$SERVICE" "$requested" \
             "$RUNNER_TEMP/releases.json" "$GITHUB_SHA" "$TRIGGER_TIME" > "$RUNNER_TEMP/version.env"
           cat "$RUNNER_TEMP/version.env"
           cat "$RUNNER_TEMP/version.env" >> "$GITHUB_OUTPUT"
@@ -486,15 +441,14 @@ jobs:
         run: |
           set -euo pipefail
           echo "NOTES_FILE=$RUNNER_TEMP/release-notes.md" >> "$GITHUB_ENV"
-          NOTES_FILE="$RUNNER_TEMP/release-notes.md" TITLE="$(jq -r '.release.title' "$CONTRACT")" \
-            bash .github/scripts/publish-github-release.sh prepare
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md" bash .github/scripts/publish-github-release.sh prepare
 
       # Recorded before the session starts, so the deadline errs early. The last
       # AWS call is the digest check after each rollout; 5 minutes stay spare.
       - name: Bound the rollout by the AWS session
         shell: bash
         run: |
-          session_deadline=$(($(date +%s) + 14400 - 5 * 60))
+          session_deadline=$(($(date +%s) + 7200 - 5 * 60))
           if [ "$session_deadline" -lt "$ROLLOUT_DEADLINE" ]; then
             echo "ROLLOUT_DEADLINE=$session_deadline" >> "$GITHUB_ENV"
           fi
@@ -505,9 +459,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_PLATFORM_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.DEPLOY_AWS_REGION }}
           mask-aws-account-id: true
-          # A migration and a rollout of every service can outlast the default
-          # one-hour session. Keep in step with the session bound above and the roles' maximum.
-          role-duration-seconds: 14400
+          # A migration and a rollout can outlast the default one-hour session.
+          # Keep in step with the session bound above and the roles' maximum.
+          role-duration-seconds: 7200
 
       - name: Verify assumed AWS account
         shell: bash
@@ -519,7 +473,7 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
-      - name: Promote the Stage images unchanged
+      - name: Promote the Stage image unchanged
         if: needs.resolve.outputs.channel == 'stable'
         shell: bash
         env:
@@ -530,7 +484,7 @@ jobs:
           command -v skopeo >/dev/null || { echo "skopeo is required to copy images by digest" >&2; exit 1; }
           aws ecr get-login-password | skopeo login --username AWS --password-stdin "$REGISTRY" >/dev/null
           jq '.deployment.services' "$SOURCE_MANIFEST" > "$RUNNER_TEMP/source-services.json"
-          jq '.release.deployed.services' "$SOURCE_MANIFEST" > "$RUNNER_TEMP/source-deployed.json"
+          jq '.release.deployed' "$SOURCE_MANIFEST" > "$RUNNER_TEMP/source-deployed.json"
           REGISTRY="$REGISTRY" \
           SOURCE_CLUSTER="$(jq -r '.deployment.cluster' "$SOURCE_MANIFEST")" \
           SOURCE_SERVICES_FILE="$RUNNER_TEMP/source-services.json" \
@@ -542,7 +496,7 @@ jobs:
           IMAGE_TAG_PREFIX="$(jq -r '.release.image_tag_prefix' "$CONTRACT")" \
             bash .github/scripts/promote-stage-images.sh
 
-      - name: Resolve the images to deploy
+      - name: Resolve the image to deploy
         shell: bash
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
@@ -557,9 +511,9 @@ jobs:
             SOURCE_SHA="$GITHUB_SHA" PLATFORM_ARCH=arm64 RELEASE_FILE="$RUNNER_TEMP/release.json" \
             bash .github/scripts/resolve-release-images.sh
 
-      # Services never run ahead of the database schema: without MIGRATE the
-      # release stops here if the schema is behind; with it, migrations are
-      # applied once while the writer services are stopped.
+      # A service never runs ahead of the database schema: without MIGRATE the
+      # release stops here if the database lacks a migration the image carries;
+      # with it, migrations are applied once while the writer services are stopped.
       - name: Check or apply database migrations
         shell: bash
         run: |
@@ -571,10 +525,10 @@ jobs:
             mode=status
             command="$(jq -r '.migration.status_command' "$CONTRACT")"
           fi
-          MIGRATION_SERVICE="$(jq -r '.migration.service' "$CONTRACT")" MODE="$mode" COMMAND="$command" \
+          IMAGE="$(jq -r '.[0].image' "$RELEASE_FILE")" MODE="$mode" COMMAND="$command" \
             bash .github/scripts/run-migration.sh
 
-      - name: Deploy services one at a time
+      - name: Deploy the service
         shell: bash
         run: |
           set -euo pipefail
@@ -604,7 +558,7 @@ jobs:
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
         run: |
           set -euo pipefail
-          TITLE="$(jq -r '.release.title' "$CONTRACT")" bash .github/scripts/publish-github-release.sh publish
+          bash .github/scripts/publish-github-release.sh publish
 
       - name: Create manifest-writer GitHub App token
         id: manifest_writer_token
@@ -635,13 +589,13 @@ jobs:
             --arg workflow_run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --slurpfile release "$RELEASE_FILE" \
-            --slurpfile task_definitions "$RUNNER_TEMP/task-definitions.json" '{
-              version: $version, github_release: $github_release, platform: $platform, commit: $commit,
-              manifest_commit: $manifest_commit,
+            --slurpfile task_definitions "$RUNNER_TEMP/task-definitions.json" '
+              $release[0][0] as $service | {
+              version: $version, github_release: $github_release,
+              image_tag: $service.image_tag, image_digest: $service.image_digest,
+              platform: $platform, commit: $commit, manifest_commit: $manifest_commit,
               promoted_from: (if $promoted_from == "" then null else $promoted_from end),
-              migration: $migration,
-              services: ($release[0] | map({key: .name, value: {
-                image_tag, image_digest, task_definition: $task_definitions[0][.name]}}) | from_entries),
+              migration: $migration, task_definition: $task_definitions[0][$service.name],
               workflow_run: $workflow_run, deployed_at: $deployed_at
             }' > "$RUNNER_TEMP/deployed.json"
           VALIDATED_MANIFEST="$MANIFEST" DEPLOYED_RECORD="$RUNNER_TEMP/deployed.json" \
@@ -652,8 +606,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
         run: |
-          printf '### Platform %s deployed\n\nRelease: %s/%s/releases/tag/%s\n' \
-            "$TARGET_ENVIRONMENT" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+          printf '### %s deployed to %s\n\nRelease: %s/%s/releases/tag/%s\n' \
+            "$SERVICE" "$TARGET_ENVIRONMENT" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
           if [ "$MIGRATE" = "true" ]; then
             printf '\nMigrations were applied. The writer services are still stopped: start them after the smoke checks.\n' \
               >> "$GITHUB_STEP_SUMMARY"

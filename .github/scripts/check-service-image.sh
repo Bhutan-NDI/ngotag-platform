@@ -3,8 +3,9 @@
 # Starts the built image on its own platform, without network access, and proves
 # that it is usable there before it is pushed: Node runs on the expected
 # architecture, the service entry point exists, the Prisma query engine for this
-# platform loads, and bcrypt (when present) loads and hashes. The JavaScript is
-# platform-independent; these native libraries are not.
+# platform loads, bcrypt (when present) loads and hashes, and the Prisma CLI and
+# schema are present (every release checks the database from this image). The
+# JavaScript is platform-independent; these native libraries are not.
 
 set -eu
 
@@ -24,6 +25,7 @@ entrypoint=$(docker image inspect --format '{{json .Config.Cmd}}' "$image" \
 
 check="const fs=require('fs'),path=require('path');const v={arch:process.arch};\
 v.entry=fs.existsSync(process.argv[1]);\
+v.prisma=fs.existsSync('node_modules/.bin/prisma')&&fs.existsSync('libs/prisma-service/prisma/schema.prisma');\
 const client=path.dirname(require.resolve('@prisma/client/package.json'));\
 const generated=path.dirname(require.resolve('.prisma/client/package.json',{paths:[client]}));\
 v.engines=fs.readdirSync(generated).filter(f=>/^libquery_engine-.*\\.so\\.node$/.test(f)).filter(f=>{\
@@ -34,7 +36,7 @@ console.log(JSON.stringify(v))"
 
 result=$(docker run --rm --network none --memory 1g --entrypoint node "$image" -e "$check" "$entrypoint" | tail -n 1)
 printf '%s\n' "$result" | jq -e --arg arch "$expected_arch" '
-  .arch == $arch and .entry == true and (.engines | length) > 0 and (.bcrypt == true or .bcrypt == "absent")
+  .arch == $arch and .entry == true and .prisma == true and (.engines | length) > 0 and (.bcrypt == true or .bcrypt == "absent")
 ' >/dev/null || {
   echo "image check failed: $result" >&2
   exit 1

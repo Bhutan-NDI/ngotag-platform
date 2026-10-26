@@ -50,29 +50,25 @@ esac
 FAKE
 chmod +x "$work/bin/aws"
 
-jq -n '[
-  {name: "user", service: "user-service", container: "user", task_definition_family: "USER_TDF",
-   image: "registry/repo:platform-user-aaaaaaaaaaaa", image_digest: "sha256:x"},
-  {name: "api-gateway", service: "gateway-service", container: "gateway", task_definition_family: "GATEWAY_TDF",
-   image: "registry/repo:platform-api-gateway-aaaaaaaaaaaa", image_digest: "sha256:y"}
-]' > "$work/release.json"
+jq -n '{name: "api-gateway", service: "gateway-service", container: "gateway", task_definition_family: "GATEWAY_TDF"}' \
+  > "$work/template.json"
 printf '["gateway-service", "seed"]\n' > "$work/writers.json"
 
 run() {
   rm -rf "$work/state" && mkdir -p "$work/state"
-  PATH="$work/bin:$PATH" FAKE_STATE="$work/state" CLUSTER=cluster RELEASE_FILE="$work/release.json" \
-    MIGRATION_SERVICE=api-gateway MIGRATION_FAMILY=MIGRATION_TDF WRITERS_FILE="$work/writers.json" \
+  PATH="$work/bin:$PATH" FAKE_STATE="$work/state" CLUSTER=cluster IMAGE=registry/repo:platform-user-aaaaaaaaaaaa \
+    TEMPLATE_FILE="$work/template.json" MIGRATION_FAMILY=MIGRATION_TDF WRITERS_FILE="$work/writers.json" \
     COMMAND="cd libs/prisma-service && npx prisma migrate status" CPU_ARCHITECTURE=ARM64 POLL_SECONDS=0 \
     "$@" bash "$script"
 }
 
 fail() { echo "$1" >&2; exit 1; }
 
-# The status check runs from the release image, without touching the writers.
+# The status check runs the released image in the template's task, without touching the writers.
 run env MODE=status FAKE_GATEWAY_RUNNING=1 > "$work/out" 2>&1 || { cat "$work/out" >&2; fail "status check failed"; }
 grep -q 'schema is up to date' "$work/out" || fail "status success was not reported"
 jq -e '.family == "MIGRATION_TDF" and .runtimePlatform.cpuArchitecture == "ARM64"
-  and .containerDefinitions[0].image == "registry/repo:platform-api-gateway-aaaaaaaaaaaa"
+  and .containerDefinitions[0].image == "registry/repo:platform-user-aaaaaaaaaaaa"
   and (.containerDefinitions[0] | has("healthCheck") | not) and .executionRoleArn == "execution-role"' \
   "$work/state/registered.json" >/dev/null || fail "unexpected migration task definition"
 jq -e '.containerOverrides == [{name: "gateway", command: ["sh", "-ec", "cd libs/prisma-service && npx prisma migrate status"]}]' \

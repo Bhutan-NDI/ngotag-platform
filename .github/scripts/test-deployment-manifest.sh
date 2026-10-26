@@ -10,7 +10,7 @@ trap 'rm -f "$manifest"' EXIT HUP INT TERM
 valid() {
   jq -n --arg environment "$1" --arg branch "$2" '{
     schema_version: 1, environment: $environment, enabled: true,
-    release: ({deployed: null} + (if $environment == "prod" then {} else {next_version: "1.0.0"} end)),
+    release: ({deployed: {}} + (if $environment == "prod" then {} else {next_version: "1.0.0"} end)),
     deployment: {
       allowed_branch: $branch, aws_region: "ap-southeast-1", cluster: "EXAMPLE_CLUSTER",
       ecr_repository: "example-services", cpu_architecture: "ARM64",
@@ -38,7 +38,9 @@ qa=$(valid qa develop)
 accepts qa "baseline" "$qa"
 accepts stage "baseline" "$(valid stage main)"
 accepts prod "baseline" "$(valid prod main)"
-accepts qa "with a deployed record" "$(printf '%s' "$qa" | jq '.release.deployed = {version: "1.0.0-qa.1"}')"
+accepts qa "with a deployed record" "$(printf '%s' "$qa" | jq '.release.deployed.user = {version: "1.0.0-qa.1"}')"
+rejects qa "a null ledger" "$(printf '%s' "$qa" | jq '.release.deployed = null')"
+rejects qa "a ledger for an unknown service" "$(printf '%s' "$qa" | jq '.release.deployed.marketplace = {}')"
 
 rejects qa "wrong environment" "$(valid stage develop)"
 rejects qa "wrong branch" "$(valid qa main)"
@@ -57,7 +59,7 @@ rejects qa "unsafe service name" "$(printf '%s' "$qa" | jq '.deployment.services
 rejects qa "unknown deployment key" "$(printf '%s' "$qa" | jq '.deployment.secret = "x"')"
 rejects qa "unknown service key" "$(printf '%s' "$qa" | jq '.deployment.services[0].image = "x"')"
 rejects qa "invalid region" "$(printf '%s' "$qa" | jq '.deployment.aws_region = "nowhere"')"
-rejects qa "no migration service" "$(printf '%s' "$qa" | jq 'del(.deployment.services[1])')"
+rejects qa "no migration template service" "$(printf '%s' "$qa" | jq 'del(.deployment.services[1])')"
 rejects qa "migration service not a writer" "$(printf '%s' "$qa" | jq '.deployment.migration.writers = ["seed"]')"
 rejects qa "no writers" "$(printf '%s' "$qa" | jq '.deployment.migration.writers = []')"
 rejects qa "migration family of a service" "$(printf '%s' "$qa" | jq '.deployment.migration.task_definition_family = "USER_TDF"')"

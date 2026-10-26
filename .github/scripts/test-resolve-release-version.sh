@@ -28,7 +28,7 @@ releases() {
 }
 
 resolve() {
-  sh "$script" "$contract" "$1" "$2" "$work/releases.json" "$3" "$trigger"
+  sh "$script" "$contract" "$1" "${SERVICE:-agent}" "$2" "$work/releases.json" "$3" "$trigger"
 }
 
 assert_output() {
@@ -55,76 +55,94 @@ assert_fails() {
 
 # First automated releases continue from the legacy release names.
 releases \
-  "$(release prod/api-gateway/v0.0.12 "$a" 2026-10-15T15:26:20Z)" \
-  "$(release stage/api-gateway/v0.0.19 "$a" 2026-10-08T10:33:40Z)" \
-  "$(release qa/api-gateway/v0.0.41 "$a" 2026-09-29T10:50:52Z)" > "$work/releases.json"
+  "$(release prod/agent-service/v0.0.12 "$a" 2026-10-15T15:26:20Z)" \
+  "$(release stage/agent-service/v0.0.19 "$a" 2026-10-08T10:33:40Z)" \
+  "$(release qa/agent-service/v0.0.41 "$a" 2026-09-29T10:50:52Z)" > "$work/releases.json"
 assert_output "version=0.0.10-qa.1
-release_tag=platform/v0.0.10-qa.1
-previous_tag=qa/api-gateway/v0.0.41
+release_tag=platform/agent/v0.0.10-qa.1
+previous_tag=qa/agent-service/v0.0.41
 reuse=false" "$(resolve qa 0.0.10 "$a")" "first QA release"
 assert_output "version=0.0.10-rc.1
-release_tag=platform/v0.0.10-rc.1
-previous_tag=stage/api-gateway/v0.0.19
+release_tag=platform/agent/v0.0.10-rc.1
+previous_tag=stage/agent-service/v0.0.19
 reuse=false" "$(resolve stage 0.0.10 "$a")" "first Stage release candidate"
 assert_output "version=0.0.10
-release_tag=platform/v0.0.10
-previous_tag=prod/api-gateway/v0.0.12
-reuse=false" "$(resolve prod platform/v0.0.10-rc.1 "$a")" "first Prod promotion"
+release_tag=platform/agent/v0.0.10
+previous_tag=prod/agent-service/v0.0.12
+reuse=false" "$(resolve prod platform/agent/v0.0.10-rc.1 "$a")" "first Prod promotion"
 
 # Pre-release numbers increase per version and channel; drafts are ignored.
 releases \
-  "$(release platform/v0.0.10-rc.1 "$a" 2026-10-15T00:00:00Z)" \
-  "$(release platform/v0.0.10-rc.2 "$a" 2026-10-15T01:00:00Z)" \
-  "$(release platform/v0.0.10-rc.9 "$a" 2026-10-15T02:00:00Z true)" \
-  "$(release platform/v0.0.10-qa.4 "$a" 2026-10-15T03:00:00Z)" > "$work/releases.json"
+  "$(release platform/agent/v0.0.10-rc.1 "$a" 2026-10-15T00:00:00Z)" \
+  "$(release platform/agent/v0.0.10-rc.2 "$a" 2026-10-15T01:00:00Z)" \
+  "$(release platform/agent/v0.0.10-rc.9 "$a" 2026-10-15T02:00:00Z true)" \
+  "$(release platform/agent/v0.0.10-qa.4 "$a" 2026-10-15T03:00:00Z)" > "$work/releases.json"
 assert_output "version=0.0.10-rc.3
-release_tag=platform/v0.0.10-rc.3
-previous_tag=platform/v0.0.10-rc.2
+release_tag=platform/agent/v0.0.10-rc.3
+previous_tag=platform/agent/v0.0.10-rc.2
 reuse=false" "$(resolve stage 0.0.10 "$b")" "next Stage release candidate"
 assert_output "version=0.0.10-qa.5
-release_tag=platform/v0.0.10-qa.5
-previous_tag=platform/v0.0.10-qa.4
+release_tag=platform/agent/v0.0.10-qa.5
+previous_tag=platform/agent/v0.0.10-qa.4
 reuse=false" "$(resolve qa 0.0.10 "$b")" "next QA pre-release"
 
 # A release of the series on the same commit published after the trigger is an
 # earlier attempt of the same deployment and is reused.
 releases \
-  "$(release platform/v0.0.10-rc.1 "$a" 2026-10-15T00:00:00Z)" \
-  "$(release platform/v0.0.10-rc.2 "$b" 2026-10-16T08:05:00Z)" > "$work/releases.json"
+  "$(release platform/agent/v0.0.10-rc.1 "$a" 2026-10-15T00:00:00Z)" \
+  "$(release platform/agent/v0.0.10-rc.2 "$b" 2026-10-16T08:05:00Z)" > "$work/releases.json"
 assert_output "version=0.0.10-rc.2
-release_tag=platform/v0.0.10-rc.2
-previous_tag=platform/v0.0.10-rc.1
+release_tag=platform/agent/v0.0.10-rc.2
+previous_tag=platform/agent/v0.0.10-rc.1
 reuse=true" "$(resolve stage 0.0.10 "$b")" "retried Stage deployment"
 assert_output "version=0.0.10-rc.3
-release_tag=platform/v0.0.10-rc.3
-previous_tag=platform/v0.0.10-rc.2
+release_tag=platform/agent/v0.0.10-rc.3
+previous_tag=platform/agent/v0.0.10-rc.2
 reuse=false" "$(resolve stage 0.0.10 "$a")" "same series, different commit"
 
 # After a stable release, QA and Stage move to the next patch unless the
 # manifest requests a higher version.
 releases \
-  "$(release platform/v0.0.10 "$a" 2026-10-15T00:00:00Z)" \
-  "$(release platform/v0.0.10-rc.2 "$a" 2026-10-14T00:00:00Z)" > "$work/releases.json"
+  "$(release platform/agent/v0.0.10 "$a" 2026-10-15T00:00:00Z)" \
+  "$(release platform/agent/v0.0.10-rc.2 "$a" 2026-10-14T00:00:00Z)" > "$work/releases.json"
 assert_output "version=0.0.11-rc.1
-release_tag=platform/v0.0.11-rc.1
-previous_tag=platform/v0.0.10-rc.2
+release_tag=platform/agent/v0.0.11-rc.1
+previous_tag=platform/agent/v0.0.10-rc.2
 reuse=false" "$(resolve stage 0.0.10 "$b")" "patch after stable release"
 assert_output "version=0.1.0-qa.1
-release_tag=platform/v0.1.0-qa.1
+release_tag=platform/agent/v0.1.0-qa.1
 previous_tag=
 reuse=false" "$(resolve qa 0.1.0 "$b")" "manifest requests a minor version"
 
 # Prod never re-releases or downgrades, but a retry of the same promotion is reused.
-assert_fails "re-releasing a stable version" resolve prod platform/v0.0.10-rc.2 "$b"
-assert_fails "promoting an older release candidate" resolve prod platform/v0.0.9-rc.1 "$b"
-assert_fails "promoting a QA pre-release" resolve prod platform/v0.0.11-qa.1 "$b"
-releases "$(release platform/v0.0.10 "$a" 2026-10-16T08:10:00Z)" > "$work/releases.json"
+assert_fails "re-releasing a stable version" resolve prod platform/agent/v0.0.10-rc.2 "$b"
+assert_fails "promoting an older release candidate" resolve prod platform/agent/v0.0.9-rc.1 "$b"
+assert_fails "promoting a QA pre-release" resolve prod platform/agent/v0.0.11-qa.1 "$b"
+releases "$(release platform/agent/v0.0.10 "$a" 2026-10-16T08:10:00Z)" > "$work/releases.json"
 assert_output "version=0.0.10
-release_tag=platform/v0.0.10
+release_tag=platform/agent/v0.0.10
 previous_tag=
-reuse=true" "$(resolve prod platform/v0.0.10-rc.2 "$a")" "retried Prod promotion"
+reuse=true" "$(resolve prod platform/agent/v0.0.10-rc.2 "$a")" "retried Prod promotion"
+
+# Each service has its own series: another service's releases never count.
+releases \
+  "$(release platform/agent/v1.0.0 "$a" 2026-10-15T00:00:00Z)" \
+  "$(release platform/connection/v0.0.10-qa.3 "$a" 2026-10-15T01:00:00Z)" \
+  "$(release qa/connection/v0.0.16 "$a" 2026-10-01T00:00:00Z)" \
+  "$(release qa/agent-service/v0.0.29 "$a" 2026-10-01T00:00:00Z)" > "$work/releases.json"
+assert_output "version=0.0.10-qa.4
+release_tag=platform/connection/v0.0.10-qa.4
+previous_tag=platform/connection/v0.0.10-qa.3
+reuse=false" "$(SERVICE=connection resolve qa 0.0.10 "$b")" "independent service series"
+assert_output "version=1.0.1-qa.1
+release_tag=platform/agent/v1.0.1-qa.1
+previous_tag=qa/agent-service/v0.0.29
+reuse=false" "$(resolve qa 0.0.10 "$b")" "legacy name of a renamed service"
 
 # Invalid input fails closed.
+resolve_unknown_service() { (SERVICE=marketplace; resolve qa 0.0.10 "$a"); }
+assert_fails "unknown service" resolve_unknown_service
+
 assert_fails "invalid next_version" resolve qa 0.10 "$a"
 assert_fails "unknown environment" resolve dev 0.0.10 "$a"
 assert_fails "short commit" resolve qa 0.0.10 aaaaaaa

@@ -1,10 +1,11 @@
 #!/bin/sh
 
-# Starts a release for one environment. Run it through `make deploy-<environment>`.
+# Starts a release of one service to one environment. Run it through
+# `make <environment>-<service>`, for example `make qa-agent`.
 #
 # QA and Stage release the current head of their branch (develop, main). Prod
-# promotes the commit Stage runs, as recorded in the private Stage ledger, and
-# asks for typed confirmation. The script waits for CI on the exact commit,
+# promotes the service's image Stage runs, as recorded in the private Stage
+# ledger, and asks for typed confirmation. The script waits for CI on the exact commit,
 # validates the private manifest, and pushes an immutable trigger tag that pins
 # the manifest commit and the source commit; the workflow repeats every check
 # before it can obtain AWS credentials.
@@ -15,6 +16,7 @@
 #
 # Environment:
 #   DEPLOY_ENV                     qa | stage | prod
+#   SERVICE                        a service of .github/platform-release-contract.json
 #   DEPLOYMENT_CONFIG_REPOSITORY   owner/name of the private manifest repository
 #   DEPLOY_WAIT                    true (default) watches the workflow run
 #   MIGRATE                        true applies database migrations (default false)
@@ -25,6 +27,7 @@ set -eu
 contract=.github/platform-release-contract.json
 scripts=.github/scripts
 environment=${DEPLOY_ENV:?DEPLOY_ENV is required}
+service=${SERVICE:?SERVICE is required}
 config_repository=${DEPLOYMENT_CONFIG_REPOSITORY:-}
 deploy_wait=${DEPLOY_WAIT:-true}
 migrate=${MIGRATE:-false}
@@ -47,11 +50,15 @@ required_branch=$(jq -er --arg environment "$environment" '.environments[$enviro
   echo "unknown environment: $environment" >&2
   exit 1
 }
+jq -e --arg service "$service" '.services | has($service)' "$contract" >/dev/null || {
+  echo "unknown service: $service (one of: $(jq -r '.services | keys | join(", ")' "$contract"))" >&2
+  exit 1
+}
 tag_prefix=$(jq -er --arg environment "$environment" '.environments[$environment].tag_prefix' "$contract")
 channel=$(jq -er --arg environment "$environment" '.environments[$environment].channel' "$contract")
 
 test "$(git rev-parse --abbrev-ref HEAD)" = "$required_branch" || {
-  echo "deploy-$environment must be run from $required_branch" >&2
+  echo "$environment-$service must be run from $required_branch" >&2
   exit 1
 }
 test -z "$(git status --porcelain)" || { echo "working tree must be clean before deployment" >&2; exit 1; }
@@ -72,6 +79,10 @@ read_manifest() {
   sh "$scripts/validate-deployment-manifest.sh" "$contract" "$1" "$2"
 }
 read_manifest "$environment" "$work/manifest.json"
+jq -e --arg service "$service" 'any(.deployment.services[]; .name == $service)' "$work/manifest.json" >/dev/null || {
+  echo "$environment does not run $service" >&2
+  exit 1
+}
 
 # CONFIRM=<environment> answers every prompt of this release in advance.
 confirm() {
@@ -84,13 +95,13 @@ confirm() {
 if [ "$channel" = "stable" ]; then
   source_environment=$(jq -er '.environments.prod.promote_from' "$contract")
   read_manifest "$source_environment" "$work/source.json"
-  jq -e '.release.deployed | type == "object" and (.github_release | type == "string") and (.commit | type == "string")' \
-    "$work/source.json" >/dev/null || {
-    echo "$source_environment has no automated release to promote; run make deploy-$source_environment first" >&2
+  jq -e --arg service "$service" '.release.deployed[$service] | type == "object" and
+    (.github_release | type == "string") and (.commit | type == "string")' "$work/source.json" >/dev/null || {
+    echo "$source_environment has no automated release of $service to promote; run make $source_environment-$service first" >&2
     exit 1
   }
-  source_release=$(jq -r '.release.deployed.github_release' "$work/source.json")
-  source_sha=$(jq -r '.release.deployed.commit' "$work/source.json")
+  source_release=$(jq -r --arg service "$service" '.release.deployed[$service].github_release' "$work/source.json")
+  source_sha=$(jq -r --arg service "$service" '.release.deployed[$service].commit' "$work/source.json")
   git merge-base --is-ancestor "$source_sha" "origin/$required_branch" || {
     echo "the $source_environment release $source_release is not on $required_branch" >&2
     exit 1
@@ -100,10 +111,6 @@ if [ "$channel" = "stable" ]; then
     echo "$source_release is not a published release candidate" >&2
     exit 1
   }
-  missing=$(jq -r --slurpfile source "$work/source.json" \
-    '[.deployment.services[].name | select(($source[0].release.deployed.services // {}) | has(.) | not)] | join(", ")' \
-    "$work/manifest.json")
-  test -z "$missing" || { echo "$source_release has no image for: $missing" >&2; exit 1; }
   echo "This promotes $source_release (commit $source_sha) to $environment unchanged."
   confirm "$environment"
 else
@@ -119,7 +126,7 @@ fi
 sh "$scripts/wait-for-ci.sh" "$repository" "$source_sha" "$contract"
 
 source_short=$(printf '%s' "$source_sha" | cut -c1-12)
-release_tag="${tag_prefix}${manifest_ref}-${source_short}-$(date -u +%Y%m%dT%H%M%SZ)${tag_suffix}"
+release_tag="${tag_prefix}${service}-${manifest_ref}-${source_short}-$(date -u +%Y%m%dT%H%M%SZ)${tag_suffix}"
 git check-ref-format "refs/tags/$release_tag" >/dev/null
 
 set +e

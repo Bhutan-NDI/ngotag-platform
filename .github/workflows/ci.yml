@@ -1,6 +1,6 @@
 name: Continuous Integration
 
-# `make deploy-<environment>` and the deploy workflow wait for the Validate check
+# `make <environment>-<service>` and the deploy workflow wait for the Validate check
 # on the exact commit they release, so it runs on every change to develop and main.
 on:
   pull_request:
