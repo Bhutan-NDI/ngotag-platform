@@ -37,10 +37,11 @@ jobs:
           echo "services=$(jq -c '[.services | to_entries[] | {service: .key, app: .value.app}]' \
             .github/platform-release-contract.json)" >> "$GITHUB_OUTPUT"
 
+  # Native arm64 runners: services are compiled on the architecture they run on.
   build:
     needs: release-automation
     name: Build ${{ matrix.service }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false

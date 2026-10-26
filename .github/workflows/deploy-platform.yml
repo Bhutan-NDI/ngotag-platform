@@ -240,9 +240,14 @@ jobs:
             echo "Reusing this commit's existing $SERVICE arm64 image"
             exit 0
           fi
+          # Most Dockerfiles share an identical dependency stage (base image, pnpm and
+          # `pnpm i` from the lockfile), the slowest step. Reading the API gateway's
+          # cache too lets every such service reuse those layers once any of them
+          # built them; each service writes only its own scope.
           docker buildx build --platform linux/arm64 --provenance=false --sbom=false --load \
             --file "$DOCKERFILE" \
             --cache-from "type=gha,scope=platform-$SERVICE-arm64" \
+            --cache-from "type=gha,scope=platform-api-gateway-arm64" \
             --cache-to "type=gha,mode=max,scope=platform-$SERVICE-arm64" \
             --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
