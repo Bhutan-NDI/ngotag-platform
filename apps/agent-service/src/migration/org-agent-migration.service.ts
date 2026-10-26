@@ -131,6 +131,28 @@ export class OrgAgentMigrationService {
   }
 
   /**
+   * Takes a move that has been scheduled but not started back to REHEARSED with no slot, naming why. Nothing has
+   * changed on either agent, so the rehearsal still stands: the owner picks a new slot and confirms again.
+   * @throws when there is no such migration, or it is not waiting for its slot
+   */
+  async unschedule(migrationId: string, reason: string): Promise<org_agent_migrations> {
+    const migration = await this.migrationRepository.getById(migrationId);
+    if (!migration) {
+      throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
+    }
+    if (OrgAgentMigrationStatus.REHEARSED !== migration.status) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
+    }
+    return this.migrationRepository.transition({
+      id: migrationId,
+      from: OrgAgentMigrationStatus.REHEARSED,
+      to: OrgAgentMigrationStatus.REHEARSED,
+      actor: null,
+      patch: { scheduledFor: null, error: reason }
+    });
+  }
+
+  /**
    * Cancels a migration that has not reached the switch: the org stays exactly as it was. `errorCode` is a
    * stable, sanitised code (for example VERIFICATION_FAILED), never raw error text.
    */

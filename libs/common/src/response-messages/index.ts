@@ -469,6 +469,7 @@ export const ResponseMessages = {
       migrationPreflightNotPassed: 'The preflight checks must pass before the rehearsal can run',
       migrationRehearsalRunning: 'A rehearsal is already running for this migration',
       migrationNotRehearsed: 'The move can only be confirmed after a rehearsal has finished',
+      migrationRehearsalStale: 'The rehearsal is too old to schedule a move from; run a new rehearsal first',
       migrationConfirmationMismatch: 'The organization name typed does not match',
       migrationSlotInvalid: 'The slot must be a future time within the booking window',
       migrationOwnerRequired: 'Only an owner of the organization can move its wallet',

@@ -10,10 +10,16 @@ import { OrgAgentMigrationService } from './org-agent-migration.service';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 60 * 1000;
 const DEFAULT_MAX_LEAD_DAYS = 14;
+const DEFAULT_REHEARSAL_MAX_AGE_DAYS = 7;
 
 const maxLeadMs = (): number => {
   const days = Number(process.env.ORG_MIGRATION_MAX_LEAD_DAYS);
   return (Number.isFinite(days) && 0 < days ? days : DEFAULT_MAX_LEAD_DAYS) * DAY_MS;
+};
+
+const rehearsalMaxAgeMs = (): number => {
+  const days = Number(process.env.ORG_MIGRATION_REHEARSAL_MAX_AGE_DAYS);
+  return (Number.isFinite(days) && 0 < days ? days : DEFAULT_REHEARSAL_MAX_AGE_DAYS) * DAY_MS;
 };
 
 /**
@@ -44,6 +50,12 @@ export class OrgAgentMigrationScheduleService {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
 
+    // The freeze budget comes from the rehearsal, and a wallet grows, so an old rehearsal no longer predicts it.
+    const rehearsedAt = (migration.rehearsal as { finishedAt?: string } | null)?.finishedAt;
+    if (!rehearsedAt || Date.now() - new Date(rehearsedAt).getTime() > rehearsalMaxAgeMs()) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationRehearsalStale);
+    }
+
     // Exact, as typed: the owner is confirming they know which organisation is moving.
     const orgName = await this.migrationRepository.getOrgName(orgId);
     if (!orgName || 'string' !== typeof confirmationName || confirmationName.trim() !== orgName.trim()) {
@@ -54,7 +66,8 @@ export class OrgAgentMigrationScheduleService {
     const slot = this.slotFrom(payload.scheduledFor, now);
 
     const updated = await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.REHEARSED, userId, {
-      scheduledFor: slot
+      scheduledFor: slot,
+      error: null
     });
     await this.migrationRepository.recordEvent(migration.id, {
       action: 'MOVE_CONFIRMED',

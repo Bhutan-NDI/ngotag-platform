@@ -113,11 +113,11 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
 
     const failedCheck = await this.failedCheck(migration);
     if (failedCheck) {
-      await this.deferOrCancel(migration, failedCheck);
+      await this.deferOrUnschedule(migration, failedCheck);
       return;
     }
     if (this.waited(migration) > this.startWindowMs()) {
-      await this.cancel(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
+      await this.unschedule(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
       return;
     }
 
@@ -143,26 +143,27 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
     }
   }
 
-  // A failed check is retried until the start window closes, then the move cancels itself and nothing changes.
-  private async deferOrCancel(migration: org_agent_migrations, failedCheck: string): Promise<void> {
+  // A failed check is retried until the start window closes, then the move is taken off its slot and nothing changes.
+  private async deferOrUnschedule(migration: org_agent_migrations, failedCheck: string): Promise<void> {
     if (this.waited(migration) <= this.startWindowMs()) {
       this.logger.warn(`[migration-scheduler] ${migration.id}: final check ${failedCheck} failed; trying again later`);
       return;
     }
-    await this.cancel(migration, `PREFLIGHT_FAILED:${failedCheck}`, {
+    await this.unschedule(migration, `PREFLIGHT_FAILED:${failedCheck}`, {
       reason: 'FINAL_CHECK_FAILED',
       check: failedCheck
     });
   }
 
   // The slot was chosen to keep citizens undisturbed, so a move that missed it is not started at some other time.
-  private async cancel(
+  // Nothing has run, so it goes back to waiting for a new slot instead of ending.
+  private async unschedule(
     migration: org_agent_migrations,
-    errorCode: string,
+    reason: string,
     detail: Record<string, string>
   ): Promise<void> {
-    await this.migrationService.abort(migration.id, errorCode, null);
-    await this.migrationRepository.recordEvent(migration.id, { action: 'MOVE_CANCELLED', actor: null, detail });
+    await this.migrationService.unschedule(migration.id, reason);
+    await this.migrationRepository.recordEvent(migration.id, { action: 'MOVE_UNSCHEDULED', actor: null, detail });
   }
 
   private waited(migration: org_agent_migrations): number {

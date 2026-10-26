@@ -13,6 +13,7 @@ const row = (overrides = {}) => ({
   orgId: ORG_ID,
   status: Status.REHEARSED,
   rehearsalStatus: 'DONE',
+  rehearsal: { finishedAt: new Date(Date.now() - HOUR).toISOString() },
   ...overrides
 });
 
@@ -33,6 +34,7 @@ const confirm = (service: OrgAgentMigrationScheduleService, overrides = {}) =>
 
 afterEach(() => {
   delete process.env.ORG_MIGRATION_MAX_LEAD_DAYS;
+  delete process.env.ORG_MIGRATION_REHEARSAL_MAX_AGE_DAYS;
 });
 
 describe('OrgAgentMigrationScheduleService.confirm', () => {
@@ -42,11 +44,59 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
 
     await confirm(service, { scheduledFor: slot.toISOString() });
 
-    expect(migrationService.advance).toHaveBeenCalledWith('m1', Status.REHEARSED, USER_ID, { scheduledFor: slot });
+    expect(migrationService.advance).toHaveBeenCalledWith('m1', Status.REHEARSED, USER_ID, {
+      scheduledFor: slot,
+      error: null
+    });
     expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
       action: 'MOVE_CONFIRMED',
       actor: USER_ID,
       detail: { scheduledFor: slot.toISOString(), immediate: false }
+    });
+  });
+
+  it('clears the reason an earlier slot was lost, when the owner confirms again', async () => {
+    const { service, migrationService } = build({ migration: row({ error: 'SLOT_MISSED', scheduledFor: null }) });
+
+    await confirm(service, { scheduledFor: new Date(Date.now() + DAY).toISOString() });
+
+    expect(migrationService.advance.mock.calls[0][3]).toMatchObject({ error: null });
+  });
+
+  describe('the age of the rehearsal', () => {
+    it.each([
+      ['a day old', DAY, true],
+      ['six days old', 6 * DAY, true],
+      ['eight days old', 8 * DAY, false]
+    ])('is %s: allowed is %s', async (_name, age, allowed) => {
+      const { service, migrationService } = build({
+        migration: row({ rehearsal: { finishedAt: new Date(Date.now() - age).toISOString() } })
+      });
+
+      const result = confirm(service);
+
+      if (allowed) {
+        await expect(result).resolves.toBeDefined();
+        expect(migrationService.advance).toHaveBeenCalled();
+      } else {
+        await expect(result).rejects.toBeInstanceOf(BadRequestException);
+        expect(migrationService.advance).not.toHaveBeenCalled();
+      }
+    });
+
+    it('cannot be used for a move when the rehearsal has no finish time on record', async () => {
+      const { service } = build({ migration: row({ rehearsal: null }) });
+
+      await expect(confirm(service)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('reads the limit from the environment', async () => {
+      process.env.ORG_MIGRATION_REHEARSAL_MAX_AGE_DAYS = '30';
+      const { service } = build({
+        migration: row({ rehearsal: { finishedAt: new Date(Date.now() - 20 * DAY).toISOString() } })
+      });
+
+      await expect(confirm(service)).resolves.toBeDefined();
     });
   });
 

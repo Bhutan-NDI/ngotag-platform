@@ -24,7 +24,7 @@ const build = () => {
     getConfirmingActor: jest.fn().mockResolvedValue('owner-1'),
     recordEvent: jest.fn().mockResolvedValue(undefined)
   };
-  const migrationService = { abort: jest.fn().mockResolvedValue({}) };
+  const migrationService = { abort: jest.fn().mockResolvedValue({}), unschedule: jest.fn().mockResolvedValue({}) };
   const preflightService = { run: jest.fn().mockResolvedValue({ report: passedReport }) };
   const executor = {
     run: jest.fn().mockResolvedValue(undefined),
@@ -180,7 +180,7 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
 });
 
 describe('OrgAgentMigrationScheduler: a missed slot', () => {
-  it('cancels a move whose checks pass but that is found after its start window, without freezing anything', async () => {
+  it('takes a move whose checks pass, but that is found after its start window, off its slot without freezing anything', async () => {
     const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
     migrationRepository.findDueForStart.mockResolvedValue([
       due('m1', { scheduledFor: new Date(Date.now() - 6 * 60 * MINUTE) })
@@ -188,14 +188,25 @@ describe('OrgAgentMigrationScheduler: a missed slot', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null);
+    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'SLOT_MISSED');
     expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
-      action: 'MOVE_CANCELLED',
+      action: 'MOVE_UNSCHEDULED',
       actor: null,
       detail: { reason: 'SLOT_MISSED' }
     });
     expect(preflightService.run).toHaveBeenCalled();
     expect(executor.run).not.toHaveBeenCalled();
+  });
+
+  it('ends nothing: a move taken off its slot is not aborted, so it can be scheduled again', async () => {
+    const { scheduler, migrationService, migrationRepository } = build();
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: new Date(Date.now() - 6 * 60 * MINUTE) })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationService.abort).not.toHaveBeenCalled();
   });
 
   it('still runs a move that is a little late, within the start window', async () => {
@@ -206,7 +217,7 @@ describe('OrgAgentMigrationScheduler: a missed slot', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.abort).not.toHaveBeenCalled();
+    expect(migrationService.unschedule).not.toHaveBeenCalled();
     expect(executor.run).toHaveBeenCalledWith('m1', 'owner-1');
   });
 
@@ -219,7 +230,7 @@ describe('OrgAgentMigrationScheduler: a missed slot', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null);
+    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'SLOT_MISSED');
     expect(executor.run).not.toHaveBeenCalled();
   });
 });
@@ -245,10 +256,10 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
     await scheduler.tick();
 
     expect(executor.run).not.toHaveBeenCalled();
-    expect(migrationService.abort).not.toHaveBeenCalled();
+    expect(migrationService.unschedule).not.toHaveBeenCalled();
   });
 
-  it('cancels the move, naming the check, once the start window has passed', async () => {
+  it('takes the move off its slot, naming the check, once the start window has passed', async () => {
     const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
     preflightService.run.mockResolvedValue(failing('NO_BULK_JOB'));
     migrationRepository.findDueForStart.mockResolvedValue([
@@ -257,9 +268,9 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:NO_BULK_JOB', null);
+    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:NO_BULK_JOB');
     expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
-      action: 'MOVE_CANCELLED',
+      action: 'MOVE_UNSCHEDULED',
       actor: null,
       detail: { reason: 'FINAL_CHECK_FAILED', check: 'NO_BULK_JOB' }
     });
@@ -276,7 +287,7 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:DIDCOMM_REACHABLE', null);
+    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:DIDCOMM_REACHABLE');
   });
 
   it('treats checks that could not run as a failed check, and does not freeze', async () => {
@@ -287,7 +298,7 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
     await scheduler.tick();
 
     expect(executor.run).not.toHaveBeenCalled();
-    expect(migrationService.abort).not.toHaveBeenCalled();
+    expect(migrationService.unschedule).not.toHaveBeenCalled();
   });
 
   it('still checks the other due moves when one fails', async () => {

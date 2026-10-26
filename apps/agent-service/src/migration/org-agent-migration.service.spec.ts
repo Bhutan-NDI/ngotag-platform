@@ -3,7 +3,7 @@
  *   npx jest apps/agent-service/src/migration/org-agent-migration.service.spec.ts
  */
 /* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type, implicit-arrow-linebreak */
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { OrgAgentMigrationStatus as Status } from '@credebl/enum/enum';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -230,5 +230,39 @@ describe('OrgAgentMigrationService', () => {
         expect(migrationRepository.transition).not.toHaveBeenCalled();
       }
     );
+  });
+
+  describe('unschedule', () => {
+    it('takes a rehearsed move off its slot and leaves it rehearsed, naming why', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.REHEARSED, scheduledFor: new Date() }
+      });
+
+      await service.unschedule(MIGRATION_ID, 'SLOT_MISSED');
+
+      expect(migrationRepository.transition).toHaveBeenCalledWith({
+        id: MIGRATION_ID,
+        from: Status.REHEARSED,
+        to: Status.REHEARSED,
+        actor: null,
+        patch: { scheduledFor: null, error: 'SLOT_MISSED' }
+      });
+    });
+
+    it.each([Status.CREATED, Status.FROZEN, Status.STABILISING, Status.FAILED])(
+      'refuses a migration in %s, which is not waiting for its slot',
+      async (status) => {
+        const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
+
+        await expect(service.unschedule(MIGRATION_ID, 'SLOT_MISSED')).rejects.toThrow(BadRequestException);
+        expect(migrationRepository.transition).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses a migration that does not exist', async () => {
+      const { service } = buildService({ migration: null });
+
+      await expect(service.unschedule(MIGRATION_ID, 'SLOT_MISSED')).rejects.toThrow(NotFoundException);
+    });
   });
 });
