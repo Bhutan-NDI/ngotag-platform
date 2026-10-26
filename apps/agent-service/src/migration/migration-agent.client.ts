@@ -9,6 +9,8 @@ export interface IAgentRuntimeConfig {
   inboundTransports: string[];
   outboundTransports: string[];
   cronPurgeEnabled: boolean;
+  // True on the shared, multi-tenant agent. Absent on an agent too old to report it.
+  tenancy?: boolean;
 }
 
 export interface IWebhookProbe {
