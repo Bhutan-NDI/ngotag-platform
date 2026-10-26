@@ -323,6 +323,11 @@ export class OrgAgentMigrationRepository {
     });
   }
 
+  /** Gives the lease back, so a retry after a failure does not wait for it to run out. */
+  async releaseLease(id: string): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({ where: { id }, data: { leaseUntil: null } });
+  }
+
   /** Confirmed moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
   async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
     return this.prisma.org_agent_migrations.findMany({

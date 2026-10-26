@@ -113,6 +113,7 @@ export class OrgAgentMigrationRehearsalService {
 
     const downloadMethod: DownloadMethod = 'PUSH' === migration.downloadMethod ? 'PUSH' : 'PULL';
     const record: IRehearsalRecord = { downloadMethod };
+    await this.removeLeftoverExport(migration, shared);
     // Audited whether the rehearsal finishes or not: the export has happened as soon as they are known.
     const custody: ICustodyFacts = {};
     let exportJobId: string | undefined;
@@ -130,6 +131,8 @@ export class OrgAgentMigrationRehearsalService {
         this.agentClient.startSealedExport(shared.endpoint, shared.token, migration.tenantId, session.importPublicKey)
       );
       exportJobId = exportJob.jobId;
+      // Kept at once, so an export left behind by a crash can be found and removed by the next rehearsal.
+      await this.migrationRepository.update(migration.id, { exportJobId });
       const exported = await this.waitFor('EXPORT', () =>
         this.agentClient.getExportJob(shared.endpoint, shared.token, migration.tenantId, exportJob.jobId)
       );
@@ -233,6 +236,13 @@ export class OrgAgentMigrationRehearsalService {
         );
       }
       throw error;
+    }
+  }
+
+  // An export an earlier rehearsal started and never cleaned up, because the process stopped part way.
+  private async removeLeftoverExport(migration: org_agent_migrations, shared: IAgentAccess): Promise<void> {
+    if (migration.exportJobId) {
+      await this.deleteExport(shared, migration.tenantId, migration.exportJobId);
     }
   }
 

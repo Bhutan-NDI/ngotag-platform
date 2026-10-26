@@ -106,6 +106,22 @@ describe('OrgAgentMigrationAlertService', () => {
     }
   });
 
+  it('words a stuck move as the platform failing to finish after the switch, about the new agent', async () => {
+    const { service, sendEmail } = build();
+
+    await service.alertKeyExport(migration, KeyExportAlertKind.MOVE_STUCK, USER_ID);
+
+    const { emailSubject, emailText, emailHtml } = sendEmail.mock.calls[0][0];
+    expect(emailSubject).toBe('[Security] A wallet move is stuck after the switch');
+    for (const body of [emailText, emailHtml]) {
+      expect(body).toContain('The platform');
+      expect(body).toContain('The organisation stays paused');
+      expect(body).toContain('The new agent');
+      expect(body).not.toContain('An organisation owner');
+      expect(body).not.toContain('Keys are going to');
+    }
+  });
+
   it('keeps the owner wording and the key destination for the export alerts', async () => {
     const { service, sendEmail } = build();
 

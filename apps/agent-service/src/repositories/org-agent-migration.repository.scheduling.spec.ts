@@ -33,6 +33,19 @@ describe('OrgAgentMigrationRepository scheduling queries', () => {
     });
   });
 
+  describe('releaseLease', () => {
+    it('clears the lease on that migration, so the next attempt does not wait for it to run out', async () => {
+      const { repository, prisma } = build();
+
+      await repository.releaseLease('m1');
+
+      expect(prisma.org_agent_migrations.updateMany).toHaveBeenCalledWith({
+        where: { id: 'm1' },
+        data: { leaseUntil: null }
+      });
+    });
+  });
+
   describe('findDueForStart', () => {
     it('asks for rehearsed moves with a finished rehearsal whose slot has arrived, earliest first', async () => {
       const { repository, prisma } = build();

@@ -292,6 +292,50 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
   });
 });
 
+describe('OrgAgentMigrationRehearsalService leftover exports', () => {
+  it('remembers the export it started before importing it, so a crash can be cleaned up after', async () => {
+    const { execute, migrationRepository, agentClient } = build();
+    let rememberedBeforeImport = false;
+    agentClient.startImport.mockImplementation(async () => {
+      rememberedBeforeImport = migrationRepository.update.mock.calls.some(
+        ([, patch]) => 'export-1' === patch.exportJobId && undefined === patch.rehearsalStatus
+      );
+      return { jobId: 'import-1', status: 'pending' };
+    });
+
+    await execute();
+
+    expect(rememberedBeforeImport).toBe(true);
+  });
+
+  it('removes the export an earlier rehearsal left behind, before it makes a new one', async () => {
+    const { execute, agentClient, calls } = build();
+
+    await execute({ ...migrationRow(), exportJobId: 'left-over' } as never);
+
+    expect(agentClient.deleteExport).toHaveBeenNthCalledWith(1, SHARED.endpoint, SHARED.token, 'tenant-1', 'left-over');
+    expect(calls.indexOf('deleteExport')).toBeLessThan(calls.indexOf('startSealedExport'));
+  });
+
+  it('has nothing to remove on a first rehearsal', async () => {
+    const { execute, agentClient } = build();
+
+    await execute({ ...migrationRow(), exportJobId: null } as never);
+
+    expect(agentClient.deleteExport).toHaveBeenCalledTimes(1);
+    expect(agentClient.deleteExport).toHaveBeenCalledWith(SHARED.endpoint, SHARED.token, 'tenant-1', 'export-1');
+  });
+
+  it('goes ahead when the leftover export cannot be removed', async () => {
+    const { execute, agentClient, migrationService } = build();
+    agentClient.deleteExport.mockRejectedValueOnce(new MigrationAgentError('FAILED', 500));
+
+    await execute({ ...migrationRow(), exportJobId: 'left-over' } as never);
+
+    expect(migrationService.advance).toHaveBeenCalled();
+  });
+});
+
 describe('OrgAgentMigrationRehearsalService download method', () => {
   it('has the agent pull the export from S3 unless preflight found it cannot', async () => {
     const { execute, agentClient, migrationService } = build();

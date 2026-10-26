@@ -67,17 +67,22 @@ export class OrgAgentMigrationRestoreService {
       throw new ConflictException(ResponseMessages.agent.error.migrationRestoreBusy);
     }
 
-    const relay = await this.takeRelayOff(migration);
-    const { restored, invitationsRemoved } = await this.switchBack(migration, snapshot, adminUserId);
+    try {
+      const relay = await this.takeRelayOff(migration);
+      const { restored, invitationsRemoved } = await this.switchBack(migration, snapshot, adminUserId);
 
-    await this.audit(migration.id, adminUserId, 'DISASTER_RESTORED', {
-      relayWasAlreadyOff: undefined === relay,
-      messagesReturned: relay?.injected ?? 0,
-      messagesLost: relay?.failed ?? 0,
-      invitationsRemoved
-    });
-    await this.tellPeople(restored, adminUserId);
-    return restored;
+      await this.audit(migration.id, adminUserId, 'DISASTER_RESTORED', {
+        relayWasAlreadyOff: undefined === relay,
+        messagesReturned: relay?.injected ?? 0,
+        messagesLost: relay?.failed ?? 0,
+        invitationsRemoved
+      });
+      await this.tellPeople(restored, adminUserId);
+      return restored;
+    } finally {
+      // A failed attempt is safe to repeat at once; only a live restore should keep another one out.
+      await this.migrationRepository.releaseLease(migration.id).catch(() => undefined);
+    }
   }
 
   // First, so messages reach the shared wallet again before the org starts calling it. Queued ones go back first.

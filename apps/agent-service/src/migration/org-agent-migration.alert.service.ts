@@ -11,7 +11,8 @@ export enum KeyExportAlertKind {
   MOVE_STARTED = 'MOVE_STARTED',
   REHEARSAL_EXPORT = 'REHEARSAL_EXPORT',
   MOVE_EXPORT = 'MOVE_EXPORT',
-  DISASTER_RESTORE = 'DISASTER_RESTORE'
+  DISASTER_RESTORE = 'DISASTER_RESTORE',
+  MOVE_STUCK = 'MOVE_STUCK'
 }
 
 export interface IKeyExportAlertResult {
@@ -38,6 +39,12 @@ const DESCRIPTIONS: Record<KeyExportAlertKind, IAlertDescription> = {
   [KeyExportAlertKind.REHEARSAL_EXPORT]: {
     subject: 'The organisation’s signing keys were exported for a rehearsal',
     what: 'exported the organisation’s wallet, including its signing keys, for a rehearsal of the move'
+  },
+  [KeyExportAlertKind.MOVE_STUCK]: {
+    subject: 'A wallet move is stuck after the switch',
+    who: 'The platform',
+    what: 'switched the organisation to its new agent but could not finish the move. The organisation stays paused until the failing step succeeds, and it keeps retrying',
+    targetLabel: 'The new agent'
   },
   [KeyExportAlertKind.DISASTER_RESTORE]: {
     subject: 'A wallet move was rolled back',
