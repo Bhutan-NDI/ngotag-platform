@@ -8,13 +8,17 @@
 #   REGISTRY               ECR registry host
 #   SOURCE_CLUSTER         Stage ECS cluster
 #   SOURCE_SERVICES_FILE   Stage services (JSON array, as in the manifest)
-#   SOURCE_DEPLOYED_FILE   the Stage ledger's .release.deployed.services object
+#   SOURCE_DEPLOYED_FILE   the Stage ledger's .release.deployed object (keyed by service)
 #   SOURCE_REPOSITORY      Stage image repository
 #   TARGET_SERVICES_FILE   Prod services (JSON array, as in the manifest)
 #   TARGET_REPOSITORY      Prod image repository
 #   TARGET_TAG_SUFFIX      appended to the service's image tag prefix for Prod
 #                          (<version>-<commit>)
 #   IMAGE_TAG_PREFIX       image tag prefix from the release contract
+#   PROVE_STAGE_SERVICES   true (default): the Stage services must run the image.
+#                          false (migrations): the Stage ledger record and its ECR
+#                          tag are the proof, because the image was run as Stage's
+#                          one-off migration task, not by a service.
 
 set -euo pipefail
 
@@ -22,14 +26,14 @@ set -euo pipefail
   "${SOURCE_REPOSITORY:?}" "${TARGET_SERVICES_FILE:?}" "${TARGET_REPOSITORY:?}" "${TARGET_TAG_SUFFIX:?}" \
   "${IMAGE_TAG_PREFIX:?}"
 
-image_digest() {
-  aws ecr describe-images --repository-name "$1" --image-ids imageTag="$2" \
-    --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true
-}
+script_dir=$(cd "$(dirname "$0")" && pwd)
+# Empty when the tag does not exist; any other error stops the promotion.
+image_digest() { sh "$script_dir/ecr-image-digest.sh" "$1" "$2"; }
 
 mapfile -t names < <(jq -r '.[].name' "$TARGET_SERVICES_FILE")
 
-# Prove everything about Stage before copying anything.
+# Prove everything about Stage before copying anything. Stage task definitions
+# pin the image by digest.
 for name in "${names[@]}"; do
   source_tag=$(jq -er --arg name "$name" '.[$name].image_tag // empty' "$SOURCE_DEPLOYED_FILE") || {
     echo "Stage has no released image for $name" >&2
@@ -37,11 +41,16 @@ for name in "${names[@]}"; do
   }
   source_digest=$(jq -er --arg name "$name" '.[$name].image_digest // empty' "$SOURCE_DEPLOYED_FILE")
   [[ "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid Stage image digest for $name" >&2; exit 1; }
-  test "$(image_digest "$SOURCE_REPOSITORY" "$source_tag")" = "$source_digest" || {
+  source_tag_digest=$(image_digest "$SOURCE_REPOSITORY" "$source_tag")
+  test "$source_tag_digest" = "$source_digest" || {
     echo "the Stage image tag of $name no longer resolves to the digest in the Stage ledger" >&2
     exit 1
   }
 
+  if [ "${PROVE_STAGE_SERVICES:-true}" = false ]; then
+    echo "Stage ran $name's image $source_tag as recorded in its ledger"
+    continue
+  fi
   service=$(jq -er --arg name "$name" '.[] | select(.name == $name) | .service' "$SOURCE_SERVICES_FILE") || {
     echo "Stage does not run $name" >&2
     exit 1
@@ -60,7 +69,7 @@ for name in "${names[@]}"; do
   }
   aws ecs describe-task-definition --task-definition "$task_definition" \
     --query taskDefinition --output json \
-    | jq -e --arg container "$container" --arg image "$REGISTRY/$SOURCE_REPOSITORY:$source_tag" '
+    | jq -e --arg container "$container" --arg image "$REGISTRY/$SOURCE_REPOSITORY@$source_digest" '
         .runtimePlatform.cpuArchitecture == "ARM64" and
         ([.containerDefinitions[] | select(.name == $container and .image == $image)] | length == 1)
       ' >/dev/null || {
@@ -94,7 +103,7 @@ for name in "${names[@]}"; do
     "$source_digest")
       echo "The Prod image of $name already exists with the Stage digest (earlier attempt)"
       ;;
-    "" | None)
+    "")
       skopeo copy --preserve-digests --retry-times 3 \
         "docker://$REGISTRY/$SOURCE_REPOSITORY@$source_digest" \
         "docker://$REGISTRY/$TARGET_REPOSITORY:$target_tag" >/dev/null
@@ -104,7 +113,8 @@ for name in "${names[@]}"; do
       exit 1
       ;;
   esac
-  test "$(image_digest "$TARGET_REPOSITORY" "$target_tag")" = "$source_digest" || {
+  copied_digest=$(image_digest "$TARGET_REPOSITORY" "$target_tag")
+  test "$copied_digest" = "$source_digest" || {
     echo "the Prod image digest of $name differs from the Stage image digest" >&2
     exit 1
   }

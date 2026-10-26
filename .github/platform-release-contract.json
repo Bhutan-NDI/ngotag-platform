@@ -74,6 +74,7 @@
     }
   },
   "migration": {
+    "target": "migrate",
     "template_service": "api-gateway",
     "status_command": "cd libs/prisma-service && npx prisma migrate status",
     "deploy_command": "cd libs/prisma-service && npx prisma migrate deploy && npx prisma migrate status"

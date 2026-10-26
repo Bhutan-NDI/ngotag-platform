@@ -21,7 +21,8 @@ arg() { local key=$1; shift; while [ "$#" -gt 0 ]; do [ "$1" = "$key" ] && { ech
 case "$2" in
   describe-images)
     repository=$(arg --repository-name "$@"); tag=$(arg --image-ids "$@"); tag=${tag#imageTag=}
-    if [ -f "$state/image-$repository-$tag" ]; then cat "$state/image-$repository-$tag"; else exit 254; fi
+    if [ -f "$state/image-$repository-$tag" ]; then cat "$state/image-$repository-$tag"
+    else echo "An error occurred (ImageNotFoundException) when calling the DescribeImages operation" >&2; exit 254; fi
     ;;
   describe-services)
     service=$(arg --services "$@")
@@ -31,8 +32,8 @@ case "$2" in
     ;;
   describe-task-definition)
     td=$(arg --task-definition "$@"); service=${td#td-}
-    case "$service" in stage-a) tag=platform-a-aaaaaaaaaaaa ;; *) tag=platform-b-aaaaaaaaaaaa ;; esac
-    jq -n --arg image "registry/stage-repo:$tag" --arg arch "${FAKE_ARCH:-ARM64}" \
+    case "$service" in stage-a) digest=$FAKE_DIGEST_A ;; *) digest=$FAKE_DIGEST_B ;; esac
+    jq -n --arg image "${FAKE_TD_IMAGE:-registry/stage-repo@$digest}" --arg arch "${FAKE_ARCH:-ARM64}" \
       '{runtimePlatform: {cpuArchitecture: $arch}, containerDefinitions: [{name: "app", image: $image}]}'
     ;;
   list-tasks) echo task-1 ;;
@@ -65,7 +66,7 @@ run() {
   rm -rf "$work/state" && mkdir -p "$work/state"
   echo "$digest_a" > "$work/state/image-stage-repo-platform-a-aaaaaaaaaaaa"
   echo "$digest_b" > "$work/state/image-stage-repo-platform-b-aaaaaaaaaaaa"
-  PATH="$work/bin:$PATH" FAKE_STATE="$work/state" FAKE_DIGEST_A="$digest_a" REGISTRY=registry \
+  PATH="$work/bin:$PATH" FAKE_STATE="$work/state" FAKE_DIGEST_A="$digest_a" FAKE_DIGEST_B="$digest_b" REGISTRY=registry \
     SOURCE_CLUSTER=stage SOURCE_SERVICES_FILE="$work/source-services.json" SOURCE_DEPLOYED_FILE="$work/deployed.json" \
     SOURCE_REPOSITORY=stage-repo TARGET_SERVICES_FILE="$work/target-services.json" TARGET_REPOSITORY=prod-repo \
     TARGET_TAG_SUFFIX=1.0.0-aaaaaaaaaaaa IMAGE_TAG_PREFIX=platform- "$@" bash "$script"
@@ -84,6 +85,18 @@ if run env FAKE_RUNNING_DIGEST="$digest_b" > "$work/out" 2>&1; then fail "a Stag
 grep -q skopeo "$work/state/calls" && fail "an image was copied after a failed check"
 if run env FAKE_B_DESIRED=0 FAKE_ARCH=X86_64 > "$work/out" 2>&1; then fail "an x86 Stage service was accepted"; fi
 grep -q skopeo "$work/state/calls" && fail "an image was copied after a failed architecture check"
+
+# A migration image is proven by the Stage ledger and its ECR tag, not by the Stage services.
+run env PROVE_STAGE_SERVICES=false FAKE_RUNNING_DIGEST="$digest_b" > "$work/out" 2>&1 \
+  || { cat "$work/out" >&2; fail "a migration image promotion failed"; }
+grep -q 'describe-services' "$work/state/calls" && fail "a migration promotion checked the Stage services"
+test "$(cat "$work/state/image-prod-repo-platform-a-1.0.0-aaaaaaaaaaaa")" = "$digest_a" || fail "migration image not copied by digest"
+
+# A Stage task definition that pins a tag instead of the digest is not proof.
+if run env FAKE_B_DESIRED=0 FAKE_TD_IMAGE=registry/stage-repo:platform-b-aaaaaaaaaaaa > "$work/out" 2>&1; then
+  fail "a tag-pinned Stage task definition was accepted"
+fi
+grep -q skopeo "$work/state/calls" && fail "an image was copied for a tag-pinned Stage service"
 
 # A Prod service without a Stage release, or a moved Stage tag, blocks the copy.
 jq 'del(.b)' "$work/deployed.json" > "$work/partial.json"

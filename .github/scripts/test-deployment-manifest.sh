@@ -39,6 +39,7 @@ accepts qa "baseline" "$qa"
 accepts stage "baseline" "$(valid stage main)"
 accepts prod "baseline" "$(valid prod main)"
 accepts qa "with a deployed record" "$(printf '%s' "$qa" | jq '.release.deployed.user = {version: "1.0.0-qa.1"}')"
+accepts qa "with a migration record" "$(printf '%s' "$qa" | jq '.release.deployed.migrate = {commit: "x"}')"
 rejects qa "a null ledger" "$(printf '%s' "$qa" | jq '.release.deployed = null')"
 rejects qa "a ledger for an unknown service" "$(printf '%s' "$qa" | jq '.release.deployed.marketplace = {}')"
 

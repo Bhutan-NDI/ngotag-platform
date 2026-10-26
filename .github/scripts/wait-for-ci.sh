@@ -1,5 +1,10 @@
 #!/bin/sh
 
+# Waits for the CI check of the release contract on one commit. A check that is
+# running (pending) is waited for up to PENDING_TIMEOUT seconds (default 45
+# minutes: CI builds every service); a check that has not appeared at all is
+# given MISSING_TIMEOUT seconds (default 10 minutes) to start.
+
 set -eu
 
 if [ "$#" -ne 3 ]; then
@@ -11,8 +16,9 @@ repository=$1
 source_sha=$2
 contract=$3
 state_filter=.github/scripts/select-ci-state.jq
-max_attempts=120
-wait_seconds=5
+wait_seconds=${WAIT_SECONDS:-5}
+pending_timeout=${PENDING_TIMEOUT:-2700}
+missing_timeout=${MISSING_TIMEOUT:-600}
 # Transient GitHub API errors are retried; persistent ones (e.g. authentication)
 # fail after this many consecutive failed requests.
 max_api_failures=6
@@ -29,9 +35,9 @@ test -f "$state_filter" || {
 
 check_name=$(jq -er '.ci.check_name // empty' "$contract")
 app_slug=$(jq -er '.ci.app_slug // empty' "$contract")
-attempt=1
+started=$(date +%s)
 
-while [ "$attempt" -le "$max_attempts" ]; do
+while :; do
   # Slurp pages with jq rather than `gh api --slurp`, which needs gh 2.48+.
   if check_runs=$(gh api --paginate \
     "repos/${repository}/commits/${source_sha}/check-runs?per_page=100"); then
@@ -58,7 +64,17 @@ while [ "$attempt" -le "$max_attempts" ]; do
       echo "CI did not pass for $source_sha ($state)" >&2
       exit 1
       ;;
-    missing|pending)
+    missing)
+      if [ "$(($(date +%s) - started))" -ge "$missing_timeout" ]; then
+        echo "$check_name never started for $source_sha" >&2
+        exit 1
+      fi
+      ;;
+    pending)
+      if [ "$(($(date +%s) - started))" -ge "$pending_timeout" ]; then
+        echo "timed out waiting for $check_name on $source_sha" >&2
+        exit 1
+      fi
       ;;
     *)
       echo "unexpected CI state for $source_sha: $state" >&2
@@ -66,11 +82,5 @@ while [ "$attempt" -le "$max_attempts" ]; do
       ;;
   esac
 
-  if [ "$attempt" -eq "$max_attempts" ]; then
-    echo "timed out waiting for $check_name on $source_sha" >&2
-    exit 1
-  fi
-
   sleep "$wait_seconds"
-  attempt=$((attempt + 1))
 done

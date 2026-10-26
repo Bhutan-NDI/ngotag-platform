@@ -3,7 +3,9 @@
 # Resolves the image each service deploys and proves it is this commit's
 # single-platform build for the release platform. Writes the release file read
 # by run-migration.sh and deploy-services.sh: the manifest services, each with
-# image, image_tag and image_digest added.
+# image, image_tag and image_digest added. `image` pins the digest
+# (<registry>/<repository>@sha256:...), so tasks ECS starts later run exactly the
+# released image even if the tag were moved.
 #
 # Environment:
 #   REGISTRY, REPOSITORY      ECR registry host and image repository
@@ -20,6 +22,7 @@ set -euo pipefail
   "${SOURCE_SHA:?}" "${PLATFORM_ARCH:?}" "${RELEASE_FILE:?}"
 
 printf '[]\n' > "$RELEASE_FILE"
+script_dir=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -27,10 +30,9 @@ count=$(jq -er 'length' "$SERVICES_FILE")
 for ((index = 0; index < count; index++)); do
   name=$(jq -er --argjson index "$index" '.[$index].name' "$SERVICES_FILE")
   tag="${IMAGE_TAG_PREFIX}${name}-${IMAGE_TAG_SUFFIX}"
-  image="$REGISTRY/$REPOSITORY:$tag"
-  digest=$(aws ecr describe-images --repository-name "$REPOSITORY" --image-ids imageTag="$tag" \
-    --query 'imageDetails[0].imageDigest' --output text 2>/dev/null) || digest=
-  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "service $name: the release image does not exist" >&2; exit 1; }
+  digest=$(sh "$script_dir/ecr-image-digest.sh" "$REPOSITORY" "$tag")
+  [ -n "$digest" ] || { echo "service $name: the release image does not exist" >&2; exit 1; }
+  image="$REGISTRY/$REPOSITORY@$digest"
   media_type=$(docker buildx imagetools inspect --raw "$image" | jq -r '.mediaType // empty')
   case "$media_type" in
     application/vnd.docker.distribution.manifest.v2+json | application/vnd.oci.image.manifest.v1+json) ;;

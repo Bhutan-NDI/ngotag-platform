@@ -34,7 +34,9 @@ jq -e --arg environment "$environment" --slurpfile contract "$contract" '
       then (.release | keys == ["deployed"])
       else (.release | keys == ["deployed", "next_version"]) and (.release.next_version | semver) end) and
     (.release.deployed | type == "object") and
-    all(.release.deployed | to_entries[]; (.key as $service | $c.services | has($service)) and (.value | type == "object")) and
+    # One record per released service, and the last migration under the migration target.
+    all(.release.deployed | to_entries[];
+      (.key as $key | ($c.services | has($key)) or $key == $c.migration.target) and (.value | type == "object")) and
     (.deployment | keys == ["allowed_branch", "aws_region", "cluster", "cpu_architecture", "ecr_repository", "migration", "services"]) and
     .deployment.allowed_branch == $policy.allowed_branch and
     (.deployment.aws_region | type == "string" and test("^[a-z]{2}(-[a-z]+)+-[0-9]$")) and

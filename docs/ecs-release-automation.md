@@ -26,18 +26,19 @@ make qa-agent           # agent service to QA, from develop
 make qa-connection      # connection service to QA, from develop
 make stage-agent        # agent service to Stage, from main
 make prod-agent         # promotes the agent image Stage runs to Prod; asks for confirmation
+make qa-migrate         # applies database migrations in QA; deploys no service (see below)
 make help               # lists the services
 ```
 
 Several services are released by naming several targets (`make qa-user
-qa-organization`); each is its own release, one after another. Releases to the
+qa-organization`); each is its own release, one after another. Operations in the
 same environment never overlap: the workflow queues them.
 
 Make checks the branch, a clean tree, that the local head matches the remote, the
 service, the private deployment manifest, and that the `Validate` CI check passed
 for the exact commit. It then pushes an immutable trigger tag
-(`platform-<environment>-<service>-<manifest commit>-<source commit>-<UTC time>`,
-with `-migrate` appended for a migration release) and watches the workflow
+(`platform-<environment>-<service or migrate>-<manifest commit>-<source commit>-<UTC time>`)
+and watches the workflow
 (`DEPLOY_WAIT=false` skips watching). Pushing trigger tags by hand or running the
 workflow any other way is not an approved release path: a tag ruleset lets only
 release operators create `platform-*` tags, and each GitHub Environment accepts
@@ -49,30 +50,39 @@ the operator to type `prod` (or pass `CONFIRM=prod`).
 
 ## Database migrations
 
-Service images never change the database schema when they start. Every release
-first runs `prisma migrate status` once, as a standalone task from the released
-image, before the service changes. If the database lacks a migration that image
-carries (or the check fails), the release stops with nothing deployed. A database
-that is ahead of the image is fine, so a service released from an older commit
-than the last migration still deploys.
+No release ever changes the database schema, and service images never migrate
+when they start. Seed is never built or run: it is not a schema tool, and running
+it is destructive.
 
-A release that adds migrations is started with `MIGRATE=true`, usually on the
-first service that needs them:
+**Service releases only check the schema.** Before the service changes, the
+release runs `prisma migrate status` once, read-only, as a standalone task from
+the released image. If the database lacks a migration that image carries, the
+histories diverge, a migration failed, or the check itself fails, the release
+stops with nothing deployed. A database that is ahead of the image passes (Prisma
+reports "Database schema is up to date!"), so a service released from an older
+commit than the last migration still deploys.
+
+**Migrations are applied by their own operation**, `make <environment>-migrate`,
+before the services that need them are released:
 
 1. Stop the writer services (the API gateway and seed) by setting their desired
    count to 0.
-2. Run `make <environment>-<service> MIGRATE=true`; Make asks the operator to
-   type `migrate`.
-3. The workflow checks that every writer is stopped and that no other migration
-   task runs, then runs `prisma migrate deploy` and `prisma migrate status` once.
-   A failure stops the release with nothing deployed; recover from the database
-   backups instead of retrying.
-4. The service rolls out. The writer services stay stopped (a released API gateway
-   receives its new revision but stays stopped); start them again after the smoke
-   checks.
+2. Run `make qa-migrate` (from `develop`), `make stage-migrate` (from `main`) or
+   `make prod-migrate`; Make asks the operator to type `migrate`.
+3. The workflow builds the API gateway image of that commit (Prod copies the image
+   Stage's migration ran, by digest), checks that every writer is stopped and that
+   no other migration task runs, then runs one standalone task: the API gateway's
+   task definition with only the image replaced and the command overridden to
+   `prisma migrate deploy && prisma migrate status`. No service is deployed and no
+   GitHub Release is published. A failure stops there; recover from the database
+   backups instead of retrying. A task that never started touched nothing.
+4. Start the API gateway again after your checks (seed stays stopped), then
+   release the services.
 
-The migration output can contain connection details, so the public log shows only
-the result; the task output is in the task's CloudWatch log.
+The task output can contain connection details, so the public log shows only the
+result; the task output is in the task's CloudWatch log. Neither the check nor the
+migration starts unless it and the rollout that follows fit in the job's
+remaining time.
 
 ## What the workflow does
 
@@ -85,19 +95,21 @@ the result; the task output is in the task's CloudWatch log.
    load, and the Prisma CLI and schema are present. Nothing is pushed otherwise.
    The image tag names the service and the source commit, so a retry reuses the
    same image.
-3. The deploy job resolves the release version, then builds the complete release
-   notes and checks them for infrastructure identifiers. It changes nothing in ECS
-   until this check passes.
+3. Service releases: the deploy job resolves the release version, then builds the
+   complete release notes and checks them for infrastructure identifiers. It
+   changes nothing in ECS until this check passes.
 4. Prod: the workflow proves that the Stage service runs the release candidate's
    image digest on ARM64 (a stopped Stage service by its task definition) and
    copies that image, byte for byte, into the Prod image repository.
 5. The image is checked to be this commit's arm64 build, and the database schema
-   is checked or migrated (see above).
+   is checked (a migration operation applies migrations instead and stops here;
+   see above).
 6. The service is checked before it changes: active, expected task definition
    family, no deployment in progress, and every kept sidecar image available for
    arm64.
 7. The service gets a copy of its current task definition with only the image
-   replaced and the CPU architecture set to ARM64; environment files, volumes,
+   (pinned by digest, `<repository>@sha256:…`) replaced and the CPU architecture
+   set to ARM64; environment files, volumes,
    roles, CPU, memory, sidecars and the desired count stay as they are. It is
    updated with the deployment circuit breaker and rollback enabled, and the
    release succeeds only after ECS reports the rollout COMPLETED and every running
@@ -107,8 +119,10 @@ the result; the task output is in the task's CloudWatch log.
 8. The GitHub Release is created as a draft with the notes checked in step 3,
    checked again, and published; the live notes are checked once more.
 9. The private manifest records, under the service, the version, release, image
-   tag and digest, task definition, source and manifest commits, migration mode and
-   time of the deployment. Other services' records are kept.
+   tag and digest, task definition, schema-check task definition, source and
+   manifest commits and time of the deployment. A migration is recorded under
+   `migrate` with the API gateway image and its task definition. Other records
+   are kept.
 
 AWS access uses short-lived GitHub OIDC credentials from a role per environment
 that trusts only that environment's trigger tags, may update only that

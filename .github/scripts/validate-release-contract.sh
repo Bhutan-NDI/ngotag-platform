@@ -16,8 +16,9 @@ test -f "$contract" || {
 
 # Every service is released on its own. QA releases come from develop, Stage
 # from main, and Prod only promotes the image Stage runs. Every service is
-# published for the same single platform. The database check and migration run
-# from the released image, in a copy of the template service's task definition.
+# published for the same single platform. A release only checks the database
+# schema. Migrations are applied by a separate operation (make <env>-<target>):
+# one task from the template service's (API gateway's) image and task definition.
 jq -e '
   def name: type == "string" and test("^[a-z][a-z0-9-]{0,62}$");
   .schema_version == 1 and
@@ -34,8 +35,10 @@ jq -e '
     (.value.app | name) and
     ((.value.legacy_name // .key) | name) and
     (.value.dockerfile | type == "string" and test("^Dockerfiles/Dockerfile\\.[a-z0-9-]+$"))) and
-  (.migration | keys == ["deploy_command", "status_command", "template_service"]) and
+  (.migration | keys == ["deploy_command", "status_command", "target", "template_service"]) and
   (.migration.template_service as $service | .services | has($service)) and
+  (.migration.target | name) and
+  (.migration.target as $target | .services | has($target) | not) and
   (.migration.status_command | type == "string" and test("prisma migrate status")) and
   (.migration.deploy_command | type == "string" and test("prisma migrate deploy")) and
   (.environments | keys == ["prod", "qa", "stage"]) and

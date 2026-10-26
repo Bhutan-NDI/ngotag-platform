@@ -66,11 +66,12 @@ fi
 samples=$(jq -r '
   .release.tag_prefix as $release_prefix
   | .environments[].tag_prefix as $trigger_prefix
-  | .services | keys[] as $service
-  | ($trigger_prefix + $service + "-0000000000000000000000000000000000000000-000000000000-20260101T000000Z"),
-    ($trigger_prefix + $service + "-0000000000000000000000000000000000000000-000000000000-20260101T000000Z-migrate"),
-    (($release_prefix | sub("\\{service\\}"; $service)) as $prefix
-      | $prefix + "1.2.3", $prefix + "1.2.3-qa.1", $prefix + "1.2.3-rc.1")' "$contract" | LC_ALL=C sort -u)
+  | .migration.target as $target
+  | (.services | keys[] as $service
+    | ($trigger_prefix + $service + "-0000000000000000000000000000000000000000-000000000000-20260101T000000Z"),
+      (($release_prefix | sub("\\{service\\}"; $service)) as $prefix
+        | $prefix + "1.2.3", $prefix + "1.2.3-qa.1", $prefix + "1.2.3-rc.1")),
+    ($trigger_prefix + $target + "-0000000000000000000000000000000000000000-000000000000-20260101T000000Z")' "$contract" | LC_ALL=C sort -u)
 
 other_workflows=$(find "$workflow_directory" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | LC_ALL=C sort)
 # Tag globs must not expand against local files.
