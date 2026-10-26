@@ -71,10 +71,16 @@ jobs:
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: pnpm-store-${{ runner.os }}-
 
+      # The Dockerfiles install from the root manifest and lockfile before copying the
+      # workspace packages, so install the same way outside the checkout.
       - name: Install locked dependencies as in the Docker build
         run: |
-          pnpm install --frozen-lockfile --ignore-scripts
-          (cd libs/prisma-service && npx prisma generate)
+          deps="$RUNNER_TEMP/dependencies"
+          mkdir -p "$deps"
+          cp package.json pnpm-lock.yaml pnpm-workspace.yaml "$deps/"
+          pnpm --dir "$deps" install --frozen-lockfile --ignore-scripts
+          ln -s "$deps/node_modules" node_modules
+          pnpm exec prisma generate --schema=libs/prisma-service/prisma/schema.prisma
 
       - name: Build ${{ matrix.app }}
         run: pnpm run build ${{ matrix.app }}
