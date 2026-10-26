@@ -64,6 +64,7 @@ const build = (options: { migration?: object | null } = {}) => {
     startSealedExport: track('startSealedExport', { jobId: 'export-1', status: 'pending' }),
     getExportJob: track('getExportJob', completedExport),
     startImport: track('startImport', { jobId: 'import-1', status: 'pending' }),
+    pushImport: track('pushImport', { jobId: 'import-1', status: 'pending' }),
     getImportJob: track('getImportJob', completedImport),
     deleteExport: track('deleteExport', undefined)
   };
@@ -288,6 +289,73 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
 
     expect(migrationService.advance).toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalled();
+  });
+});
+
+describe('OrgAgentMigrationRehearsalService download method', () => {
+  it('has the agent pull the export from S3 unless preflight found it cannot', async () => {
+    const { execute, agentClient, migrationService } = build();
+
+    await execute({ ...migrationRow(), downloadMethod: 'PULL' } as never);
+
+    expect(agentClient.startImport).toHaveBeenCalledTimes(1);
+    expect(agentClient.pushImport).not.toHaveBeenCalled();
+    expect(migrationService.advance.mock.calls[0][3].rehearsal.downloadMethod).toBe('PULL');
+  });
+
+  it('pulls when preflight has not settled on a method yet', async () => {
+    const { execute, agentClient } = build();
+
+    await execute({ ...migrationRow(), downloadMethod: null } as never);
+
+    expect(agentClient.startImport).toHaveBeenCalledTimes(1);
+    expect(agentClient.pushImport).not.toHaveBeenCalled();
+  });
+
+  it('sends the export to the agent itself when preflight found it cannot reach S3, as a dry run', async () => {
+    const { execute, agentClient, calls } = build();
+
+    await execute({ ...migrationRow(), downloadMethod: 'PUSH' } as never);
+
+    expect(agentClient.startImport).not.toHaveBeenCalled();
+    expect(agentClient.pushImport).toHaveBeenCalledWith(DEDICATED.endpoint, DEDICATED.token, {
+      downloadUrl: completedExport.downloadUrl,
+      sessionId: 'session-1',
+      checksum: completedExport.checksum,
+      sealedStoreKey: completedExport.sealedStoreKey,
+      storageVersion: '0.5',
+      dryRun: true
+    });
+    expect(calls).toEqual([
+      'createImportSession',
+      'startSealedExport',
+      'getExportJob',
+      'pushImport',
+      'getImportJob',
+      'deleteExport'
+    ]);
+  });
+
+  it('records which method the rehearsal used', async () => {
+    const { execute, migrationService } = build();
+
+    await execute({ ...migrationRow(), downloadMethod: 'PUSH' } as never);
+
+    const [, , , patch] = migrationService.advance.mock.calls[0];
+    expect(patch.rehearsal.downloadMethod).toBe('PUSH');
+  });
+
+  it('reports a failed download as DOWNLOAD_FAILED at the import step, and still removes the export', async () => {
+    const { execute, agentClient, migrationRepository } = build();
+    agentClient.pushImport.mockRejectedValue(new MigrationAgentError('FAILED', undefined, 'DOWNLOAD_FAILED'));
+
+    await execute({ ...migrationRow(), downloadMethod: 'PUSH' } as never);
+
+    expect(failureRecorded(migrationRepository).rehearsal).toMatchObject({
+      code: 'DOWNLOAD_FAILED',
+      step: 'IMPORT',
+      exportCleanup: 'DELETED'
+    });
   });
 });
 

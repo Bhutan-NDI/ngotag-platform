@@ -15,7 +15,7 @@ import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration
 import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
 import { envMs, JobPollFailure, jobTimeoutMs, pollJob } from './migration-job-poller';
 import { IPortabilityJob, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
-import { IPreflightReport, IRehearsalRecord } from './org-agent-migration.interface';
+import { DownloadMethod, IPreflightReport, IRehearsalRecord } from './org-agent-migration.interface';
 import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 
@@ -111,7 +111,8 @@ export class OrgAgentMigrationRehearsalService {
       return;
     }
 
-    const record: IRehearsalRecord = { downloadMethod: 'PULL' };
+    const downloadMethod: DownloadMethod = 'PUSH' === migration.downloadMethod ? 'PUSH' : 'PULL';
+    const record: IRehearsalRecord = { downloadMethod };
     // Audited whether the rehearsal finishes or not: the export has happened as soon as they are known.
     const custody: ICustodyFacts = {};
     let exportJobId: string | undefined;
@@ -137,14 +138,23 @@ export class OrgAgentMigrationRehearsalService {
 
       const importStarted = Date.now();
       const importJob = await this.guard('IMPORT', () =>
-        this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
-          sessionId: session.sessionId,
-          exportUrl: exported.downloadUrl,
-          checksum: exported.checksum,
-          sealedStoreKey: exported.sealedStoreKey,
-          storageVersion: exported.storageVersion,
-          dryRun: true
-        })
+        'PUSH' === downloadMethod
+          ? this.agentClient.pushImport(dedicated.endpoint, dedicated.token, {
+              downloadUrl: exported.downloadUrl,
+              sessionId: session.sessionId,
+              checksum: exported.checksum,
+              sealedStoreKey: exported.sealedStoreKey,
+              storageVersion: exported.storageVersion,
+              dryRun: true
+            })
+          : this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
+              sessionId: session.sessionId,
+              exportUrl: exported.downloadUrl,
+              checksum: exported.checksum,
+              sealedStoreKey: exported.sealedStoreKey,
+              storageVersion: exported.storageVersion,
+              dryRun: true
+            })
       );
       const imported = await this.waitFor('IMPORT', () =>
         this.agentClient.getImportJob(dedicated.endpoint, dedicated.token, importJob.jobId)
@@ -194,6 +204,9 @@ export class OrgAgentMigrationRehearsalService {
     if (error instanceof MigrationAgentError) {
       if ('CONFLICT' === error.kind && ['TARGET_NOT_PRISTINE', 'STORAGE_VERSION_MISMATCH'].includes(error.agentCode)) {
         return error.agentCode;
+      }
+      if ('DOWNLOAD_FAILED' === error.agentCode) {
+        return 'DOWNLOAD_FAILED';
       }
       if ('REJECTED' === error.kind) {
         return 'AGENT_TOKEN_REJECTED';

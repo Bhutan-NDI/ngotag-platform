@@ -64,6 +64,7 @@ const build = (options: { migration?: object; dedicated?: object; shared?: objec
     createImportSession: jest.fn().mockResolvedValue({ sessionId: 's', importPublicKey: 'k' }),
     probeRelayTarget: jest.fn().mockResolvedValue({ reachable: true, status: 404 }),
     getRelayHealth: jest.fn().mockResolvedValue({ enabled: true, redisReady: true }),
+    getExportBucket: jest.fn().mockResolvedValue({ configured: true, reachable: true }),
     getEndpointSchemes: jest.fn().mockResolvedValue({ didsScanned: 3, schemes: [{ scheme: 'https', count: 3 }] })
   };
   const access = {
@@ -89,6 +90,57 @@ const checkOf = (report: { checks: { id: string; status: string }[] }, id: Check
   report.checks.find((check) => check.id === id);
 
 describe('OrgAgentMigrationPreflightService', () => {
+  describe('how the agent gets the export', () => {
+    const methodOf = (migrationRepository: { update: jest.Mock }) =>
+      migrationRepository.update.mock.calls[0][1].downloadMethod;
+
+    it('is PULL when the agent can reach its export bucket', async () => {
+      const { service, migrationRepository } = build();
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({ status: 'PASS', detail: { method: 'PULL' } });
+      expect(methodOf(migrationRepository)).toBe('PULL');
+    });
+
+    it.each([
+      [{ configured: false }, 'BUCKET_NOT_CONFIGURED'],
+      [{ configured: true, reachable: false, reason: 'DNS' }, 'DNS'],
+      [{ configured: true, reachable: false }, 'UNREACHABLE']
+    ])('is PUSH, and still a pass, when the agent reports %j', async (bucket, reason) => {
+      const { service, migrationRepository, agentClient } = build();
+      agentClient.getExportBucket.mockResolvedValue(bucket);
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(report.passed).toBe(true);
+      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+        status: 'PASS',
+        detail: { method: 'PUSH', reason }
+      });
+      expect(methodOf(migrationRepository)).toBe('PUSH');
+    });
+
+    it('leaves the method as it was when the agent cannot be asked', async () => {
+      const { service, migrationRepository, agentClient } = build();
+      agentClient.getExportBucket.mockRejectedValue(new MigrationAgentError('NOT_FOUND', 404));
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({ status: 'SKIPPED' });
+      expect(migrationRepository.update.mock.calls[0][1]).not.toHaveProperty('downloadMethod');
+    });
+
+    it('is skipped when the agent could not be reached at all', async () => {
+      const { service, agentClient } = build();
+      agentClient.getAgentInfo.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+      await service.run(MIGRATION_ID, input);
+
+      expect(agentClient.getExportBucket).not.toHaveBeenCalled();
+    });
+  });
+
   describe('the webhook check', () => {
     it('has the dedicated agent send a test event to the platform, using the stored admin address and token', async () => {
       const { service, webhookService } = build();

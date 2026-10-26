@@ -181,6 +181,10 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       log('startImport');
       return { jobId: 'import-1', status: 'pending' };
     }),
+    pushImport: jest.fn(async () => {
+      log('pushImport');
+      return { jobId: 'import-1', status: 'pending' };
+    }),
     getImportJob: jest.fn(async () => importedJob),
     deleteExport: jest.fn(async () => {
       log('deleteExport');
@@ -781,6 +785,44 @@ describe('move day: aborting before the switch', () => {
     await world.executor.run(MIGRATION_ID, USER_ID);
 
     expect(noSecrets(world.logger)).not.toMatch(/root-token|base-token|SECRET-SIGNATURE|ENCRYPTED-TOKEN/);
+  });
+});
+
+describe('move day: how the agent gets the export', () => {
+  it('has the agent pull it from S3 by default', async () => {
+    const { executor, agentClient } = buildWorld();
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(agentClient.startImport).toHaveBeenCalledTimes(1);
+    expect(agentClient.pushImport).not.toHaveBeenCalled();
+  });
+
+  it('sends it to the agent itself when preflight found the agent cannot reach S3', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH' });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(agentClient.startImport).not.toHaveBeenCalled();
+    expect(agentClient.pushImport).toHaveBeenCalledWith(DEDICATED.endpoint, DEDICATED.token, {
+      downloadUrl: exportedJob.downloadUrl,
+      sessionId: 'session-1',
+      checksum: exportedJob.checksum,
+      sealedStoreKey: exportedJob.sealedStoreKey,
+      storageVersion: '0.5',
+      dryRun: false
+    });
+    expect(world.row.status).toBe(Status.STABILISING);
+  });
+
+  it('aborts losslessly with DOWNLOAD_FAILED when the platform cannot fetch the export', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH' });
+    agentClient.pushImport.mockRejectedValue(new MigrationAgentError('FAILED', undefined, 'DOWNLOAD_FAILED'));
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row).toMatchObject({ status: Status.FAILED, error: 'DOWNLOAD_FAILED' });
+    expect(world.relay).toBe('none');
   });
 });
 

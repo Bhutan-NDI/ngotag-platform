@@ -17,7 +17,7 @@ import {
   fail,
   pass
 } from './migration-agent-checks';
-import { IPreflightReport, PreflightCheckId } from './org-agent-migration.interface';
+import { DownloadMethod, IPreflightReport, PreflightCheckId } from './org-agent-migration.interface';
 import { OrgAgentMigrationWebhookService } from './org-agent-migration.webhook.service';
 
 type Check = AgentCheck;
@@ -89,6 +89,8 @@ export class OrgAgentMigrationPreflightService {
       this.checkWebhook(migration, token, dedicatedInfo, record)
     ]);
 
+    const downloadMethod = await this.checkDownloadMethod(migration, token, dedicatedInfo, record);
+
     const report = this.buildReport(checks);
     const updated = await this.migrationRepository.update(migration.id, {
       preflight: report as never,
@@ -98,7 +100,8 @@ export class OrgAgentMigrationPreflightService {
         : {}),
       ...(dedicatedInfo
         ? { releaseVersion: dedicatedInfo.releaseVersion, storageVersion: dedicatedInfo.storageVersion }
-        : {})
+        : {}),
+      ...(downloadMethod ? { downloadMethod } : {})
     });
     await this.auditRun(migration.id, actor, report);
     return { migration: updated, report };
@@ -236,6 +239,31 @@ export class OrgAgentMigrationPreflightService {
     }
     const result = await this.webhookService.check(migration, { endpoint: migration.targetAdminEndpoint, token });
     record(PreflightCheckId.WEBHOOK_DELIVERS, result.confirmed ? pass() : fail(result.code));
+  }
+
+  // Never fails: an agent that cannot reach S3 is not refused, the platform sends it the export instead.
+  private async checkDownloadMethod(
+    migration: org_agent_migrations,
+    token: string | undefined,
+    info: IAgentInfo | undefined,
+    record: (id: PreflightCheckId, check: Check) => void
+  ): Promise<DownloadMethod | undefined> {
+    if (!token || !info) {
+      return undefined;
+    }
+    try {
+      const bucket = await this.agentClient.getExportBucket(migration.targetAdminEndpoint, token);
+      if (bucket.configured && bucket.reachable) {
+        record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: 'PULL' }));
+        return 'PULL';
+      }
+      const reason = bucket.configured ? (bucket.reason ?? 'UNREACHABLE') : 'BUCKET_NOT_CONFIGURED';
+      record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: 'PUSH', reason }));
+      return 'PUSH';
+    } catch {
+      // Not answering is another check's finding; the method stays what it was.
+      return undefined;
+    }
   }
 
   private async checkDidcommReachable(

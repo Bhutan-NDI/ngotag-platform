@@ -267,15 +267,26 @@ export class OrgAgentMigrationExecutor {
       storageVersion: exported.storageVersion
     });
 
+    // The method preflight settled on, with the final checks run just before the freeze.
+    const push = 'PUSH' === ctx.migration.downloadMethod;
     const job = await this.call('IMPORT_FAILED', () =>
-      this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
-        sessionId,
-        exportUrl: exported.downloadUrl,
-        checksum: exported.checksum,
-        sealedStoreKey: exported.sealedStoreKey,
-        storageVersion: exported.storageVersion,
-        dryRun: false
-      })
+      push
+        ? this.agentClient.pushImport(dedicated.endpoint, dedicated.token, {
+            downloadUrl: exported.downloadUrl,
+            sessionId,
+            checksum: exported.checksum,
+            sealedStoreKey: exported.sealedStoreKey,
+            storageVersion: exported.storageVersion,
+            dryRun: false
+          })
+        : this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
+            sessionId,
+            exportUrl: exported.downloadUrl,
+            checksum: exported.checksum,
+            sealedStoreKey: exported.sealedStoreKey,
+            storageVersion: exported.storageVersion,
+            dryRun: false
+          })
     );
     await this.migrationRepository.update(migration.id, { importJobId: job.jobId });
 
@@ -608,6 +619,9 @@ export class OrgAgentMigrationExecutor {
     if (error instanceof MigrationAgentError) {
       if ('CONFLICT' === error.kind && ['TARGET_NOT_PRISTINE', 'STORAGE_VERSION_MISMATCH'].includes(error.agentCode)) {
         return error.agentCode;
+      }
+      if ('DOWNLOAD_FAILED' === error.agentCode) {
+        return 'DOWNLOAD_FAILED';
       }
       if ('REJECTED' === error.kind) {
         return 'AGENT_TOKEN_REJECTED';
