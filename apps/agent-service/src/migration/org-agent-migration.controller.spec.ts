@@ -18,6 +18,7 @@ const build = () => {
   const migrationService = {
     createMigration: jest.fn().mockResolvedValue(row()),
     getMigration: jest.fn().mockResolvedValue(row()),
+    findMigration: jest.fn().mockResolvedValue(row()),
     cancel: jest.fn().mockResolvedValue(row({ status: 'FAILED', error: 'CANCELLED_BY_OWNER' })),
     listMigrations: jest.fn().mockResolvedValue({ total: 1, migrations: [row()] })
   };
@@ -371,6 +372,14 @@ describe('OrgAgentMigrationController', () => {
 
       expect(JSON.stringify([single, listed])).not.toContain(SECRET);
       expect(listed.total).toBe(1);
+    });
+
+    it('answers null, not an error, for an organisation that has never moved', async () => {
+      const { controller, migrationService } = build();
+      migrationService.findMigration.mockResolvedValue(null);
+
+      await expect(controller.getMigration({ orgId: ORG_ID })).resolves.toBeNull();
+      expect(migrationService.findMigration).toHaveBeenCalledWith(ORG_ID);
     });
   });
 });

@@ -127,8 +127,9 @@ export class OrgAgentMigrationController {
   }
 
   @MessagePattern({ cmd: 'get-org-agent-migration' })
-  async getMigration(payload: { orgId: string }): Promise<IOrgAgentMigration> {
-    return toPublicMigration(await this.migrationService.getMigration(payload.orgId));
+  async getMigration(payload: { orgId: string }): Promise<IOrgAgentMigration | null> {
+    const migration = await this.migrationService.findMigration(payload.orgId);
+    return migration ? toPublicMigration(migration) : null;
   }
 
   @MessagePattern({ cmd: 'list-org-agent-migrations' })

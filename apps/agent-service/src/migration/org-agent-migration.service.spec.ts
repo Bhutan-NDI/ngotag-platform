@@ -158,6 +158,20 @@ describe('OrgAgentMigrationService', () => {
       expect(rpcError(await service.getMigration(ORG_ID).catch((e) => e))).toMatchObject({ statusCode: 404 });
     });
 
+    it('findMigration answers null for an org that has never had one, instead of an error', async () => {
+      const { service, migrationRepository } = buildService();
+      migrationRepository.getLatestByOrgId.mockResolvedValue(null);
+
+      await expect(service.findMigration(ORG_ID)).resolves.toBeNull();
+    });
+
+    it('findMigration returns the latest migration when there is one', async () => {
+      const { service, migrationRepository } = buildService();
+      migrationRepository.getLatestByOrgId.mockResolvedValue({ id: MIGRATION_ID });
+
+      await expect(service.findMigration(ORG_ID)).resolves.toEqual({ id: MIGRATION_ID });
+    });
+
     it.each([
       [{}, 0, 20],
       [{ pageNumber: 3, pageSize: 10 }, 20, 10],

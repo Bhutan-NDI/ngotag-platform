@@ -152,6 +152,16 @@ describe('OrgAgentMigrationRepository', () => {
       expect(eventCreate.mock.calls[0][0].data).not.toHaveProperty('detail');
     });
 
+    it('stamps the time a move completed, and only then', async () => {
+      const done = buildRepository();
+      await done.repository.transition({ id: ID, from: Status.ROTATING, to: Status.COMPLETED, actor: null });
+      expect(done.migrationUpdateMany.mock.calls[0][0].data.completedAt).toBeInstanceOf(Date);
+
+      const notDone = buildRepository();
+      await notDone.repository.transition({ id: ID, from: Status.REHEARSED, to: Status.FROZEN, actor: USER_ID });
+      expect(notDone.migrationUpdateMany.mock.calls[0][0].data).not.toHaveProperty('completedAt');
+    });
+
     it('refuses, and records nothing, when another actor already moved the migration', async () => {
       const { repository, eventCreate } = buildRepository({ updateCount: 0 });
 

@@ -157,7 +157,8 @@ export class OrgAgentMigrationRepository {
             ...patch,
             status: to,
             phase: phaseFor(to, scheduledFor),
-            lastChangedDateTime: new Date()
+            lastChangedDateTime: new Date(),
+            ...(OrgAgentMigrationStatus.COMPLETED === to ? { completedAt: new Date() } : {})
           }
         });
         if (1 !== count) {

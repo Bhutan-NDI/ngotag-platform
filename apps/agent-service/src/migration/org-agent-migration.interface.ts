@@ -131,7 +131,8 @@ export const PUBLIC_MIGRATION_FIELDS = [
   'rehearsal',
   'rotation',
   'webhookConfirmedAt',
-  'downloadMethod'
+  'downloadMethod',
+  'completedAt'
 ] as const;
 
 export type IOrgAgentMigration = Pick<org_agent_migrations, (typeof PUBLIC_MIGRATION_FIELDS)[number]>;
