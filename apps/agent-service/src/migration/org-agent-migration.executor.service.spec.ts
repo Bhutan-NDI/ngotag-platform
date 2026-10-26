@@ -80,11 +80,13 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
     events: [] as { action?: string; to?: string; detail?: unknown }[],
     transitions: [] as string[],
     statusAt: {} as Record<string, string>,
-    invitations: [] as unknown[]
+    invitations: [] as unknown[],
+    confirmingActor: null as string | null
   };
 
   const clone = () => (world.row ? { ...world.row, freezeDeadline: world.row.freezeDeadline } : null);
   const migrationRepository: Record<string, jest.Mock> = {
+    getConfirmingActor: jest.fn(async () => world.confirmingActor),
     getById: jest.fn(async () => clone()),
     update: jest.fn(async (_id: string, patch: Record<string, unknown>) => {
       Object.assign(world.row, patch);
@@ -782,6 +784,28 @@ describe('move day: aborting before the switch', () => {
   });
 });
 
+describe('move day: the audit trail', () => {
+  it('names the owner who confirmed the move on every step it takes, and on the switch itself', async () => {
+    const { executor, migrationService, migrationRepository } = buildWorld();
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    const actors = migrationService.advance.mock.calls.map((call) => call[2]);
+    expect(actors).toHaveLength(5);
+    expect(actors.every((actor) => USER_ID === actor)).toBe(true);
+    expect(migrationRepository.cutover.mock.calls[0][0].actor).toBe(USER_ID);
+  });
+
+  it('leaves a failure with no actor, so it is recorded as the system', async () => {
+    const world = buildWorld();
+    world.agentClient.getImportJob.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.migrationService.abort.mock.calls[0][2]).toBeNull();
+  });
+});
+
 describe('move day: signing check', () => {
   it('signs with an empty subject and the standard credentials context, so nothing org-specific can break it', async () => {
     const world = buildWorld();
@@ -908,6 +932,17 @@ describe('move day: after the switch', () => {
     expect(world.world.relay).toBe('FORWARD');
     expect(world.world.exports.size).toBe(0);
     expect(world.world.row.status).toBe(Status.STABILISING);
+  });
+
+  it('resumes as the owner who confirmed the move, and as whoever started it when none is on record', async () => {
+    const confirmed = switched();
+    confirmed.world.confirmingActor = 'owner-2';
+    await confirmed.executor.resumeCutover(MIGRATION_ID);
+    expect(confirmed.migrationService.advance.mock.calls.at(-1)?.[2]).toBe('owner-2');
+
+    const unrecorded = switched();
+    await unrecorded.executor.resumeCutover(MIGRATION_ID);
+    expect(unrecorded.migrationService.advance.mock.calls.at(-1)?.[2]).toBe(USER_ID);
   });
 
   it('resumes a switched-over move that never made its invitation', async () => {

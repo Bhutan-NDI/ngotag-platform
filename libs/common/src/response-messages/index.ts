@@ -118,6 +118,7 @@ export const ResponseMessages = {
       deleteOrgInvitation: 'Organization does not have access to delete this invitation',
       notFound: 'Organization agent not found',
       orgNotFound: 'Organization does not exists',
+      orgMigrationInProgress: 'The organization has a wallet move in progress and cannot be deleted until it ends',
       orgDataNotFoundInkeycloak: 'Organization not found in keycloak',
       orgNotMatch: 'Organization does not have access',
       invitationStatusInvalid: 'Unable to delete invitation with accepted/rejected status',

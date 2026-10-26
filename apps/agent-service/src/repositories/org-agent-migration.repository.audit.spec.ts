@@ -35,6 +35,14 @@ describe('OrgAgentMigrationRepository audit and access queries', () => {
       });
     });
 
+    it('names SYSTEM as the actor of an entry no person made', async () => {
+      const { repository, prisma } = build();
+
+      await repository.recordEvent(ID, { action: 'PROFILE_PURGED', actor: null });
+
+      expect(prisma.org_agent_migration_events.create.mock.calls[0][0].data.actor).toBe('SYSTEM');
+    });
+
     it('leaves the detail out when there is none', async () => {
       const { repository, prisma } = build();
 

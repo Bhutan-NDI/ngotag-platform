@@ -20,6 +20,19 @@ const UNIQUE_VIOLATION = 'P2002';
 export const REHEARSAL_RUNNING = 'RUNNING';
 export const REHEARSAL_DONE = 'DONE';
 
+// Named on every audit entry no person made: the timer, a recovery, a failed move.
+export const SYSTEM_ACTOR = 'SYSTEM';
+
+// What every state change carries once the export exists (SAD §7.7): the checksum of what was handed over and the
+// fingerprint of the key it was sealed to. Neither is a secret.
+const custodyFacts = (row: MigrationRow): Prisma.InputJsonObject => ({
+  ...(row.checksum ? { checksum: row.checksum } : {}),
+  ...(row.importKeyFingerprint ? { importKeyFingerprint: row.importKeyFingerprint } : {})
+});
+
+const withDetail = (facts: Prisma.InputJsonObject): { detail?: Prisma.InputJsonObject } =>
+  0 < Object.keys(facts).length ? { detail: facts } : {};
+
 @Injectable()
 export class OrgAgentMigrationRepository {
   constructor(
@@ -55,7 +68,16 @@ export class OrgAgentMigrationRepository {
           }
         });
         await tx.org_agent_migration_events.create({
-          data: { migrationId: migration.id, fromStatus: null, toStatus: migration.status, actor: params.startedBy }
+          data: {
+            migrationId: migration.id,
+            fromStatus: null,
+            toStatus: migration.status,
+            actor: params.startedBy,
+            detail: {
+              targetAdminEndpoint: params.targetAdminEndpoint,
+              targetDidcommEndpoint: params.targetDidcommEndpoint
+            }
+          }
         });
         return migration;
       });
@@ -141,10 +163,17 @@ export class OrgAgentMigrationRepository {
         if (1 !== count) {
           throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
         }
+        const row = await tx.org_agent_migrations.findUniqueOrThrow({ where: { id } });
         await tx.org_agent_migration_events.create({
-          data: { migrationId: id, fromStatus: from, toStatus: to, actor }
+          data: {
+            migrationId: id,
+            fromStatus: from,
+            toStatus: to,
+            actor: actor ?? SYSTEM_ACTOR,
+            ...withDetail(custodyFacts(row))
+          }
         });
-        return tx.org_agent_migrations.findUniqueOrThrow({ where: { id } });
+        return row;
       });
     } catch (error) {
       this.logger.error(
@@ -210,15 +239,17 @@ export class OrgAgentMigrationRepository {
           throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
         }
 
+        const row = await tx.org_agent_migrations.findUniqueOrThrow({ where: { id: params.migrationId } });
         await tx.org_agent_migration_events.create({
           data: {
             migrationId: params.migrationId,
             fromStatus: OrgAgentMigrationStatus.VERIFYING,
             toStatus: OrgAgentMigrationStatus.CUTOVER,
-            actor: params.actor
+            actor: params.actor ?? SYSTEM_ACTOR,
+            ...withDetail(custodyFacts(row))
           }
         });
-        return tx.org_agent_migrations.findUniqueOrThrow({ where: { id: params.migrationId } });
+        return row;
       });
     } catch (error) {
       this.logger.error(`[OrgAgentMigrationRepository.cutover] - ${error instanceof Error ? error.message : 'failed'}`);
@@ -435,12 +466,14 @@ export class OrgAgentMigrationRepository {
           throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
         }
 
+        const restored = await tx.org_agent_migrations.findUniqueOrThrow({ where: { id: params.migrationId } });
         await tx.org_agent_migration_events.create({
           data: {
             migrationId: params.migrationId,
             fromStatus: OrgAgentMigrationStatus.STABILISING,
             toStatus: OrgAgentMigrationStatus.DISASTER_RESTORED,
-            actor: params.actor
+            actor: params.actor,
+            ...withDetail(custodyFacts(restored))
           }
         });
 
@@ -449,10 +482,7 @@ export class OrgAgentMigrationRepository {
               where: { orgId: params.orgId, invitationDid: params.newInvitationDid }
             })
           : { count: 0 };
-        return {
-          migration: await tx.org_agent_migrations.findUniqueOrThrow({ where: { id: params.migrationId } }),
-          invitationsRemoved: removed.count
-        };
+        return { migration: restored, invitationsRemoved: removed.count };
       });
     } catch (error) {
       this.logger.error(
@@ -535,7 +565,7 @@ export class OrgAgentMigrationRepository {
         migrationId,
         fromStatus: migration.status,
         toStatus: migration.status,
-        actor: entry.actor,
+        actor: entry.actor ?? SYSTEM_ACTOR,
         action: entry.action,
         ...(entry.detail === undefined ? {} : { detail: entry.detail })
       }

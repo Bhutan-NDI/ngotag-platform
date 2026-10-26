@@ -230,7 +230,12 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
     expect(done.migrationRepository.recordEvent).toHaveBeenCalledWith(MIGRATION_ID, {
       action: 'REHEARSAL_FINISHED',
       actor: USER_ID,
-      detail: { outcome: 'DONE', exportCleanup: 'DELETED' }
+      detail: {
+        outcome: 'DONE',
+        exportCleanup: 'DELETED',
+        checksum: completedExport.checksum,
+        importKeyFingerprint: createHash('sha256').update(Buffer.from(PUBLIC_KEY, 'base64')).digest('hex')
+      }
     });
 
     const failed = build();
@@ -244,6 +249,35 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
         detail: expect.objectContaining({ outcome: 'FAILED', code: 'EXPORT_FAILED', step: 'EXPORT' })
       })
     );
+  });
+
+  it('audits the checksum and key fingerprint of an export even when the rehearsal fails after it', async () => {
+    const { execute, agentClient, migrationRepository } = build();
+    agentClient.getImportJob.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+
+    await execute();
+
+    const [, entry] = migrationRepository.recordEvent.mock.calls.find(
+      ([, event]) => 'REHEARSAL_FINISHED' === event.action
+    );
+    expect(entry.detail).toMatchObject({
+      outcome: 'FAILED',
+      checksum: completedExport.checksum,
+      importKeyFingerprint: createHash('sha256').update(Buffer.from(PUBLIC_KEY, 'base64')).digest('hex')
+    });
+  });
+
+  it('has no checksum to audit when the export itself failed, only the key fingerprint', async () => {
+    const { execute, agentClient, migrationRepository } = build();
+    agentClient.getExportJob.mockResolvedValue({ ...completedExport, status: 'failed' });
+
+    await execute();
+
+    const [, entry] = migrationRepository.recordEvent.mock.calls.find(
+      ([, event]) => 'REHEARSAL_FINISHED' === event.action
+    );
+    expect(entry.detail).not.toHaveProperty('checksum');
+    expect(entry.detail).toHaveProperty('importKeyFingerprint');
   });
 
   it('keeps going when the audit write fails', async () => {

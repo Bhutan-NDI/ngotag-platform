@@ -38,6 +38,11 @@ class RehearsalFailure extends Error {
   }
 }
 
+interface ICustodyFacts {
+  checksum?: string;
+  importKeyFingerprint?: string;
+}
+
 /**
  * The dry run of a move (SAD E.2): export the tenant sealed to the dedicated agent, merge it there with the merge
  * rolled back, time both, and remove the export from S3. Nothing on either agent changes and the org is never
@@ -107,6 +112,8 @@ export class OrgAgentMigrationRehearsalService {
     }
 
     const record: IRehearsalRecord = { downloadMethod: 'PULL' };
+    // Audited whether the rehearsal finishes or not: the export has happened as soon as they are known.
+    const custody: ICustodyFacts = {};
     let exportJobId: string | undefined;
     try {
       const session = await this.guard('IMPORT', () =>
@@ -115,6 +122,7 @@ export class OrgAgentMigrationRehearsalService {
       const importKeyFingerprint = createHash('sha256')
         .update(Buffer.from(session.importPublicKey, 'base64'))
         .digest('hex');
+      custody.importKeyFingerprint = importKeyFingerprint;
 
       const exportStarted = Date.now();
       const exportJob = await this.guard('EXPORT', () =>
@@ -125,6 +133,7 @@ export class OrgAgentMigrationRehearsalService {
         this.agentClient.getExportJob(shared.endpoint, shared.token, migration.tenantId, exportJob.jobId)
       );
       record.exportMs = Date.now() - exportStarted;
+      custody.checksum = exported.checksum;
 
       const importStarted = Date.now();
       const importJob = await this.guard('IMPORT', () =>
@@ -160,14 +169,15 @@ export class OrgAgentMigrationRehearsalService {
       });
       await this.audit(migration.id, actor, 'REHEARSAL_FINISHED', {
         outcome: 'DONE',
-        exportCleanup: record.exportCleanup ?? 'DELETED'
+        exportCleanup: record.exportCleanup ?? 'DELETED',
+        ...custody
       });
     } catch (error) {
       if (exportJobId) {
         record.exportCleanup = await this.deleteExport(shared, migration.tenantId, exportJobId);
       }
       const failure = error instanceof RehearsalFailure ? error : new RehearsalFailure('EXPORT', 'REHEARSAL_FAILED');
-      await this.recordFailure(migration.id, actor, { ...record, step: failure.step, code: failure.code });
+      await this.recordFailure(migration.id, actor, { ...record, step: failure.step, code: failure.code }, custody);
     }
   }
 
@@ -228,7 +238,8 @@ export class OrgAgentMigrationRehearsalService {
   private async recordFailure(
     migrationId: string,
     actor: string,
-    record: IRehearsalRecord & { code: string }
+    record: IRehearsalRecord & { code: string },
+    custody: ICustodyFacts = {}
   ): Promise<void> {
     try {
       await this.migrationRepository.update(migrationId, {
@@ -242,7 +253,8 @@ export class OrgAgentMigrationRehearsalService {
       outcome: 'FAILED',
       code: record.code,
       ...(record.step ? { step: record.step } : {}),
-      ...(record.exportCleanup ? { exportCleanup: record.exportCleanup } : {})
+      ...(record.exportCleanup ? { exportCleanup: record.exportCleanup } : {}),
+      ...custody
     });
   }
 
