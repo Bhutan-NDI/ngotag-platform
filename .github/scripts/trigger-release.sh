@@ -15,8 +15,9 @@
 # A service release never changes the database: it only checks that the schema
 # has every migration its image carries. Migrations are applied only by
 # `make <environment>-migrate`: one standalone task running the API gateway image
-# with the Prisma migrate command, after the writer services (API gateway and
-# seed) are stopped. It deploys no service. Seed is never run.
+# with the Prisma migrate command. Seed must already be stopped; the workflow
+# stops the API gateway right before the task and restarts it afterwards. It
+# deploys no service. Seed is never run.
 #
 # Environment:
 #   DEPLOY_ENV                     qa | stage | prod
@@ -129,8 +130,9 @@ fi
 
 if [ "$kind" = migration ]; then
   echo "This applies database migrations in $environment: one task running the API gateway image with prisma migrate deploy."
-  echo "No service is deployed. The API gateway and seed services must already be stopped (desired count 0); the workflow"
-  echo "checks this and leaves them stopped. Start the gateway after your checks; never start seed."
+  echo "No service is deployed. Seed must be stopped (it always is). The workflow stops the API gateway right before the"
+  echo "task and restarts it once the migration succeeded; after a failed migration it stays stopped. Migrations must be"
+  echo "backward compatible with the services still running (expand/contract; see docs/ecs-release-automation.md)."
   confirm migrate
 fi
 

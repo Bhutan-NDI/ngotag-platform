@@ -65,19 +65,33 @@ commit than the last migration still deploys.
 **Migrations are applied by their own operation**, `make <environment>-migrate`,
 before the services that need them are released:
 
-1. Stop the writer services (the API gateway and seed) by setting their desired
-   count to 0.
-2. Run `make qa-migrate` (from `develop`), `make stage-migrate` (from `main`) or
-   `make prod-migrate`; Make asks the operator to type `migrate`.
-3. The workflow builds the API gateway image of that commit (Prod copies the image
-   Stage's migration ran, by digest), checks that every writer is stopped and that
-   no other migration task runs, then runs one standalone task: the API gateway's
-   task definition with only the image replaced and the command overridden to
-   `prisma migrate deploy && prisma migrate status`. No service is deployed and no
-   GitHub Release is published. A failure stops there; recover from the database
-   backups instead of retrying. A task that never started touched nothing.
-4. Start the API gateway again after your checks (seed stays stopped), then
-   release the services.
+1. Run `make qa-migrate` (from `develop`), `make stage-migrate` (from `main`) or
+   `make prod-migrate`; Make asks the operator to type `migrate`. Seed must be
+   stopped (it always is); the operator does not stop the API gateway.
+2. The workflow builds the API gateway image of that commit (Prod copies the image
+   Stage's migration ran, by digest) and registers the one-off task: the API
+   gateway's task definition with only the image replaced and the command
+   overridden to `prisma migrate deploy && prisma migrate status`.
+3. Only then, after the queue, the build and every check, it stops the API gateway
+   (desired count 0), waits until it has no tasks, checks that seed is still
+   stopped, and runs the task once. No service is deployed and no GitHub Release
+   is published.
+4. On success the gateway gets its desired count back, the migration is recorded
+   in the private ledger, and the job waits for the gateway to serve again. If
+   the task never ran (image pull, network or capacity failure), the database was
+   not touched and the gateway is restarted too. After a failed migration the
+   gateway stays stopped: recover from the database backups instead of retrying.
+5. Release the services that need the new schema.
+
+**Migrations must be backward compatible (expand/contract).** Only the API gateway
+stops; the other services keep running on their current images during the
+migration (they consume NATS messages and agent webhooks) and until each is
+released. A migration may therefore only add: new tables, nullable columns or
+columns with defaults, and indexes (prefer `CREATE INDEX CONCURRENTLY` for large
+tables). Renaming or dropping a column or table, tightening a column (`NOT NULL`
+without a default, narrower type) or any change that old code cannot work with
+is split across releases: first add the new shape and release every service that
+writes it; only then remove the old shape in a later migration.
 
 The task output can contain connection details, so the public log shows only the
 result; the task output is in the task's CloudWatch log. Neither the check nor the

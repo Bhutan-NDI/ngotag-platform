@@ -566,20 +566,24 @@ jobs:
       # A service release only checks, read-only, that the database has every
       # migration its image carries, and stops otherwise: a service never runs
       # ahead of the schema. `make <environment>-migrate` applies migrations: one
-      # task with the API gateway image while the writer services are stopped.
+      # task with the API gateway image. Seed must already be stopped; the gateway
+      # is stopped right before the task and restarted once the migration
+      # succeeded (or never ran). Each starts only if what follows it still fits:
+      # a service rollout (21 minutes), or the gateway's stop and restart (20).
       - name: ${{ needs.resolve.outputs.kind == 'migration' && 'Apply database migrations' || 'Check the database schema' }}
         shell: bash
         run: |
           set -euo pipefail
           if [ "$KIND" = "migration" ]; then
-            mode=deploy timeout=3600
+            mode=deploy timeout=3600 reserve=1200
             command="$(jq -r '.migration.deploy_command' "$CONTRACT")"
           else
-            mode=status timeout=900
+            mode=status timeout=900 reserve=1260
             command="$(jq -r '.migration.status_command' "$CONTRACT")"
           fi
           IMAGE="$(jq -r '.[0].image' "$RELEASE_FILE")" MODE="$mode" COMMAND="$command" \
-            MIGRATION_TIMEOUT="$timeout" RESULT_FILE="$RUNNER_TEMP/migration-task-definition" \
+            MIGRATION_TIMEOUT="$timeout" DEADLINE="$ROLLOUT_DEADLINE" RESERVE="$reserve" \
+            RESULT_FILE="$RUNNER_TEMP/migration-task-definition" RESTORE_FILE="$RUNNER_TEMP/gateway-restore.json" \
             bash .github/scripts/run-migration.sh
 
       - name: Deploy the service
@@ -669,13 +673,37 @@ jobs:
           VALIDATED_MANIFEST="$MANIFEST" DEPLOYED_RECORD="$RUNNER_TEMP/deployed.json" SERVICE="$OPERATION" \
             ENVIRONMENT="$TARGET_ENVIRONMENT" bash .github/scripts/record-deployment.sh
 
+      # The migration is recorded first; then the gateway must serve again.
+      - name: Wait for the API gateway to serve again
+        if: needs.resolve.outputs.kind == 'migration'
+        shell: bash
+        run: |
+          set -euo pipefail
+          restore="$RUNNER_TEMP/gateway-restore.json"
+          if [ ! -s "$restore" ]; then
+            echo "The API gateway was already stopped before the migration; it was left stopped"
+            exit 0
+          fi
+          service="$(jq -r '.service' "$restore")"
+          for _ in $(seq 1 40); do
+            if aws ecs describe-services --cluster "$CLUSTER" --services "$service" --query 'services[0]' --output json \
+              | jq -e '.desiredCount > 0 and .runningCount == .desiredCount and .pendingCount == 0 and
+                  ([.deployments[] | select(.status == "PRIMARY" and .rolloutState == "COMPLETED")] | length == 1)' >/dev/null; then
+              echo "The API gateway is serving again"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "the API gateway did not become stable in 10 minutes after the migration; check it now" >&2
+          exit 1
+
       - name: Summarize
         shell: bash
         env:
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
         run: |
           if [ "$KIND" = "migration" ]; then
-            printf '### Migrations applied in %s\n\nNo service was changed. The writer services are still stopped: start the API gateway after your checks; seed is never started.\n' \
+            printf '### Migrations applied in %s\n\nNo service was deployed. The API gateway was stopped only while the migration ran.\n' \
               "$TARGET_ENVIRONMENT" >> "$GITHUB_STEP_SUMMARY"
           else
             printf '### %s deployed to %s\n\nRelease: %s/%s/releases/tag/%s\n' \

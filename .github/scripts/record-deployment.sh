@@ -17,7 +17,8 @@ set -euo pipefail
   "${DEPLOYED_RECORD:?}" "${SERVICE:?}" "${ENVIRONMENT:?}"
 
 expected_request=$(jq -cS 'del(.release.deployed)' "$VALIDATED_MANIFEST")
-release=$(jq -er '.github_release' "$DEPLOYED_RECORD")
+# A service release names its GitHub Release; a migration (no release) its image.
+release=$(jq -er '.github_release // .image_tag' "$DEPLOYED_RECORD")
 
 for attempt in 1 2 3; do
   current=$(gh api "repos/$CONFIG_REPOSITORY/contents/$CONFIG_PATH?ref=main")
@@ -31,7 +32,7 @@ for attempt in 1 2 3; do
     '.release.deployed[$service] = $deployed[0]' <<<"$current_config")
   if printf '%s\n' "$updated" | base64 | tr -d '\n' > "$RUNNER_TEMP/ledger-content" &&
     gh api --method PUT "repos/$CONFIG_REPOSITORY/contents/$CONFIG_PATH" \
-      -f message="chore(platform): record $ENVIRONMENT release $release" \
+      -f message="chore(platform): record $ENVIRONMENT $SERVICE $release" \
       -F content=@"$RUNNER_TEMP/ledger-content" -f sha="$current_sha" -f branch=main >/dev/null; then
     rm -f "$RUNNER_TEMP/ledger-content"
     echo "Recorded the deployment in the private ledger"

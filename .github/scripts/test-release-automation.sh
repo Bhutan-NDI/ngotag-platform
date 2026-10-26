@@ -27,5 +27,6 @@ sh "$scripts/test-ecr-image-digest.sh"
 bash "$scripts/test-deploy-services.sh"
 bash "$scripts/test-run-migration.sh"
 bash "$scripts/test-promote-stage-images.sh"
+bash "$scripts/test-record-deployment.sh"
 
 echo "release automation: all checks passed"
