@@ -48,6 +48,26 @@ describe('MigrationAgentClient against a real HTTP server', () => {
     respond = () => ({ status: 200, body: {} });
   });
 
+  it('asks the agent to post a webhook test event, with the probe id in the body and the root token', async () => {
+    respond = () => ({ status: 201, body: { configured: true, delivered: true, status: 200 } });
+
+    await expect(client.probeWebhook(baseUrl, 'root-token', 'probe-1')).resolves.toEqual({
+      configured: true,
+      delivered: true,
+      status: 200
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ method: 'POST', url: '/agent/webhook/probe', authorization: 'root-token' });
+    expect(JSON.parse(seen[0].body)).toEqual({ probeId: 'probe-1' });
+  });
+
+  it('reports an agent without the probe route as not found', async () => {
+    respond = () => ({ status: 404 });
+
+    await expect(client.probeWebhook(baseUrl, 'root-token', 'probe-1')).rejects.toMatchObject({ kind: 'NOT_FOUND' });
+  });
+
   it('exchanges the API key for a token, sending the key as the authorization header', async () => {
     respond = () => ({ status: 200, body: { token: 'root-token' } });
 

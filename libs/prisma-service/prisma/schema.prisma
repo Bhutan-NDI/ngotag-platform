@@ -295,6 +295,10 @@ model org_agent_migrations {
   leaseUntil             DateTime?                    @db.Timestamptz(6)
   // Progress of the connection rotation after the switch: the agent's job and its counts, as last polled.
   rotation               Json?
+  // A one-time check that the dedicated agent's webhook URL reaches the platform: only the hash of the probe id is kept.
+  webhookProbeHash       String?                      @db.VarChar
+  webhookProbeExpiresAt  DateTime?                    @db.Timestamptz(6)
+  webhookConfirmedAt     DateTime?                    @db.Timestamptz(6)
   organisation           organisation                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
   events                 org_agent_migration_events[]
 

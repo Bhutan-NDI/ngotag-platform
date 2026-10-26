@@ -71,15 +71,17 @@ const build = (options: { migration?: object; dedicated?: object; shared?: objec
     dedicated: jest.fn().mockResolvedValue(undefined),
     encryptToken: jest.fn().mockImplementation((token: string) => `enc(${token})`)
   };
+  const webhookService = { check: jest.fn().mockResolvedValue({ confirmed: true }) };
   const logger = { error: jest.fn() };
   const service = new OrgAgentMigrationPreflightService(
     agentServiceRepository as never,
     migrationRepository as never,
     agentClient as never,
     access as never,
+    webhookService as never,
     logger as never
   );
-  return { service, agentServiceRepository, migrationRepository, agentClient, access, logger };
+  return { service, agentServiceRepository, migrationRepository, agentClient, access, webhookService, logger };
 };
 
 const input = { apiKey: 'api-key', backupsConfirmed: true };
@@ -87,6 +89,42 @@ const checkOf = (report: { checks: { id: string; status: string }[] }, id: Check
   report.checks.find((check) => check.id === id);
 
 describe('OrgAgentMigrationPreflightService', () => {
+  describe('the webhook check', () => {
+    it('has the dedicated agent send a test event to the platform, using the stored admin address and token', async () => {
+      const { service, webhookService } = build();
+
+      await service.run(MIGRATION_ID, input);
+
+      expect(webhookService.check).toHaveBeenCalledWith(expect.objectContaining({ id: MIGRATION_ID }), {
+        endpoint: 'https://admin.org.example.com',
+        token: ROOT_TOKEN
+      });
+    });
+
+    it.each(['WEBHOOK_NOT_CONFIGURED', 'WEBHOOK_UNREACHABLE', 'WEBHOOK_REJECTED', 'WEBHOOK_PROBE_UNSUPPORTED'])(
+      'fails with %s when the event does not arrive',
+      async (code) => {
+        const { service, webhookService } = build();
+        webhookService.check.mockResolvedValue({ confirmed: false, code });
+
+        const { report } = await service.run(MIGRATION_ID, input);
+
+        expect(report.passed).toBe(false);
+        expect(checkOf(report, Check.WEBHOOK_DELIVERS)).toMatchObject({ status: 'FAIL', code });
+      }
+    );
+
+    it('is skipped when the agent could not be reached, since there is nothing to send the event', async () => {
+      const { service, webhookService, agentClient } = build();
+      agentClient.getAgentInfo.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(webhookService.check).not.toHaveBeenCalled();
+      expect(checkOf(report, Check.WEBHOOK_DELIVERS)).toMatchObject({ status: 'SKIPPED' });
+    });
+  });
+
   it('passes every check for a correctly set up agent and stores the report, the token and the confirmation', async () => {
     const { service, migrationRepository, agentClient } = build();
 

@@ -240,6 +240,58 @@ export class OrgAgentMigrationRepository {
     return 1 === count;
   }
 
+  /**
+   * Takes the migration's one webhook probe slot, unless a probe that has not expired is already out.
+   * @returns false when another probe is in flight
+   */
+  async tryBeginWebhookProbe(id: string, probeHash: string, expiresAt: Date, now: Date = new Date()): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, OR: [{ webhookProbeHash: null }, { webhookProbeExpiresAt: { lt: now } }] },
+      data: { webhookProbeHash: probeHash, webhookProbeExpiresAt: expiresAt }
+    });
+    return 1 === count;
+  }
+
+  /**
+   * The dedicated agent's webhook has reached the platform: consumes the probe, once, if it is the live probe of this
+   * org's unfinished migration.
+   * @returns false for anything else, which the caller must not distinguish
+   */
+  async confirmWebhookProbe(orgId: string, probeHash: string, now: Date = new Date()): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: {
+        orgId,
+        status: { notIn: [...TERMINAL_STATUSES] },
+        webhookProbeHash: probeHash,
+        webhookProbeExpiresAt: { gt: now }
+      },
+      data: { webhookProbeHash: null, webhookProbeExpiresAt: null, webhookConfirmedAt: now }
+    });
+    return 1 === count;
+  }
+
+  /** Frees the probe slot if the probe is still the one that took it. */
+  async endWebhookProbe(id: string, probeHash: string): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({
+      where: { id, webhookProbeHash: probeHash },
+      data: { webhookProbeHash: null, webhookProbeExpiresAt: null }
+    });
+  }
+
+  /** Migrations in an open stabilisation window whose webhook has not been confirmed yet. */
+  async findAwaitingWebhook(now: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.STABILISING,
+        webhookConfirmedAt: null,
+        stabilisationEndsAt: { gt: now },
+        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+      },
+      orderBy: { stabilisationEndsAt: 'asc' },
+      take
+    });
+  }
+
   /** Confirmed moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
   async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
     return this.prisma.org_agent_migrations.findMany({

@@ -32,6 +32,7 @@ const build = () => {
   };
   const alertService = { alertKeyExport: jest.fn().mockResolvedValue({ recipients: 2, sent: 2 }) };
   const migrationRepository = { recordEvent: jest.fn().mockResolvedValue(undefined) };
+  const webhookService = { confirm: jest.fn().mockResolvedValue(true) };
   const logger = { error: jest.fn() };
   const controller = new OrgAgentMigrationController(
     migrationService as never,
@@ -42,6 +43,7 @@ const build = () => {
     authorizer as never,
     alertService as never,
     migrationRepository as never,
+    webhookService as never,
     logger as never
   );
   return {
@@ -54,6 +56,7 @@ const build = () => {
     authorizer,
     alertService,
     migrationRepository,
+    webhookService,
     logger,
     report
   };
@@ -115,6 +118,22 @@ describe('OrgAgentMigrationController', () => {
 
       expect(JSON.stringify(result)).not.toContain(SECRET);
       expect(result.migration).not.toHaveProperty('targetTokenEncrypted');
+    });
+  });
+
+  describe('confirm-org-agent-webhook', () => {
+    it('passes the org and probe id on and answers whether it was the live probe', async () => {
+      const { controller, webhookService } = build();
+
+      await expect(controller.confirmWebhook({ orgId: ORG_ID, probeId: 'probe-1' })).resolves.toEqual({
+        confirmed: true
+      });
+      expect(webhookService.confirm).toHaveBeenCalledWith(ORG_ID, 'probe-1');
+
+      webhookService.confirm.mockResolvedValue(false);
+      await expect(controller.confirmWebhook({ orgId: ORG_ID, probeId: 'guess' })).resolves.toEqual({
+        confirmed: false
+      });
     });
   });
 

@@ -9,6 +9,7 @@ import { OrgAgentMigrationAuthorizer } from './org-agent-migration.authorizer';
 import { OrgAgentMigrationScheduleService } from './org-agent-migration.schedule.service';
 import { OrgAgentMigrationRestoreService } from './org-agent-migration.restore.service';
 import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
+import { OrgAgentMigrationWebhookService } from './org-agent-migration.webhook.service';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import {
   ICancelOrgAgentMigration,
@@ -38,6 +39,7 @@ export class OrgAgentMigrationController {
     private readonly authorizer: OrgAgentMigrationAuthorizer,
     private readonly alertService: OrgAgentMigrationAlertService,
     private readonly migrationRepository: OrgAgentMigrationRepository,
+    private readonly webhookService: OrgAgentMigrationWebhookService,
     private readonly logger: Logger
   ) {}
 
@@ -133,6 +135,12 @@ export class OrgAgentMigrationController {
   async listMigrations(payload: IListOrgAgentMigrations): Promise<{ total: number; migrations: IOrgAgentMigration[] }> {
     const { total, migrations } = await this.migrationService.listMigrations(payload);
     return { total, migrations: migrations.map(toPublicMigration) };
+  }
+
+  // The dedicated agent's webhook test event arriving. Anything but the live probe of an unfinished move is refused.
+  @MessagePattern({ cmd: 'confirm-org-agent-webhook' })
+  async confirmWebhook(payload: { orgId: string; probeId: string }): Promise<{ confirmed: boolean }> {
+    return { confirmed: await this.webhookService.confirm(payload.orgId, payload.probeId) };
   }
 
   // Best effort: the alert that gates each export is the one that matters, and it fails closed there.

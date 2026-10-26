@@ -26,6 +26,7 @@ import { OrgAgentMigrationRehearsalService } from './migration/org-agent-migrati
 import { ScheduleModule } from '@nestjs/schedule';
 import { OrgAgentMigrationRestoreService } from './migration/org-agent-migration.restore.service';
 import { OrgAgentMigrationSwitchOverService } from './migration/org-agent-migration.switch-over.service';
+import { OrgAgentMigrationWebhookService } from './migration/org-agent-migration.webhook.service';
 import { OrgAgentMigrationScheduleService } from './migration/org-agent-migration.schedule.service';
 import { OrgAgentMigrationScheduler } from './migration/org-agent-migration.scheduler';
 import { OrgAgentMigrationExecutor } from './migration/org-agent-migration.executor.service';
@@ -72,6 +73,7 @@ import { OrgAgentMigrationRepository } from './repositories/org-agent-migration.
     OrgAgentMigrationExecutor,
     OrgAgentMigrationScheduleService,
     OrgAgentMigrationSwitchOverService,
+    OrgAgentMigrationWebhookService,
     OrgAgentMigrationRestoreService,
     OrgAgentMigrationScheduler,
     OrgAgentMigrationAuthorizer,

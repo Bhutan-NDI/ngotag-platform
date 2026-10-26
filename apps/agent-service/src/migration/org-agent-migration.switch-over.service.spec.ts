@@ -96,15 +96,17 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
     startRotation: jest.fn(async () => world.rotationStatus),
     getRotationStatus: jest.fn(async () => world.rotationStatus)
   } as Record<string, jest.Mock>;
+  const webhookService = { check: jest.fn(async () => ({ confirmed: true }) as { confirmed: boolean; code?: string }) };
   const logger = { error: jest.fn(), warn: jest.fn(), log: jest.fn() };
   const service = new OrgAgentMigrationSwitchOverService(
     migrationRepository as never,
     migrationService as never,
     access as never,
     agentClient as never,
+    webhookService as never,
     logger as never
   );
-  return { world, service, migrationRepository, migrationService, access, agentClient, logger };
+  return { world, service, migrationRepository, migrationService, access, agentClient, webhookService, logger };
 };
 
 const actions = (world: ReturnType<typeof buildWorld>['world']) => world.events.map((event) => event.action);
@@ -234,6 +236,16 @@ describe('what keeps the shared copy from being deleted', () => {
       'the dedicated agent is not initialised',
       'DEDICATED_AGENT_NOT_READY',
       (w) => w.agentClient.getAgentInfo.mockResolvedValue({ isInitialized: false, endpoints: [] })
+    ],
+    [
+      "the new agent's webhooks cannot reach the platform",
+      'WEBHOOK_UNREACHABLE',
+      (w) => w.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_UNREACHABLE' })
+    ],
+    [
+      'another webhook check is still running',
+      'WEBHOOK_CHECK_BUSY',
+      (w) => w.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_CHECK_BUSY' })
     ]
   ];
 
@@ -291,6 +303,91 @@ describe('what keeps the shared copy from being deleted', () => {
     world.migrationRepository.recordEvent.mockRejectedValue(new Error('db down'));
 
     await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('DEFERRED');
+  });
+});
+
+describe('the webhook gate', () => {
+  it('checks the new agent with a fresh probe before it lets the purge go ahead', async () => {
+    const world = buildWorld();
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+
+    expect(world.webhookService.check).toHaveBeenCalledWith(expect.objectContaining({ id: MIGRATION_ID }), DEDICATED);
+  });
+
+  it('does not probe while the window is still open', async () => {
+    const world = buildWorld({ stabilisationEndsAt: new Date(Date.now() + MINUTE) });
+
+    await world.service.beginSwitchOver(MIGRATION_ID);
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
+  });
+});
+
+describe('checking webhooks while the window is open', () => {
+  const open = () => buildWorld({ stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE) });
+
+  it('records that it arrived and audits it, leaving a clean row clean', async () => {
+    const world = open();
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.world.row.error).toBeNull();
+    expect(actions(world.world)).toEqual(['WEBHOOK_CONFIRMED']);
+    expect(world.webhookService.check).toHaveBeenCalledWith(expect.objectContaining({ id: MIGRATION_ID }), DEDICATED);
+  });
+
+  it('clears an earlier webhook problem once it arrives, but not an unrelated one', async () => {
+    const earlier = open();
+    earlier.world.row.error = 'WEBHOOK_UNREACHABLE';
+    await earlier.service.checkWebhook(MIGRATION_ID);
+    expect(earlier.world.row.error).toBeNull();
+
+    const unrelated = open();
+    unrelated.world.row.error = 'SHARED_AGENT_UNAVAILABLE';
+    await unrelated.service.checkWebhook(MIGRATION_ID);
+    expect(unrelated.world.row.error).toBe('SHARED_AGENT_UNAVAILABLE');
+  });
+
+  it('puts the reason on the migration, once, when it does not arrive', async () => {
+    const world = open();
+    world.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_NOT_CONFIGURED' });
+
+    await world.service.checkWebhook(MIGRATION_ID);
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.world.row.error).toBe('WEBHOOK_NOT_CONFIGURED');
+    expect(actions(world.world)).toEqual(['WEBHOOK_UNCONFIRMED']);
+  });
+
+  it('says nothing about a check that could not run, since that is not a webhook problem', async () => {
+    const world = open();
+    world.webhookService.check.mockResolvedValue({ confirmed: false, code: 'AGENT_UNAVAILABLE' });
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.world.row.error).toBeNull();
+    expect(actions(world.world)).toEqual([]);
+  });
+
+  it.each([
+    ['it has already been confirmed', { webhookConfirmedAt: new Date() }],
+    ['the migration is not stabilising', { status: Status.ROTATING }]
+  ])('does nothing when %s', async (_name, overrides) => {
+    const world = buildWorld({ stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE), ...overrides });
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
+  });
+
+  it('does nothing without a dedicated agent to ask', async () => {
+    const world = open();
+    world.access.dedicatedOfOrg.mockResolvedValue(undefined);
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
   });
 });
 

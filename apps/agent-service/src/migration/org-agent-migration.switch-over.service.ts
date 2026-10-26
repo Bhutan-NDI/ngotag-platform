@@ -7,6 +7,7 @@ import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
 import { IRotationStatus, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
 import { IRotationProgress } from './org-agent-migration.interface';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
+import { OrgAgentMigrationWebhookService } from './org-agent-migration.webhook.service';
 
 export type SwitchOverOutcome = 'STARTED' | 'DEFERRED' | 'SKIPPED';
 
@@ -40,6 +41,7 @@ export class OrgAgentMigrationSwitchOverService {
     private readonly migrationService: OrgAgentMigrationService,
     private readonly access: MigrationAgentAccess,
     private readonly agentClient: MigrationAgentClient,
+    private readonly webhookService: OrgAgentMigrationWebhookService,
     private readonly logger: Logger
   ) {}
 
@@ -135,9 +137,40 @@ export class OrgAgentMigrationSwitchOverService {
 
     try {
       const info = await this.agentClient.getAgentInfo(dedicated.endpoint, dedicated.token);
-      return info.isInitialized ? undefined : 'DEDICATED_AGENT_NOT_READY';
+      if (!info.isInitialized) {
+        return 'DEDICATED_AGENT_NOT_READY';
+      }
     } catch {
       return 'DEDICATED_AGENT_UNREACHABLE';
+    }
+
+    // The window's other purpose: the shared copy is not deleted while the new agent's webhooks cannot reach us.
+    const webhook = await this.webhookService.check(migration, dedicated);
+    return webhook.confirmed ? undefined : webhook.code;
+  }
+
+  /**
+   * During an open window, checks that the dedicated agent's webhooks reach the platform, so the owner sees a problem
+   * within minutes rather than when the window ends. Says so on the migration, and clears that once it passes.
+   */
+  async checkWebhook(migrationId: string): Promise<void> {
+    const migration = await this.migrationRepository.getById(migrationId);
+    if (!migration || OrgAgentMigrationStatus.STABILISING !== migration.status || migration.webhookConfirmedAt) {
+      return;
+    }
+    const dedicated = await this.dedicatedOf(migration);
+    if (!dedicated) {
+      return;
+    }
+
+    const result = await this.webhookService.check(migration, dedicated);
+    if (result.confirmed) {
+      const cleared = migration.error?.startsWith('WEBHOOK_') ? { error: null } : {};
+      await this.migrationRepository.update(migration.id, cleared);
+      await this.audit(migration.id, 'WEBHOOK_CONFIRMED', {});
+    } else if (result.code.startsWith('WEBHOOK_') && migration.error !== result.code) {
+      await this.migrationRepository.update(migration.id, { error: result.code });
+      await this.audit(migration.id, 'WEBHOOK_UNCONFIRMED', { reason: result.code });
     }
   }
 

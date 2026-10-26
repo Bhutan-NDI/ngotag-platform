@@ -71,6 +71,7 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
     try {
       await this.guarded('recovery', () => this.recoverStalledMoves());
       await this.guarded('start', () => this.startDueMoves());
+      await this.guarded('webhooks', () => this.confirmWebhooks());
       await this.guarded('switch-over', () => this.switchOverEndedWindows());
       await this.guarded('rotation', () => this.driveRotations());
     } finally {
@@ -159,6 +160,25 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
       actor: null,
       detail: { reason: 'FINAL_CHECK_FAILED', check: failedCheck }
     });
+  }
+
+  // While a window is open, keep checking until the new agent's webhooks are seen to arrive. The lease spaces the tries.
+  private async confirmWebhooks(): Promise<void> {
+    for (const migration of await this.migrationRepository.findAwaitingWebhook(new Date(), BATCH)) {
+      try {
+        if (
+          !(await this.migrationRepository.tryAcquireLease(
+            migration.id,
+            envMs('ORG_MIGRATION_WEBHOOK_RETRY_MS', 10 * MINUTE_MS)
+          ))
+        ) {
+          continue;
+        }
+        await this.switchOverService.checkWebhook(migration.id);
+      } catch (error) {
+        this.logger.error(`[migration-scheduler] ${migration.id}: webhook check failed: ${this.describe(error)}`);
+      }
+    }
   }
 
   // The window has ended: switch the org over for good, if it is safe, and carry straight on into the rotation.

@@ -11,6 +11,12 @@ export interface IAgentRuntimeConfig {
   cronPurgeEnabled: boolean;
 }
 
+export interface IWebhookProbe {
+  configured: boolean;
+  delivered: boolean;
+  status?: number;
+}
+
 export interface IAgentInfo {
   label?: string;
   endpoints: string[];
@@ -260,6 +266,11 @@ export class MigrationAgentClient {
     body: { '@context': string[]; type: string[]; credentialSubject: Record<string, unknown>; proofType: string }
   ): Promise<ISelfAttestedCredential> {
     return this.request('post', adminEndpoint, '/agent/credential/self-attested', token, body);
+  }
+
+  // The agent posts a test event to its own webhook URL; the platform decides whether it arrived.
+  probeWebhook(adminEndpoint: string, token: string, probeId: string): Promise<IWebhookProbe> {
+    return this.request('post', adminEndpoint, '/agent/webhook/probe', token, { probeId });
   }
 
   verifyCredential(

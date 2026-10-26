@@ -13,7 +13,9 @@ const INTERNAL_FIELDS = [
   'checksum',
   'importKeyFingerprint',
   'targetTokenEncrypted',
-  'leaseUntil'
+  'leaseUntil',
+  'webhookProbeHash',
+  'webhookProbeExpiresAt'
 ];
 
 const fullRow = (): Record<string, string> => {
