@@ -1,5 +1,5 @@
 /* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type, no-mixed-operators, prefer-destructuring */
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, NotFoundException } from '@nestjs/common';
 import { OrgAgentMigrationStatus as Status } from '@credebl/enum/enum';
 import { OrgAgentMigrationScheduleService } from './org-agent-migration.schedule.service';
 
@@ -22,6 +22,7 @@ const build = (options: { migration?: object | null; orgName?: string | null } =
   const migrationRepository = {
     getActiveByOrgId: jest.fn().mockResolvedValue(migration),
     getOrgName: jest.fn().mockResolvedValue('orgName' in options ? options.orgName : 'Acme Ltd'),
+    hasActiveBulkIssuance: jest.fn().mockResolvedValue(false),
     recordEvent: jest.fn().mockResolvedValue(undefined)
   };
   const migrationService = { advance: jest.fn().mockResolvedValue({ id: 'm1', status: Status.REHEARSED }) };
@@ -61,6 +62,36 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     await confirm(service, { scheduledFor: new Date(Date.now() + DAY).toISOString() });
 
     expect(migrationService.advance.mock.calls[0][3]).toMatchObject({ error: null });
+  });
+
+  describe('a bulk issuance that is still running', () => {
+    it('refuses to confirm with 409 ORG_BULK_JOB_ACTIVE, and books nothing', async () => {
+      const { service, migrationRepository, migrationService } = build();
+      migrationRepository.hasActiveBulkIssuance.mockResolvedValue(true);
+
+      const error = await confirm(service).catch((e) => e);
+
+      expect(error).toBeInstanceOf(HttpException);
+      expect(error.getStatus()).toBe(409);
+      expect(error.getResponse()).toMatchObject({ statusCode: 409, error: 'ORG_BULK_JOB_ACTIVE' });
+      expect(migrationService.advance).not.toHaveBeenCalled();
+      expect(migrationRepository.recordEvent).not.toHaveBeenCalled();
+      expect(migrationRepository.hasActiveBulkIssuance).toHaveBeenCalledWith(ORG_ID);
+    });
+
+    it('confirms when none is running', async () => {
+      const { service, migrationService } = build();
+
+      await expect(confirm(service)).resolves.toBeDefined();
+      expect(migrationService.advance).toHaveBeenCalled();
+    });
+
+    it('still checks the name first, so the answer does not tell a stranger what is running', async () => {
+      const { service, migrationRepository } = build();
+      migrationRepository.hasActiveBulkIssuance.mockResolvedValue(true);
+
+      await expect(confirm(service, { confirmationName: 'Someone else' })).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   describe('the age of the rehearsal', () => {

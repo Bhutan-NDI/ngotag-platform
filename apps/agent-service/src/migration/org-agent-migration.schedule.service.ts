@@ -1,5 +1,5 @@
 /* eslint-disable camelcase */
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { org_agent_migrations } from '@prisma/client';
@@ -60,6 +60,18 @@ export class OrgAgentMigrationScheduleService {
     const orgName = await this.migrationRepository.getOrgName(orgId);
     if (!orgName || 'string' !== typeof confirmationName || confirmationName.trim() !== orgName.trim()) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationConfirmationMismatch);
+    }
+
+    // Its rows would be refused with 423 once the org is frozen. The scheduler asks again just before the freeze.
+    if (await this.migrationRepository.hasActiveBulkIssuance(orgId)) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.CONFLICT,
+          message: ResponseMessages.agent.error.orgBulkJobActive,
+          error: 'ORG_BULK_JOB_ACTIVE'
+        },
+        HttpStatus.CONFLICT
+      );
     }
 
     const now = Date.now();
