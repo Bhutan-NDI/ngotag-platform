@@ -72,15 +72,21 @@ before the services that need them are released:
    Stage's migration ran, by digest) and registers the one-off task: the API
    gateway's task definition with only the image replaced and the command
    overridden to `prisma migrate deploy && prisma migrate status`.
-3. Only then, after the queue, the build and every check, it stops the API gateway
+3. Only then, after the queue, the build and every check, it suspends the API
+   gateway's Service Auto Scaling (unless it already is), stops the gateway
    (desired count 0), waits until it has no tasks, checks that seed is still
-   stopped, and runs the task once. No service is deployed and no GitHub Release
+   stopped, and runs the task once. While the task runs, a gateway started by
+   anything else is stopped again. No service is deployed and no GitHub Release
    is published.
-4. On success the gateway gets its desired count back, the migration is recorded
-   in the private ledger, and the job waits for the gateway to serve again. If
-   the task never ran (image pull, network or capacity failure), the database was
-   not touched and the gateway is restarted too. After a failed migration the
-   gateway stays stopped: recover from the database backups instead of retrying.
+4. On success the gateway gets its desired count and its previous auto scaling
+   state back, the migration is recorded in the private ledger, and the job waits
+   for the gateway to serve again. If the task never ran (image pull, network or
+   capacity failure), the database was not touched and the gateway is given back
+   too. In every other case (a failed migration, a timeout, or an outcome the job
+   could not see, such as an AWS API error or a cancelled job) the gateway stays
+   stopped and its scaling suspended, and the log says what to give back by hand.
+   After a failed migration, recover from the database backups instead of
+   retrying.
 5. Release the services that need the new schema.
 
 **Migrations must be backward compatible (expand/contract).** Only the API gateway

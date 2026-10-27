@@ -11,7 +11,9 @@ mkdir -p "$work/bin"
 
 # The fake keeps the gateway's desired count in $FAKE_STATE/gateway.desired
 # (FAKE_GATEWAY_DESIRED at the start). Its tasks follow the desired count unless
-# FAKE_GATEWAY_STUCK is set. Seed runs FAKE_SEED_RUNNING tasks (default 0).
+# FAKE_GATEWAY_STUCK is set. Seed runs FAKE_SEED_RUNNING tasks (default 0). The
+# gateway's scalable target is suspended as FAKE_SCALING says (none if unset);
+# its state is kept in $FAKE_STATE/scaling.json.
 cat > "$work/bin/aws" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -19,7 +21,15 @@ state=$FAKE_STATE
 echo "$*" >> "$state/calls"
 arg() { local key=$1; shift; while [ "$#" -gt 0 ]; do [ "$1" = "$key" ] && { echo "$2"; return; }; shift; done; }
 [ -f "$state/gateway.desired" ] || echo "${FAKE_GATEWAY_DESIRED:-2}" > "$state/gateway.desired"
+[ -f "$state/scaling.json" ] || echo "${FAKE_SCALING:-null}" > "$state/scaling.json"
 case "$2" in
+  describe-scalable-targets)
+    test "$(arg --resource-ids "$@")" = service/cluster/gateway-service || { echo "wrong scalable target" >&2; exit 1; }
+    cat "$state/scaling.json"
+    ;;
+  register-scalable-target)
+    arg --suspended-state "$@" | jq -c . > "$state/scaling.json"
+    ;;
   list-tasks) echo "${FAKE_RUNNING_MIGRATIONS:-0}" ;;
   describe-services)
     service=$(arg --services "$@")
@@ -36,7 +46,10 @@ case "$2" in
       networkConfiguration: {awsvpcConfiguration: {subnets: ["subnet-1"], securityGroups: ["sg-1"], assignPublicIp: "DISABLED"}}}'
     ;;
   update-service)
-    arg --desired-count "$@" > "$state/gateway.desired"
+    count=$(arg --desired-count "$@")
+    if [ "$count" != 0 ] && [ -n "${FAKE_RESTORE_FAILS:-}" ]; then echo "An error occurred (ThrottlingException)" >&2; exit 254; fi
+    [ "$count" = 0 ] && cp "$state/scaling.json" "$state/scaling-at-stop.json"
+    echo "$count" > "$state/gateway.desired"
     arg --desired-count "$@" >> "$state/gateway.history"
     ;;
   describe-task-definition)
@@ -56,6 +69,8 @@ case "$2" in
     ;;
   run-task)
     echo "gateway=$(cat "$state/gateway.desired")" > "$state/at-run-task"
+    # Something else starts the gateway once the task runs.
+    [ -n "${FAKE_GATEWAY_RESTARTS:-}" ] && echo 1 > "$state/gateway.desired"
     arg --overrides "$@" > "$state/overrides.json"
     arg --network-configuration "$@" > "$state/network.json"
     arg --launch-type "$@" > "$state/launch-type"
@@ -67,6 +82,7 @@ case "$2" in
     ;;
   describe-tasks)
     polls=$(( $(cat "$state/polls" 2>/dev/null || echo 0) + 1 )); echo "$polls" > "$state/polls"
+    if [ -n "${FAKE_DESCRIBE_TASKS_FAILS:-}" ]; then echo "An error occurred (ThrottlingException)" >&2; exit 254; fi
     status=RUNNING; [ "$polls" -ge 2 ] && status=STOPPED
     if [ "${FAKE_EXIT_CODE:-0}" = none ]; then
       jq -n --arg status "$status" '{lastStatus: $status, stopCode: "TaskFailedToStart", containers: [{name: "gateway"}]}'
@@ -123,11 +139,44 @@ run env MODE=deploy > "$work/out" 2>&1 || { cat "$work/out" >&2; fail "migration
 grep -q 'Migrations applied' "$work/out" || fail "migration success was not reported"
 test "$(cat "$work/state/at-run-task")" = gateway=0 || fail "the gateway was not stopped when the task ran"
 test "$(history)" = "0 2" || fail "gateway not stopped then restored: $(history)"
-jq -e '. == {service: "gateway-service", desired_count: 2}' "$work/restore.json" >/dev/null || fail "restore not recorded"
+jq -e '. == {service: "gateway-service", desired_count: 2, restored: true}' "$work/restore.json" >/dev/null || fail "restore not recorded"
+grep -q 'register-scalable-target' "$work/state/calls" && fail "scaling changed for a gateway without a scalable target"
 
 # A gateway that the operator already stopped is left as it is.
 run env MODE=deploy FAKE_GATEWAY_DESIRED=0 > "$work/out" 2>&1 || { cat "$work/out" >&2; fail "migration with a stopped gateway failed"; }
 grep -qs 'update-service' "$work/state/calls" && fail "an already stopped gateway was changed"
+jq -e '. == {service: "gateway-service", desired_count: 0, restored: true}' "$work/restore.json" >/dev/null \
+  || fail "an already stopped gateway was not recorded as such"
+
+# Active auto scaling is suspended before the gateway stops and given back its previous state.
+active='{"DynamicScalingInSuspended":false,"DynamicScalingOutSuspended":false,"ScheduledScalingSuspended":true}'
+run env MODE=deploy FAKE_SCALING="$active" > "$work/out" 2>&1 || { cat "$work/out" >&2; fail "migration with auto scaling failed"; }
+jq -e 'all(.[]; . == true)' "$work/state/scaling-at-stop.json" >/dev/null || fail "auto scaling was not suspended before the stop"
+test "$(cat "$work/state/scaling.json")" = "$active" || fail "auto scaling not given back its previous state"
+test "$(history)" = "0 2" || fail "gateway not stopped then restored with auto scaling: $(history)"
+# Auto scaling that is already suspended is left alone.
+run env MODE=deploy FAKE_SCALING='{"DynamicScalingInSuspended":true,"DynamicScalingOutSuspended":true,"ScheduledScalingSuspended":true}' \
+  > "$work/out" 2>&1 || { cat "$work/out" >&2; fail "migration with suspended auto scaling failed"; }
+grep -q 'register-scalable-target' "$work/state/calls" && fail "already suspended auto scaling was changed"
+
+# A gateway started while the migration runs is stopped again.
+run env MODE=deploy FAKE_GATEWAY_RESTARTS=1 > "$work/out" 2>&1 || { cat "$work/out" >&2; fail "migration with a restarted gateway failed"; }
+grep -q 'stopping it again' "$work/out" || fail "a restarted gateway was not reported"
+test "$(history)" = "0 0 2" || fail "a gateway started during the migration was not stopped again: $(history)"
+
+# An AWS error while the task may be running leaves the gateway and its scaling as they are.
+if run env MODE=deploy FAKE_SCALING="$active" FAKE_DESCRIBE_TASKS_FAILS=1 > "$work/out" 2>&1; then fail "a failed poll was accepted"; fi
+test "$(history)" = 0 || fail "the gateway was restarted while the migration may run: $(history)"
+jq -e 'all(.[]; . == true)' "$work/state/scaling.json" >/dev/null || fail "auto scaling resumed while the migration may run"
+grep -q 'give it back its desired count (2) by hand' "$work/out" || fail "the stopped gateway was not reported"
+grep -q 'auto scaling stays suspended' "$work/out" || fail "the suspended auto scaling was not reported"
+
+# A gateway that cannot be given back is reported, never as restored; the applied
+# migration still succeeds so it is recorded.
+run env MODE=deploy FAKE_RESTORE_FAILS=1 > "$work/out" 2>&1 || { cat "$work/out" >&2; fail "an applied migration failed on the restore"; }
+grep -q 'given back its desired count' "$work/out" && fail "a failed restore was reported as done"
+grep -q 'give it back its desired count (2) by hand' "$work/out" || fail "a failed restore was not reported"
+jq -e '.restored == false' "$work/restore.json" >/dev/null || fail "a failed restore was recorded as restored"
 
 # Seed must already be stopped; nothing changes otherwise.
 if run env MODE=deploy FAKE_SEED_RUNNING=1 > "$work/out" 2>&1; then fail "migration ran with seed running"; fi
@@ -136,6 +185,7 @@ grep -qs 'run-task\|update-service' "$work/state/calls" && fail "something chang
 # A failed migration leaves the gateway stopped.
 if run env MODE=deploy FAKE_EXIT_CODE=1 > "$work/out" 2>&1; then fail "a failed migration was accepted"; fi
 grep -q 'MIGRATION FAILED' "$work/out" || fail "failed migration was not reported"
+grep -q 'stays stopped' "$work/out" || fail "the stopped gateway was not reported after a failed migration"
 test "$(history)" = 0 || fail "the gateway was restarted after a failed migration: $(history)"
 
 # When the database was not touched, the gateway gets its count back.

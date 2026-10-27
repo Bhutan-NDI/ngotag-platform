@@ -567,8 +567,9 @@ jobs:
       # migration its image carries, and stops otherwise: a service never runs
       # ahead of the schema. `make <environment>-migrate` applies migrations: one
       # task with the API gateway image. Seed must already be stopped; the gateway
-      # is stopped right before the task and restarted once the migration
-      # succeeded (or never ran). Each starts only if what follows it still fits:
+      # is stopped, with its auto scaling suspended, right before the task and
+      # given back once the migration succeeded (or never ran). Each starts only
+      # if what follows it still fits:
       # a service rollout (21 minutes), or the gateway's stop and restart (20).
       - name: ${{ needs.resolve.outputs.kind == 'migration' && 'Apply database migrations' || 'Check the database schema' }}
         shell: bash
@@ -680,7 +681,11 @@ jobs:
         run: |
           set -euo pipefail
           restore="$RUNNER_TEMP/gateway-restore.json"
-          if [ ! -s "$restore" ]; then
+          if ! jq -e '.restored' "$restore" >/dev/null; then
+            echo "the API gateway was not given back after the migration; restore it by hand as the migration step says" >&2
+            exit 1
+          fi
+          if [ "$(jq -r '.desired_count' "$restore")" = 0 ]; then
             echo "The API gateway was already stopped before the migration; it was left stopped"
             exit 0
           fi

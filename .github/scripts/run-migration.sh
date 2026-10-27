@@ -12,10 +12,11 @@
 #   MODE=deploy  `make <environment>-migrate` only: `prisma migrate deploy` then
 #                `migrate status`, from the API gateway image. Every other writer
 #                (seed) must already be stopped at 0/0; the API gateway is stopped
-#                here, right before the task, and given back its desired count
-#                once the migration succeeded, or when the task never ran (the
-#                database was not touched). After a failed migration it stays
-#                stopped.
+#                here, right before the task, with its Service Auto Scaling
+#                suspended so nothing scales it back up. Both are given back once
+#                the migration succeeded, or when the task never ran (the
+#                database was not touched). Whenever the migration failed, timed
+#                out or its outcome is unknown, both stay as they are.
 #
 # The task is a copy of the template service's (API gateway's) current task
 # definition, for its environment file, roles and network, in its own family,
@@ -36,8 +37,9 @@
 #   POLL_SECONDS (default 15), STOP_TIMEOUT (seconds to wait for the gateway to
 #   stop, default 600), DEADLINE (optional epoch seconds), RESERVE (seconds,
 #   default 1260), RESULT_FILE (optional; receives the task definition ARN),
-#   RESTORE_FILE (optional, deploy mode; receives {service, desired_count} when the
-#   gateway was given back its desired count)
+#   RESTORE_FILE (optional, deploy mode; after a successful migration receives
+#   {service, desired_count, restored}: the gateway's desired count before it was
+#   stopped, and whether everything was given back)
 
 set -euo pipefail
 
@@ -56,24 +58,55 @@ service=$(jq -er '.service' "$TEMPLATE_FILE")
 container=$(jq -er '.container' "$TEMPLATE_FILE")
 family=$(jq -er '.task_definition_family' "$TEMPLATE_FILE")
 
-# Deploy mode: the gateway's desired count before it was stopped, and whether it
-# must stay stopped (the migration ran and failed, or is still running).
+# Deploy mode: what was changed on the gateway and is still to be given back (its
+# desired count before it was stopped, and its scalable target's suspended state
+# before scaling was suspended), and whether it must stay that way: from the
+# moment the task may run until its outcome is known to be safe.
+original_count=
 stopped_count=
+scaling=
 keep_stopped=false
-restore_gateway() {
-  [ -n "$stopped_count" ] && [ "$stopped_count" -gt 0 ] || return 0
-  aws ecs update-service --cluster "$CLUSTER" --service "$service" --desired-count "$stopped_count" >/dev/null
-  if [ -n "${RESTORE_FILE:-}" ]; then
-    jq -n --arg service "$service" --argjson count "$stopped_count" \
-      '{service: $service, desired_count: $count}' > "$RESTORE_FILE"
+scalable_target="service/$CLUSTER/$service"
+give_back_gateway() {
+  if [ -n "$stopped_count" ]; then
+    aws ecs update-service --cluster "$CLUSTER" --service "$service" --desired-count "$stopped_count" >/dev/null || return 1
+    echo "API gateway given back its desired count ($stopped_count)"
+    stopped_count=
   fi
-  echo "API gateway given back its desired count ($stopped_count)"
-  stopped_count=
+  if [ -n "$scaling" ]; then
+    aws application-autoscaling register-scalable-target --service-namespace ecs \
+      --scalable-dimension ecs:service:DesiredCount --resource-id "$scalable_target" \
+      --suspended-state "$scaling" >/dev/null || return 1
+    echo "API gateway auto scaling given back its previous state"
+    scaling=
+  fi
+}
+left_changed() {
+  [ -n "$stopped_count" ] && echo "The API gateway stays stopped; give it back its desired count ($stopped_count) by hand." >&2
+  [ -n "$scaling" ] && echo "Its auto scaling stays suspended; give it back its previous state by hand: $scaling" >&2
+  return 0
+}
+# Gives the gateway back, retrying once, and records whether that worked.
+settle_gateway() {
+  restored=true
+  if ! give_back_gateway; then
+    sleep "$poll_seconds"
+    give_back_gateway || { restored=false; echo "could not give the API gateway back" >&2; left_changed; }
+  fi
+  if [ -n "${RESTORE_FILE:-}" ]; then
+    jq -n --arg service "$service" --argjson count "$original_count" --argjson restored "$restored" \
+      '{service: $service, desired_count: $count, restored: $restored}' > "$RESTORE_FILE"
+  fi
 }
 on_exit() {
   status=$?
-  if [ "$keep_stopped" = false ] && [ -n "$stopped_count" ]; then
-    restore_gateway || echo "could not restart the API gateway; restore its desired count by hand" >&2
+  if [ -n "$stopped_count$scaling" ]; then
+    if [ "$keep_stopped" = true ]; then
+      echo "Check the migration task in ECS and the database before giving the API gateway back." >&2
+      left_changed
+    else
+      settle_gateway
+    fi
   fi
   rm -rf "$work"
   exit "$status"
@@ -152,10 +185,25 @@ if [ "$MODE" = deploy ]; then
     echo "the API gateway has a deployment in progress; retry after it completes" >&2
     exit 1
   }
-  stopped_count=$(jq -r '.desiredCount' "$work/service.json")
-  if [ "$stopped_count" -gt 0 ]; then
+  # Service Auto Scaling would scale a stopped gateway back up to its minimum.
+  # Suspend it unless it already is; its previous state is given back with the
+  # gateway.
+  suspended=$(aws application-autoscaling describe-scalable-targets --service-namespace ecs \
+    --scalable-dimension ecs:service:DesiredCount --resource-ids "$scalable_target" \
+    --query 'ScalableTargets[0].SuspendedState' --output json)
+  if [ "$suspended" != null ] && ! jq -e 'all(.[]; . == true)' <<<"$suspended" >/dev/null; then
+    scaling=$(jq -c . <<<"$suspended")
+    aws application-autoscaling register-scalable-target --service-namespace ecs \
+      --scalable-dimension ecs:service:DesiredCount --resource-id "$scalable_target" \
+      --suspended-state '{"DynamicScalingInSuspended":true,"DynamicScalingOutSuspended":true,"ScheduledScalingSuspended":true}' \
+      >/dev/null
+    echo "API gateway auto scaling suspended"
+  fi
+  original_count=$(jq -r '.desiredCount' "$work/service.json")
+  if [ "$original_count" -gt 0 ]; then
+    stopped_count=$original_count
     aws ecs update-service --cluster "$CLUSTER" --service "$service" --desired-count 0 >/dev/null
-    echo "API gateway stopping (desired count was $stopped_count)"
+    echo "API gateway stopping (desired count was $original_count)"
   fi
   stop_begun=$(date +%s)
   while :; do
@@ -175,10 +223,14 @@ fi
 
 overrides=$(jq -cn --arg container "$container" --arg command "$COMMAND" \
   '{containerOverrides: [{name: $container, command: ["sh", "-ec", $command]}]}')
+# From here the task may be running: any exit not known to be safe leaves the
+# gateway as it is.
+keep_stopped=true
 aws ecs run-task --cluster "$CLUSTER" --task-definition "$task_definition" --count 1 \
   --launch-type FARGATE --started-by platform-release \
   --network-configuration "$network" --overrides "$overrides" --output json > "$work/started.json"
 jq -e '(.failures | length) == 0 and (.tasks | length) == 1' "$work/started.json" >/dev/null || {
+  keep_stopped=false
   echo "the $MODE task did not start; the database was not touched" >&2
   exit 1
 }
@@ -190,10 +242,17 @@ while :; do
   aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$task" --query 'tasks[0]' --output json > "$work/task.json"
   [ "$(jq -r '.lastStatus' "$work/task.json")" = STOPPED ] && break
   if [ "$(($(date +%s) - begun))" -gt "$timeout_seconds" ]; then
-    keep_stopped=true
     echo "the $MODE task did not stop in ${timeout_seconds}s; do not start another one; inspect it in ECS." >&2
-    [ "$MODE" = deploy ] && echo "The API gateway stays stopped." >&2
     exit 1
+  fi
+  # Nothing may start the gateway while the migration runs.
+  if [ "$MODE" = deploy ]; then
+    aws ecs describe-services --cluster "$CLUSTER" --services "$service" \
+      --query 'services[0]' --output json > "$work/state.json"
+    if ! jq -e '.desiredCount == 0' "$work/state.json" >/dev/null; then
+      echo "the API gateway was started while the migration runs; stopping it again" >&2
+      aws ecs update-service --cluster "$CLUSTER" --service "$service" --desired-count 0 >/dev/null
+    fi
   fi
   sleep "$poll_seconds"
 done
@@ -201,6 +260,7 @@ done
 exit_code=$(jq -r --arg container "$container" '.containers[] | select(.name == $container) | .exitCode // "none"' "$work/task.json")
 elapsed=$(($(date +%s) - begun))
 if [ "$exit_code" = none ]; then
+  keep_stopped=false
   # Only the stop code: the stopped reason can name registries and accounts.
   echo "the $MODE task stopped before its container ran ($(jq -r '.stopCode // "unknown"' "$work/task.json"));" >&2
   echo "the database was not touched and nothing was deployed. Fix the cause and run it again." >&2
@@ -211,8 +271,7 @@ if [ "$exit_code" != 0 ]; then
     echo "the database lacks migrations this image carries (migrate status exit $exit_code). Nothing was deployed." >&2
     echo "Apply them first with make <environment>-migrate." >&2
   else
-    keep_stopped=true
-    echo "MIGRATION FAILED (exit $exit_code). The API gateway stays stopped. Do not retry; recover from the database backups." >&2
+    echo "MIGRATION FAILED (exit $exit_code). Do not retry; recover from the database backups." >&2
   fi
   echo "The task output is in its CloudWatch log." >&2
   exit 1
@@ -221,5 +280,8 @@ if [ "$MODE" = status ]; then
   echo "The database schema is up to date for this release (${elapsed}s)"
 else
   echo "Migrations applied and verified (${elapsed}s)"
-  restore_gateway
+  # The migration is applied whether or not the gateway comes back, so it is
+  # still recorded; the job then fails on a gateway that was not given back.
+  keep_stopped=false
+  settle_gateway
 fi
