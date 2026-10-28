@@ -67,17 +67,23 @@ export class OrgAgentMigrationRestoreService {
       throw new ConflictException(ResponseMessages.agent.error.migrationRestoreBusy);
     }
 
-    const relay = await this.takeRelayOff(migration);
-    const { restored, invitationsRemoved } = await this.switchBack(migration, snapshot, adminUserId);
+    try {
+      const relay = await this.takeRelayOff(migration);
+      const { restored, invitationsRemoved } = await this.switchBack(migration, snapshot, adminUserId);
 
-    await this.audit(migration.id, adminUserId, 'DISASTER_RESTORED', {
-      relayWasAlreadyOff: undefined === relay,
-      messagesReturned: relay?.injected ?? 0,
-      messagesLost: relay?.failed ?? 0,
-      invitationsRemoved
-    });
-    await this.tellPeople(restored, adminUserId);
-    return restored;
+      await this.audit(migration.id, adminUserId, 'DISASTER_RESTORED', {
+        relayWasAlreadyOff: undefined === relay,
+        messagesReturned: relay?.injected ?? 0,
+        messagesLost: relay?.failed ?? 0,
+        invitationsRemoved
+      });
+      await this.tellPeople(restored, adminUserId);
+      return restored;
+    } catch (error) {
+      // Nothing is running any more, so an immediate retry must not be refused as busy.
+      await this.migrationRepository.releaseLease(migration.id).catch(() => undefined);
+      throw error;
+    }
   }
 
   // First, so messages reach the shared wallet again before the org starts calling it. Queued ones go back first.
@@ -99,6 +105,10 @@ export class OrgAgentMigrationRestoreService {
         // The shared copy is gone, so there is nothing to give the org back to.
         if ('CONFLICT' === error.kind && 'TENANT_PURGED' === error.agentCode) {
           throw new BadRequestException(ResponseMessages.agent.error.migrationRestoreNotAllowed);
+        }
+        // An earlier call is still handing the queued messages back; a second drain would lose some of them.
+        if ('CONFLICT' === error.kind && 'RELAY_BUSY' === error.agentCode) {
+          throw new ConflictException(ResponseMessages.agent.error.migrationRestoreBusy);
         }
       }
       this.logger.error(`[restore] ${migration.id}: could not take the relay off: ${this.describe(error)}`);

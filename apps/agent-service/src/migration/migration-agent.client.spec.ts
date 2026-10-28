@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { HttpService } from '@nestjs/axios';
+import { of } from 'rxjs';
 import * as http from 'http';
 import { AddressInfo } from 'net';
 import { MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
@@ -244,5 +245,37 @@ describe('MigrationAgentClient against a real HTTP server', () => {
     for (const failure of failures) {
       expect(`${failure.message} ${JSON.stringify(failure)} ${failure.stack}`).not.toMatch(/SECRET/);
     }
+  });
+});
+
+describe('MigrationAgentClient timeouts', () => {
+  const timeoutOf = async (call: (client: MigrationAgentClient) => Promise<unknown>): Promise<number> => {
+    const request = jest.fn(() => of({ data: {} }));
+    await call(new MigrationAgentClient({ request } as never));
+    return (request.mock.calls[0] as unknown as [{ timeout: number }])[0].timeout;
+  };
+
+  afterEach(() => {
+    delete process.env.ORG_MIGRATION_RESTORE_TIMEOUT_MS;
+  });
+
+  it('gives an ordinary call 15 seconds', async () => {
+    await expect(timeoutOf((client) => client.getRelay('https://shared.example.com', 'tok', 'tenant-1'))).resolves.toBe(
+      15000
+    );
+  });
+
+  it('gives the relay restore much longer, because it hands every queued message back before it answers', async () => {
+    const timeout = await timeoutOf((client) => client.restoreRelay('https://shared.example.com', 'tok', 'tenant-1'));
+
+    expect(timeout).toBeGreaterThan(15000);
+  });
+
+  it('reads the restore timeout from the environment', async () => {
+    process.env.ORG_MIGRATION_RESTORE_TIMEOUT_MS = '45000';
+
+    await expect(
+      timeoutOf((client) => client.restoreRelay('https://shared.example.com', 'tok', 'tenant-1'))
+    ).resolves.toBe(45000);
   });
 });
