@@ -540,6 +540,18 @@ export class OrgAgentMigrationRepository {
     }
   }
 
+  /**
+   * Records facts on a migration only while it is still in `status`, for a step that ran alongside others.
+   * @returns false when the migration has moved on
+   */
+  async updateIfStatus(id: string, status: OrgAgentMigrationStatus, patch: OrgAgentMigrationPatch): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, status },
+      data: { ...patch, lastChangedDateTime: new Date() }
+    });
+    return 1 === count;
+  }
+
   /** Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). */
   async update(id: string, patch: OrgAgentMigrationPatch): Promise<MigrationRow> {
     return this.prisma.org_agent_migrations.update({
