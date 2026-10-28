@@ -119,4 +119,21 @@ describe('OrgAgentMigrationRepository webhook probe queries', () => {
       });
     });
   });
+
+  describe('updateIfStatus', () => {
+    it('writes only while the migration is still in the given status, and says whether it did', async () => {
+      const { repository, prisma } = build();
+      prisma.org_agent_migrations.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        repository.updateIfStatus('m1', 'STABILISING' as never, { error: 'WEBHOOK_UNREACHABLE' })
+      ).resolves.toBe(true);
+      await expect(repository.updateIfStatus('m1', 'STABILISING' as never, { error: null })).resolves.toBe(false);
+
+      expect(prisma.org_agent_migrations.updateMany).toHaveBeenCalledWith({
+        where: { id: 'm1', status: 'STABILISING' },
+        data: { error: 'WEBHOOK_UNREACHABLE', lastChangedDateTime: expect.any(Date) }
+      });
+    });
+  });
 });
