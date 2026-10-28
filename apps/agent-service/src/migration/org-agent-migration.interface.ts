@@ -30,7 +30,7 @@ export interface IRehearseOrgAgentMigration {
   userId: string;
 }
 
-export interface IStartOrgAgentMigration {
+export interface IScheduleOrgAgentMigration {
   orgId: string;
   userId: string;
   confirmationName: string;

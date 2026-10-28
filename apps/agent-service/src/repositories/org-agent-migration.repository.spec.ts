@@ -6,13 +6,12 @@
 import { ConflictException } from '@nestjs/common';
 import { OrgAgentMigrationStatus as Status } from '@credebl/enum/enum';
 import { OrgAgentMigrationRepository } from './org-agent-migration.repository';
-import { OrgAgentMigrationPhase } from '../migration/org-agent-migration.state-machine';
 
 const ID = '5b1b3b9e-6f56-4b69-9a54-0f2c2d6e1f10';
 const ORG_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 const USER_ID = 'a1b2c3d4-5717-4562-b3fc-2c963f66afa6';
 
-const buildRepository = (overrides: { updateCount?: number; existingScheduledFor?: Date | null } = {}) => {
+const buildRepository = (overrides: { updateCount?: number } = {}) => {
   const migrationUpdateMany = jest.fn().mockResolvedValue({ count: overrides.updateCount ?? 1 });
   const migrationCreate = jest.fn().mockResolvedValue({ id: ID, status: Status.CREATED });
   const eventCreate = jest.fn().mockResolvedValue({});
@@ -20,7 +19,6 @@ const buildRepository = (overrides: { updateCount?: number; existingScheduledFor
     org_agent_migrations: {
       create: migrationCreate,
       updateMany: migrationUpdateMany,
-      findUnique: jest.fn().mockResolvedValue({ scheduledFor: overrides.existingScheduledFor ?? null }),
       findUniqueOrThrow: jest.fn().mockResolvedValue({ id: ID })
     },
     org_agent_migration_events: { create: eventCreate }
@@ -60,7 +58,6 @@ describe('OrgAgentMigrationRepository', () => {
         orgId: ORG_ID,
         startedBy: USER_ID,
         status: Status.CREATED,
-        phase: OrgAgentMigrationPhase.PREPARE,
         tenantId: 'tenant-1'
       });
       expect(eventCreate).toHaveBeenCalledWith({
@@ -91,11 +88,11 @@ describe('OrgAgentMigrationRepository', () => {
       const where = { rehearsalStatus: 'DONE', scheduledFor: { lte: new Date('2026-10-20T00:00:00Z') } };
 
       await expect(
-        repository.transition({ id: ID, from: Status.REHEARSED, to: Status.FROZEN, actor: null, where })
+        repository.transition({ id: ID, from: Status.SCHEDULED, to: Status.FROZEN, actor: null, where })
       ).rejects.toBeInstanceOf(ConflictException);
 
       expect(migrationUpdateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: ID, status: Status.REHEARSED, ...where } })
+        expect.objectContaining({ where: { id: ID, status: Status.SCHEDULED, ...where } })
       );
     });
 
@@ -104,8 +101,8 @@ describe('OrgAgentMigrationRepository', () => {
 
       await repository.transition({
         id: ID,
-        from: Status.REHEARSED,
-        to: Status.REHEARSED,
+        from: Status.SCHEDULED,
+        to: Status.SCHEDULED,
         actor: USER_ID,
         event: { action: 'MOVE_CONFIRMED', detail: { immediate: true } }
       });
@@ -113,8 +110,8 @@ describe('OrgAgentMigrationRepository', () => {
       expect(eventCreate).toHaveBeenCalledWith({
         data: {
           migrationId: ID,
-          fromStatus: Status.REHEARSED,
-          toStatus: Status.REHEARSED,
+          fromStatus: Status.SCHEDULED,
+          toStatus: Status.SCHEDULED,
           actor: USER_ID,
           action: 'MOVE_CONFIRMED',
           detail: { immediate: true }
@@ -127,23 +124,22 @@ describe('OrgAgentMigrationRepository', () => {
 
       await repository.transition({
         id: ID,
-        from: Status.REHEARSED,
+        from: Status.SCHEDULED,
         to: Status.FROZEN,
         actor: USER_ID,
         patch: { freezeDeadline: new Date('2026-10-20T00:00:00Z') }
       });
 
       expect(migrationUpdateMany).toHaveBeenCalledWith({
-        where: { id: ID, status: Status.REHEARSED },
+        where: { id: ID, status: Status.SCHEDULED },
         data: {
           freezeDeadline: new Date('2026-10-20T00:00:00Z'),
           status: Status.FROZEN,
-          phase: OrgAgentMigrationPhase.MOVE,
           lastChangedDateTime: expect.any(Date)
         }
       });
       expect(eventCreate).toHaveBeenCalledWith({
-        data: { migrationId: ID, fromStatus: Status.REHEARSED, toStatus: Status.FROZEN, actor: USER_ID }
+        data: { migrationId: ID, fromStatus: Status.SCHEDULED, toStatus: Status.FROZEN, actor: USER_ID }
       });
     });
 
@@ -163,36 +159,6 @@ describe('OrgAgentMigrationRepository', () => {
       ).rejects.toThrow(ConflictException);
       expect(eventCreate).not.toHaveBeenCalled();
     });
-
-    it('derives the phase from a slot being booked in the same patch', async () => {
-      const { repository, migrationUpdateMany } = buildRepository();
-
-      await repository.transition({
-        id: ID,
-        from: Status.REHEARSED,
-        to: Status.REHEARSED,
-        actor: USER_ID,
-        patch: { scheduledFor: new Date('2026-10-25T02:00:00Z') }
-      });
-
-      expect(migrationUpdateMany.mock.calls[0][0].data.phase).toBe(OrgAgentMigrationPhase.SCHEDULED);
-    });
-
-    it('keeps the booked slot when a later patch does not touch it, and clears it when told to', async () => {
-      const booked = buildRepository({ existingScheduledFor: new Date('2026-10-25T02:00:00Z') });
-      await booked.repository.transition({ id: ID, from: Status.REHEARSED, to: Status.REHEARSED, actor: null });
-      expect(booked.migrationUpdateMany.mock.calls[0][0].data.phase).toBe(OrgAgentMigrationPhase.SCHEDULED);
-
-      const cleared = buildRepository({ existingScheduledFor: new Date('2026-10-25T02:00:00Z') });
-      await cleared.repository.transition({
-        id: ID,
-        from: Status.REHEARSED,
-        to: Status.REHEARSED,
-        actor: null,
-        patch: { scheduledFor: null }
-      });
-      expect(cleared.migrationUpdateMany.mock.calls[0][0].data.phase).toBe(OrgAgentMigrationPhase.PREPARE);
-    });
   });
 
   describe('reads', () => {
@@ -203,7 +169,10 @@ describe('OrgAgentMigrationRepository', () => {
       await repository.getActiveByOrgId(ORG_ID);
 
       expect(findFirst).toHaveBeenCalledWith({
-        where: { orgId: ORG_ID, status: { notIn: [Status.COMPLETED, Status.FAILED, Status.DISASTER_RESTORED] } }
+        where: {
+          orgId: ORG_ID,
+          status: { notIn: [Status.COMPLETED, Status.FAILED, Status.CANCELLED, Status.DISASTER_RESTORED] }
+        }
       });
     });
 

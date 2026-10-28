@@ -5,7 +5,7 @@ import { ResponseMessages } from '@credebl/common/response-messages';
 import { org_agent_migrations } from '@prisma/client';
 import { REHEARSAL_DONE, OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import { envMs } from './migration-job-poller';
-import { IStartOrgAgentMigration } from './org-agent-migration.interface';
+import { IScheduleOrgAgentMigration } from './org-agent-migration.interface';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -27,7 +27,8 @@ const rehearsalMaxAgeMs = (): number => {
 
 /**
  * The owner's commitment to move: after a finished rehearsal they type the organisation's name and pick a slot (or
- * start now). The scheduler starts the move when the slot arrives. Confirming again before then moves the slot.
+ * start now). The move becomes SCHEDULED and the scheduler starts it when the slot arrives. Scheduling again before
+ * then moves the slot.
  */
 @Injectable()
 export class OrgAgentMigrationScheduleService {
@@ -39,7 +40,7 @@ export class OrgAgentMigrationScheduleService {
   /**
    * @throws when there is no rehearsed migration, the typed name is wrong, or the slot is not allowed
    */
-  async confirm(payload: IStartOrgAgentMigration): Promise<org_agent_migrations> {
+  async schedule(payload: IScheduleOrgAgentMigration): Promise<org_agent_migrations> {
     const { orgId, userId, confirmationName } = payload;
 
     const migration = await this.migrationRepository.getActiveByOrgId(orgId);
@@ -49,7 +50,7 @@ export class OrgAgentMigrationScheduleService {
     if (OrgAgentMigrationStatus.CREATED === migration.status || REHEARSAL_DONE !== migration.rehearsalStatus) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationNotRehearsed);
     }
-    if (OrgAgentMigrationStatus.REHEARSED !== migration.status) {
+    if (![OrgAgentMigrationStatus.REHEARSED, OrgAgentMigrationStatus.SCHEDULED].includes(migration.status as never)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
 
@@ -83,7 +84,7 @@ export class OrgAgentMigrationScheduleService {
 
     return this.migrationService.advance(
       migration.id,
-      OrgAgentMigrationStatus.REHEARSED,
+      OrgAgentMigrationStatus.SCHEDULED,
       userId,
       { scheduledFor: slot, error: null },
       {
