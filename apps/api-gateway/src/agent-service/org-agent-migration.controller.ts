@@ -222,10 +222,6 @@ export class OrgAgentMigrationController {
   }
 
   /**
-   * Platform admins see moves across organisations. The org filter is `targetOrgId`, not `orgId`: the role guard
-   * treats an `orgId` as "check membership of that org", which would refuse an admin who is not a member.
-   */
-  /**
    * The org filter is `targetOrgId` in the path for the same reason as in the list: the role guard treats an `orgId`
    * as "check membership of that org", which would refuse a platform admin who is not a member.
    */
@@ -263,6 +259,10 @@ export class OrgAgentMigrationController {
     return res.status(HttpStatus.OK).json(finalResponse);
   }
 
+  /**
+   * Platform admins see moves across organisations. The org filter is `targetOrgId`, not `orgId`: the role guard
+   * treats an `orgId` as "check membership of that org", which would refuse an admin who is not a member.
+   */
   @Get('/agents/migrations')
   @ApiOperation({
     summary: 'List wallet moves across organisations',

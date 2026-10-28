@@ -144,7 +144,11 @@ export class OrgAgentMigrationSwitchOverService {
       return 'DEDICATED_AGENT_UNREACHABLE';
     }
 
-    // The window's other purpose: the shared copy is not deleted while the new agent's webhooks cannot reach us.
+    // The window's other purpose: the shared copy is not deleted while the new agent's webhooks cannot reach us. A move
+    // whose preflight predates the check has an agent that may not answer the probe, and is not held to it.
+    if (!this.preflightIncludedWebhookCheck(migration)) {
+      return undefined;
+    }
     const webhook = await this.webhookService.check(migration, dedicated);
     return webhook.confirmed ? undefined : webhook.code;
   }
@@ -172,6 +176,11 @@ export class OrgAgentMigrationSwitchOverService {
       await this.migrationRepository.update(migration.id, { error: result.code });
       await this.audit(migration.id, 'WEBHOOK_UNCONFIRMED', { reason: result.code });
     }
+  }
+
+  private preflightIncludedWebhookCheck(migration: org_agent_migrations): boolean {
+    const checks = (migration.preflight as unknown as { checks?: { id?: string }[] } | null)?.checks;
+    return Boolean(checks?.some((check) => 'WEBHOOK_DELIVERS' === check.id));
   }
 
   private async dedicatedOf(migration: org_agent_migrations): Promise<IAgentAccess | undefined> {
@@ -222,7 +231,8 @@ export class OrgAgentMigrationSwitchOverService {
       return;
     }
 
-    // The agent lost its job (a restart that dropped it): start it again rather than wait for nothing.
+    // The agent lost its job (a restart that dropped it): start it again rather than wait for nothing. A finished job
+    // is not restarted for holders who connected after it: they connected on the new agent and need no rotation.
     if ('idle' === status.job.status) {
       try {
         status = await this.agentClient.startRotation(dedicated.endpoint, dedicated.token);

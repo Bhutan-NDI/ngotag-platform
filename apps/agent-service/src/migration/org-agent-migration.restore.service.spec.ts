@@ -48,6 +48,9 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       world.order.push('lease');
       return true;
     }),
+    releaseLease: jest.fn(async () => {
+      world.order.push('release');
+    }),
     recordEvent: jest.fn(async (_id: string, entry: { action: string; actor: unknown; detail?: unknown }) => {
       world.events.push(entry);
     }),
@@ -291,6 +294,25 @@ describe('OrgAgentMigrationRestoreService', () => {
       await expect(world.service.restore(ORG_ID, ADMIN_ID)).resolves.toMatchObject({
         status: Status.DISASTER_RESTORED
       });
+    });
+
+    it('frees the lease when the restore fails, so an immediate retry is not refused as busy', async () => {
+      const world = buildWorld();
+      world.agentClient.restoreRelay.mockRejectedValueOnce(new MigrationAgentError('UNREACHABLE'));
+
+      await expect(world.service.restore(ORG_ID, ADMIN_ID)).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+      expect(world.migrationRepository.releaseLease).toHaveBeenCalledWith(MIGRATION_ID);
+    });
+
+    it('answers busy, and frees the lease, while the agent is still handing queued messages back', async () => {
+      const world = buildWorld();
+      world.agentClient.restoreRelay.mockRejectedValue(new MigrationAgentError('CONFLICT', 409, 'RELAY_BUSY'));
+
+      await expect(world.service.restore(ORG_ID, ADMIN_ID)).rejects.toBeInstanceOf(ConflictException);
+
+      expect(world.migrationRepository.releaseLease).toHaveBeenCalledTimes(1);
+      expect(world.world.orgAgent.orgAgentTypeId).toBe('dedicated-type');
     });
 
     it('refuses without changing the org when the shared copy is already purged', async () => {
