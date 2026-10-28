@@ -194,7 +194,6 @@ export class OrgAgentMigrationRepository {
           data: {
             ...params.patch,
             status: OrgAgentMigrationStatus.CUTOVER,
-            phase: phaseFor(OrgAgentMigrationStatus.CUTOVER),
             lastChangedDateTime: new Date()
           }
         });
