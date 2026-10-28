@@ -23,7 +23,7 @@ import {
   IUpdateOrganization,
   OrgInvitation
 } from '../interfaces/organization.interface';
-import { Invitation, OrgAgentMigrationStatus, PrismaTables, SortValue } from '@credebl/enum/enum';
+import { Invitation, ORG_AGENT_MIGRATION_TERMINAL_STATUSES, PrismaTables, SortValue } from '@credebl/enum/enum';
 // eslint-disable-next-line camelcase
 import {
   Prisma,
@@ -970,13 +970,7 @@ export class OrganizationRepository {
         const activeMigrations = await prisma.org_agent_migrations.count({
           where: {
             orgId: id,
-            status: {
-              notIn: [
-                OrgAgentMigrationStatus.COMPLETED,
-                OrgAgentMigrationStatus.FAILED,
-                OrgAgentMigrationStatus.DISASTER_RESTORED
-              ]
-            }
+            status: { notIn: [...ORG_AGENT_MIGRATION_TERMINAL_STATUSES] }
           }
         });
         if (0 < activeMigrations) {
