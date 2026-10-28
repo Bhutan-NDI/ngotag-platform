@@ -42,6 +42,7 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       orgId: ORG_ID,
       status: Status.STABILISING as string,
       tenantId: 'tenant-1',
+      preflight: { passed: true, checks: [{ id: 'WEBHOOK_DELIVERS', status: 'PASS' }] },
       stabilisationEndsAt: new Date(Date.now() - MINUTE),
       purgedAt: null as Date | null,
       rotationJobId: null as string | null,
@@ -315,6 +316,17 @@ describe('the webhook gate', () => {
     expect(world.webhookService.check).toHaveBeenCalledWith(expect.objectContaining({ id: MIGRATION_ID }), DEDICATED);
   });
 
+  it.each([
+    ['a preflight from before the webhook check existed', { checks: [{ id: 'RELEASE_MATCHES', status: 'PASS' }] }],
+    ['no preflight report at all', null]
+  ])('does not hold %s to the probe, since its own agent may not answer it', async (_name, preflight) => {
+    const world = buildWorld({ preflight });
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
+  });
+
   it('does not probe while the window is still open', async () => {
     const world = buildWorld({ stabilisationEndsAt: new Date(Date.now() + MINUTE) });
 
@@ -520,6 +532,25 @@ describe('after the window: purge, rotate, complete', () => {
 
       expect(agentClient.startRotation).toHaveBeenCalledTimes(1);
       expect(world.row.rotation).toMatchObject({ job: { status: 'running' } });
+    });
+
+    it('does not restart a finished job because a holder connected after it: that holder is already on the new agent', async () => {
+      const { service, world, agentClient } = rotating({ purgedAt: new Date(), rotationJobId: 'rotate-all:x' });
+      agentClient.getRotationStatus.mockResolvedValue(rotation('completed', { pending: 2, waiting: 4, updated: 6 }));
+
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(agentClient.startRotation).not.toHaveBeenCalled();
+      expect(world.row.status).toBe(Status.ROTATING);
+    });
+
+    it('leaves a finished job alone while only holders that have been sent the change are left', async () => {
+      const { service, agentClient } = rotating({ purgedAt: new Date(), rotationJobId: 'rotate-all:x' });
+      agentClient.getRotationStatus.mockResolvedValue(rotation('completed', { waiting: 4, failed: 1, updated: 5 }));
+
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(agentClient.startRotation).not.toHaveBeenCalled();
     });
 
     it('does nothing for a migration that is not rotating', async () => {

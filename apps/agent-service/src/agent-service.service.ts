@@ -1988,11 +1988,14 @@ export class AgentServiceService {
 
       const orgAgent = orgAgentResult?.value;
 
-      // Handle orphaned partial record — wallet creation failed before Credo was called,
-      // so there is nothing in Credo to delete. Just clean up the DB record.
-      if (!orgAgent.tenantId || !orgAgent.orgAgentTypeId) {
+      const orphaned = async (): Promise<undefined> => {
         await this.agentServiceRepository.deleteOrgAgentByOrg(orgAgent.orgId);
-        return;
+        return undefined;
+      };
+
+      // Orphaned partial record — wallet creation failed before Credo was called, so there is nothing to delete there.
+      if (!orgAgent.orgAgentTypeId) {
+        return orphaned();
       }
 
       const orgAgentTypeResult = await this.agentServiceRepository.getOrgAgentType(orgAgent.orgAgentTypeId);
@@ -2001,8 +2004,13 @@ export class AgentServiceService {
         throw new NotFoundException(ResponseMessages.agent.error.orgAgentNotFound);
       }
 
+      // A dedicated agent has no tenant: only a shared-agent record without one is an orphan.
+      if (OrgAgentType.SHARED === orgAgentTypeResult.agent && !orgAgent.tenantId) {
+        return orphaned();
+      }
+
       let getApiKey;
-      if (OrgAgentType.SHARED) {
+      if (OrgAgentType.SHARED === orgAgentTypeResult.agent) {
         const platformAdminSpinnedUp = await this.agentServiceRepository.platformAdminAgent(
           CommonConstants.PLATFORM_ADMIN_ORG
         );

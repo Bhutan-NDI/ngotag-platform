@@ -75,21 +75,47 @@ describe('OrgAgentMigrationRepository webhook probe queries', () => {
   });
 
   describe('findAwaitingWebhook', () => {
-    it('asks for stabilising migrations with an open window and no confirmed webhook, outside any live lease', async () => {
+    it('asks for stabilising migrations with an open window, no confirmed webhook and a try that is due', async () => {
       const { repository, prisma } = build();
       const now = new Date();
+      const retryBefore = new Date(now.getTime() - 10 * 60 * 1000);
 
-      await expect(repository.findAwaitingWebhook(now, 5)).resolves.toEqual([{ id: 'm1' }]);
+      await expect(repository.findAwaitingWebhook(now, retryBefore, 5)).resolves.toEqual([{ id: 'm1' }]);
 
       expect(prisma.org_agent_migrations.findMany).toHaveBeenCalledWith({
         where: {
           status: 'STABILISING',
           webhookConfirmedAt: null,
           stabilisationEndsAt: { gt: now },
-          OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+          OR: [{ webhookCheckedAt: null }, { webhookCheckedAt: { lt: retryBefore } }]
         },
         orderBy: { stabilisationEndsAt: 'asc' },
         take: 5
+      });
+    });
+
+    it('never looks at the lease, which a restore needs', async () => {
+      const { repository, prisma } = build();
+
+      await repository.findAwaitingWebhook(new Date(), new Date(), 5);
+
+      expect(JSON.stringify(prisma.org_agent_migrations.findMany.mock.calls[0][0])).not.toContain('leaseUntil');
+    });
+  });
+
+  describe('tryBeginWebhookCheck', () => {
+    it('takes the try only when none ran within the spacing, and only for one replica', async () => {
+      const { repository, prisma } = build();
+      const now = new Date();
+      const retryBefore = new Date(now.getTime() - 600000);
+      prisma.org_agent_migrations.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+
+      await expect(repository.tryBeginWebhookCheck('m1', now, retryBefore)).resolves.toBe(true);
+      await expect(repository.tryBeginWebhookCheck('m1', now, retryBefore)).resolves.toBe(false);
+
+      expect(prisma.org_agent_migrations.updateMany).toHaveBeenCalledWith({
+        where: { id: 'm1', OR: [{ webhookCheckedAt: null }, { webhookCheckedAt: { lt: retryBefore } }] },
+        data: { webhookCheckedAt: now }
       });
     });
   });
