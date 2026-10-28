@@ -125,7 +125,7 @@ export class OrgAgentMigrationService {
   }
 
   /**
-   * Cancels a migration that has not reached the switch: the org stays exactly as it was. `errorCode` is a
+   * Fails a scheduled or started migration that has not reached the switch: the org stays exactly as it was. `errorCode` is a
    * stable, sanitised code (for example VERIFICATION_FAILED), never raw error text.
    */
   async abort(migrationId: string, errorCode: string, actor: string | null): Promise<org_agent_migrations> {
