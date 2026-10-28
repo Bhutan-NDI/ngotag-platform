@@ -89,7 +89,7 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
 
   private async startDueMoves(): Promise<void> {
     const limit = envMs('ORG_MIGRATION_MAX_CONCURRENT', DEFAULT_MAX_CONCURRENT);
-    const room = limit - this.active.size;
+    const room = limit - (await this.migrationRepository.countInFlight());
     if (0 >= room) {
       return;
     }
@@ -119,6 +119,11 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
       return;
     }
 
+    // A move that missed its slot is cancelled before any check, which would otherwise touch the dedicated agent.
+    if (this.waited(migration) > this.startWindowMs()) {
+      await this.cancel(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
+      return;
+    }
     const failedCheck = await this.failedCheck(migration);
     if (failedCheck) {
       await this.deferOrCancel(migration, failedCheck);
@@ -137,7 +142,7 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
 
   private async failedCheck(migration: org_agent_migrations): Promise<string | undefined> {
     try {
-      const { report } = await this.preflightService.run(migration.id, {}, null);
+      const { report } = await this.preflightService.run(migration.id, { keepDownloadMethod: true }, null);
       return report.passed
         ? undefined
         : report.checks.find((check) => 'PASS' !== check.status && 'SKIPPED' !== check.status)?.id;
@@ -149,29 +154,42 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
 
   // A failed check is retried until the start window closes, then the move cancels itself and nothing changes.
   private async deferOrCancel(migration: org_agent_migrations, failedCheck: string): Promise<void> {
-    const waited = Date.now() - (migration.scheduledFor?.getTime() ?? Date.now());
-    if (waited <= envMs('ORG_MIGRATION_START_WINDOW_MS', 30 * MINUTE_MS)) {
+    if (this.waited(migration) <= this.startWindowMs()) {
       this.logger.warn(`[migration-scheduler] ${migration.id}: final check ${failedCheck} failed; trying again later`);
       return;
     }
-    await this.migrationService.abort(migration.id, `PREFLIGHT_FAILED:${failedCheck}`, null);
-    await this.migrationRepository.recordEvent(migration.id, {
-      action: 'MOVE_CANCELLED',
-      actor: null,
-      detail: { reason: 'FINAL_CHECK_FAILED', check: failedCheck }
+    await this.cancel(migration, `PREFLIGHT_FAILED:${failedCheck}`, {
+      reason: 'FINAL_CHECK_FAILED',
+      check: failedCheck
     });
   }
 
-  // While a window is open, keep checking until the new agent's webhooks are seen to arrive. The lease spaces the tries.
+  // The slot was chosen to keep citizens undisturbed, so a move that missed it is not started at some other time.
+  private async cancel(
+    migration: org_agent_migrations,
+    errorCode: string,
+    detail: Record<string, string>
+  ): Promise<void> {
+    await this.migrationService.abort(migration.id, errorCode, null);
+    await this.migrationRepository.recordEvent(migration.id, { action: 'MOVE_CANCELLED', actor: null, detail });
+  }
+
+  private waited(migration: org_agent_migrations): number {
+    return Date.now() - (migration.scheduledFor?.getTime() ?? Date.now());
+  }
+
+  private startWindowMs(): number {
+    return envMs('ORG_MIGRATION_START_WINDOW_MS', 30 * MINUTE_MS);
+  }
+
+  // While a window is open, keep checking until the new agent's webhooks are seen to arrive. Tries are spaced by their
+  // own timestamp, not the lease, so a restore is never refused as busy because of them.
   private async confirmWebhooks(): Promise<void> {
-    for (const migration of await this.migrationRepository.findAwaitingWebhook(new Date(), BATCH)) {
+    const now = new Date();
+    const retryBefore = new Date(now.getTime() - envMs('ORG_MIGRATION_WEBHOOK_RETRY_MS', 10 * MINUTE_MS));
+    for (const migration of await this.migrationRepository.findAwaitingWebhook(now, retryBefore, BATCH)) {
       try {
-        if (
-          !(await this.migrationRepository.tryAcquireLease(
-            migration.id,
-            envMs('ORG_MIGRATION_WEBHOOK_RETRY_MS', 10 * MINUTE_MS)
-          ))
-        ) {
+        if (!(await this.migrationRepository.tryBeginWebhookCheck(migration.id, now, retryBefore))) {
           continue;
         }
         await this.switchOverService.checkWebhook(migration.id);

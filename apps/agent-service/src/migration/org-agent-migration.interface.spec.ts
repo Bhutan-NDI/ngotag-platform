@@ -15,7 +15,8 @@ const INTERNAL_FIELDS = [
   'targetTokenEncrypted',
   'leaseUntil',
   'webhookProbeHash',
-  'webhookProbeExpiresAt'
+  'webhookProbeExpiresAt',
+  'webhookCheckedAt'
 ];
 
 const fullRow = (): Record<string, string> => {

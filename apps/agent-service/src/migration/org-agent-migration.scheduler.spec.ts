@@ -23,6 +23,8 @@ const build = () => {
     findAwaitingWebhook: jest.fn().mockResolvedValue([]),
     findWindowEnded: jest.fn().mockResolvedValue([]),
     findRotating: jest.fn().mockResolvedValue([]),
+    countInFlight: jest.fn().mockResolvedValue(0),
+    tryBeginWebhookCheck: jest.fn().mockResolvedValue(true),
     tryAcquireLease: jest.fn().mockResolvedValue(true),
     getConfirmingActor: jest.fn().mockResolvedValue('owner-1'),
     recordEvent: jest.fn().mockResolvedValue(undefined)
@@ -86,7 +88,7 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
     await scheduler.tick();
 
     expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', expect.any(Number));
-    expect(preflightService.run).toHaveBeenCalledWith('m1', {}, null);
+    expect(preflightService.run).toHaveBeenCalledWith('m1', { keepDownloadMethod: true }, null);
     expect(executor.run).toHaveBeenCalledWith('m1', 'owner-1');
     expect(preflightService.run.mock.invocationCallOrder[0]).toBeLessThan(executor.run.mock.invocationCallOrder[0]);
   });
@@ -149,18 +151,31 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
     migrationRepository.findDueForStart.mockResolvedValue([due('m1'), due('m2')]);
 
     await scheduler.tick();
+    migrationRepository.countInFlight.mockResolvedValue(1);
     await scheduler.tick();
 
     expect(executor.run).toHaveBeenCalledTimes(1);
     expect(migrationRepository.findDueForStart).toHaveBeenCalledTimes(1);
   });
 
-  it('asks only for as many moves as it has room for', async () => {
-    const { scheduler, migrationRepository } = build();
+  it('counts the moves other replicas are running, not just its own', async () => {
+    const { scheduler, executor, migrationRepository } = build();
+    migrationRepository.countInFlight.mockResolvedValue(2);
+    migrationRepository.findDueForStart.mockResolvedValue([due()]);
 
     await scheduler.tick();
 
-    expect(migrationRepository.findDueForStart).toHaveBeenCalledWith(expect.any(Date), 2);
+    expect(migrationRepository.findDueForStart).not.toHaveBeenCalled();
+    expect(executor.run).not.toHaveBeenCalled();
+  });
+
+  it('asks only for as many moves as it has room for', async () => {
+    const { scheduler, migrationRepository } = build();
+    migrationRepository.countInFlight.mockResolvedValue(1);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.findDueForStart).toHaveBeenCalledWith(expect.any(Date), 1);
   });
 
   it('survives a move that crashes', async () => {
@@ -199,6 +214,51 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
   });
 });
 
+describe('OrgAgentMigrationScheduler: a missed slot', () => {
+  it('cancels a move found after its start window before running any check, without freezing anything', async () => {
+    const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: new Date(Date.now() - 6 * 60 * MINUTE) })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null);
+    expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
+      action: 'MOVE_CANCELLED',
+      actor: null,
+      detail: { reason: 'SLOT_MISSED' }
+    });
+    expect(preflightService.run).not.toHaveBeenCalled();
+    expect(executor.run).not.toHaveBeenCalled();
+  });
+
+  it('still runs a move that is a little late, within the start window', async () => {
+    const { scheduler, executor, migrationService, migrationRepository } = build();
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: new Date(Date.now() - 20 * MINUTE) })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationService.abort).not.toHaveBeenCalled();
+    expect(executor.run).toHaveBeenCalledWith('m1', 'owner-1');
+  });
+
+  it('reads the start window from the environment', async () => {
+    process.env.ORG_MIGRATION_START_WINDOW_MS = String(2 * MINUTE);
+    const { scheduler, executor, migrationService, migrationRepository } = build();
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: new Date(Date.now() - 5 * MINUTE) })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null);
+    expect(executor.run).not.toHaveBeenCalled();
+  });
+});
+
 describe('OrgAgentMigrationScheduler: the final checks', () => {
   const failing = (id: string) => ({
     report: {
@@ -223,11 +283,17 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
     expect(migrationService.abort).not.toHaveBeenCalled();
   });
 
+  // The checks take time: the window can close while they run, which is the one place a failed check cancels.
+  const failingAfter = (id: string, ms: number) => async () => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return failing(id);
+  };
+
   it('cancels the move, naming the check, once the start window has passed', async () => {
     const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
-    preflightService.run.mockResolvedValue(failing('NO_BULK_JOB'));
+    preflightService.run.mockImplementation(failingAfter('NO_BULK_JOB', 100));
     migrationRepository.findDueForStart.mockResolvedValue([
-      due('m1', { scheduledFor: new Date(Date.now() - 45 * MINUTE) })
+      due('m1', { scheduledFor: new Date(Date.now() - (30 * MINUTE - 50)) })
     ]);
 
     await scheduler.tick();
@@ -244,9 +310,9 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
   it('reads the start window from the environment', async () => {
     process.env.ORG_MIGRATION_START_WINDOW_MS = String(2 * MINUTE);
     const { scheduler, migrationService, preflightService, migrationRepository } = build();
-    preflightService.run.mockResolvedValue(failing('DIDCOMM_REACHABLE'));
+    preflightService.run.mockImplementation(failingAfter('DIDCOMM_REACHABLE', 100));
     migrationRepository.findDueForStart.mockResolvedValue([
-      due('m1', { scheduledFor: new Date(Date.now() - 5 * MINUTE) })
+      due('m1', { scheduledFor: new Date(Date.now() - (2 * MINUTE - 50)) })
     ]);
 
     await scheduler.tick();
@@ -444,24 +510,36 @@ describe('OrgAgentMigrationScheduler: confirming webhooks during the window', ()
 
     await scheduler.tick();
 
-    expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', 10 * MINUTE);
+    expect(migrationRepository.tryBeginWebhookCheck).toHaveBeenCalledWith('m1', expect.any(Date), expect.any(Date));
     expect(switchOverService.checkWebhook).toHaveBeenCalledWith('m1');
   });
 
-  it('spaces its tries by the lease, which is configurable', async () => {
-    process.env.ORG_MIGRATION_WEBHOOK_RETRY_MS = String(2 * MINUTE);
+  it('never takes the lease for it, so a disaster restore is not refused as busy', async () => {
     const { scheduler, migrationRepository } = build();
     migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting()]);
 
     await scheduler.tick();
 
-    expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', 2 * MINUTE);
+    expect(migrationRepository.tryAcquireLease).not.toHaveBeenCalled();
   });
 
-  it('leaves a migration alone when another replica holds it', async () => {
+  it('spaces its tries by a configurable time, ten minutes by default', async () => {
+    const { scheduler, migrationRepository } = build();
+    await scheduler.tick();
+    const [now, retryBefore] = migrationRepository.findAwaitingWebhook.mock.calls[0];
+    expect(now.getTime() - retryBefore.getTime()).toBe(10 * MINUTE);
+
+    process.env.ORG_MIGRATION_WEBHOOK_RETRY_MS = String(2 * MINUTE);
+    migrationRepository.findAwaitingWebhook.mockClear();
+    await scheduler.tick();
+    const [later, laterRetryBefore] = migrationRepository.findAwaitingWebhook.mock.calls[0];
+    expect(later.getTime() - laterRetryBefore.getTime()).toBe(2 * MINUTE);
+  });
+
+  it('leaves a migration alone when another replica took this try', async () => {
     const { scheduler, switchOverService, migrationRepository } = build();
     migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting()]);
-    migrationRepository.tryAcquireLease.mockResolvedValue(false);
+    migrationRepository.tryBeginWebhookCheck.mockResolvedValue(false);
 
     await scheduler.tick();
 
