@@ -111,7 +111,8 @@ export class OrgAgentMigrationService {
     migrationId: string,
     to: OrgAgentMigrationStatus,
     actor: string | null,
-    patch?: OrgAgentMigrationPatch
+    patch?: OrgAgentMigrationPatch,
+    options?: Pick<Parameters<OrgAgentMigrationRepository['transition']>[0], 'where' | 'event'>
   ): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
@@ -121,7 +122,7 @@ export class OrgAgentMigrationService {
     if (!canTransition(from, to)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
-    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch });
+    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch, ...options });
   }
 
   /**

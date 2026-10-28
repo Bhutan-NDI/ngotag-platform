@@ -42,24 +42,26 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
 
     await confirm(service, { scheduledFor: slot.toISOString() });
 
-    expect(migrationService.advance).toHaveBeenCalledWith('m1', Status.REHEARSED, USER_ID, { scheduledFor: slot });
-    expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
-      action: 'MOVE_CONFIRMED',
-      actor: USER_ID,
-      detail: { scheduledFor: slot.toISOString(), immediate: false }
-    });
+    expect(migrationService.advance).toHaveBeenCalledWith(
+      'm1',
+      Status.REHEARSED,
+      USER_ID,
+      { scheduledFor: slot },
+      { event: { action: 'MOVE_CONFIRMED', detail: { scheduledFor: slot.toISOString(), immediate: false } } }
+    );
+    expect(migrationRepository.recordEvent).not.toHaveBeenCalled();
   });
 
   it('starts at once when no slot is given', async () => {
-    const { service, migrationService, migrationRepository } = build();
+    const { service, migrationService } = build();
     const before = Date.now();
 
     await confirm(service);
 
-    const [, , , patch] = migrationService.advance.mock.calls[0];
+    const [, , , patch, options] = migrationService.advance.mock.calls[0];
     expect(patch.scheduledFor.getTime()).toBeGreaterThanOrEqual(before);
     expect(patch.scheduledFor.getTime()).toBeLessThan(before + 5000);
-    expect(migrationRepository.recordEvent.mock.calls[0][1].detail.immediate).toBe(true);
+    expect(options.event.detail.immediate).toBe(true);
   });
 
   it('lets the owner move the slot by confirming again', async () => {

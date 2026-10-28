@@ -6,7 +6,7 @@ import { createHash } from 'crypto';
 import { ConnectionRepository } from '../../../connection/src/connection.repository';
 import { ConnectionService } from '../../../connection/src/connection.service';
 import { AgentServiceRepository } from '../repositories/agent-service.repository';
-import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
+import { OrgAgentMigrationRepository, REHEARSAL_DONE } from '../repositories/org-agent-migration.repository';
 import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
 import { checkConfig, checkEndpoint, checkRelease } from './migration-agent-checks';
 import { IPortabilityJob, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
@@ -192,9 +192,14 @@ export class OrgAgentMigrationExecutor {
     }
     const deadlineAt = Date.now() + (migration.predictedFreezeMs ?? DEFAULT_FREEZE_MS);
     try {
-      const frozen = await this.migrationService.advance(migrationId, OrgAgentMigrationStatus.FROZEN, null, {
-        freezeDeadline: new Date(deadlineAt)
-      });
+      // Still due: a slot moved, or a rehearsal started, after the scheduler read the row must stop this claim.
+      const frozen = await this.migrationService.advance(
+        migrationId,
+        OrgAgentMigrationStatus.FROZEN,
+        null,
+        { freezeDeadline: new Date(deadlineAt) },
+        { where: { rehearsalStatus: REHEARSAL_DONE, scheduledFor: { lte: new Date() } } }
+      );
       return { migration: frozen, deadlineAt };
     } catch (error) {
       this.logger.warn(`[move] ${migrationId}: not started, ${this.describe(error)}`);

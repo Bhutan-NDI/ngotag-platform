@@ -81,7 +81,7 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
 
   private async startDueMoves(): Promise<void> {
     const limit = envMs('ORG_MIGRATION_MAX_CONCURRENT', DEFAULT_MAX_CONCURRENT);
-    const room = limit - this.active.size;
+    const room = limit - (await this.migrationRepository.countInFlight());
     if (0 >= room) {
       return;
     }
@@ -111,13 +111,14 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
       return;
     }
 
+    // A move that missed its slot is cancelled before any check, which would otherwise touch the dedicated agent.
+    if (this.waited(migration) > this.startWindowMs()) {
+      await this.cancel(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
+      return;
+    }
     const failedCheck = await this.failedCheck(migration);
     if (failedCheck) {
       await this.deferOrCancel(migration, failedCheck);
-      return;
-    }
-    if (this.waited(migration) > this.startWindowMs()) {
-      await this.cancel(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
       return;
     }
 
