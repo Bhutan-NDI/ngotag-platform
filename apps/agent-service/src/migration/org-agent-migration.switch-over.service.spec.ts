@@ -425,13 +425,17 @@ describe('after the window: purge, rotate, complete', () => {
       expect(world.row.rotation).toMatchObject({ job: { status: 'running' } });
     });
 
-    it('does not restart a finished job because a holder connected after it: that holder is already on the new agent', async () => {
+    it.each([
+      ['pending', { pending: 2, waiting: 4, updated: 6 }],
+      ['retrying', { retrying: 1, updated: 6 }]
+    ])('restarts a finished job that still has %s connections', async (_name, counts) => {
       const { service, world, agentClient } = rotating({ purgedAt: new Date(), rotationJobId: 'rotate-all:x' });
-      agentClient.getRotationStatus.mockResolvedValue(rotation('completed', { pending: 2, waiting: 4, updated: 6 }));
+      agentClient.getRotationStatus.mockResolvedValue(rotation('completed', counts));
+      agentClient.startRotation.mockResolvedValue(rotation('running', counts));
 
       await service.advanceRotation(MIGRATION_ID);
 
-      expect(agentClient.startRotation).not.toHaveBeenCalled();
+      expect(agentClient.startRotation).toHaveBeenCalledTimes(1);
       expect(world.row.status).toBe(Status.ROTATING);
     });
 
