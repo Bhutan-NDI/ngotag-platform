@@ -308,7 +308,8 @@ describe('OrgAgentMigrationRehearsalService rehearsal run', () => {
 
     await expect((service as any).deleteExport(SHARED, 'tenant-1', 'export-1')).resolves.toBe('DELETED');
 
-    expect(calls).toEqual(['getExportJob', 'getExportJob', 'getExportJob', 'deleteExport']);
+    expect(agentClient.getExportJob).toHaveBeenCalledTimes(3);
+    expect(calls).toEqual(['deleteExport']);
   });
 
   it('keeps the id of an export it could not delete, so a later run can remove it', async () => {
