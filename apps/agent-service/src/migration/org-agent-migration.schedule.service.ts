@@ -64,8 +64,10 @@ export class OrgAgentMigrationScheduleService {
       throw new BadRequestException(ResponseMessages.agent.error.migrationConfirmationMismatch);
     }
 
-    // Its rows would be refused with 423 once the org is frozen. The scheduler asks again just before the freeze.
-    if (await this.migrationRepository.hasActiveBulkIssuance(orgId)) {
+    // Its rows would be refused with 423 once the org is frozen. Only a first booking is refused: an owner who has a
+    // slot and wants it later because a job is now running must be able to move it. The scheduler asks again before
+    // the freeze either way.
+    if (!migration.scheduledFor && (await this.migrationRepository.hasActiveBulkIssuance(orgId))) {
       throw new HttpException(
         {
           statusCode: HttpStatus.CONFLICT,

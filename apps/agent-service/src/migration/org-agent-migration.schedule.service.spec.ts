@@ -78,6 +78,20 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
       expect(migrationRepository.hasActiveBulkIssuance).toHaveBeenCalledWith(ORG_ID);
     });
 
+    it('lets an owner who has booked a slot move it while a job runs, without a second check', async () => {
+      const { service, migrationRepository, migrationService } = build({
+        migration: row({ scheduledFor: new Date(Date.now() + DAY) })
+      });
+      migrationRepository.hasActiveBulkIssuance.mockResolvedValue(true);
+
+      await expect(
+        confirm(service, { scheduledFor: new Date(Date.now() + 2 * DAY).toISOString() })
+      ).resolves.toBeDefined();
+
+      expect(migrationService.advance).toHaveBeenCalled();
+      expect(migrationRepository.hasActiveBulkIssuance).not.toHaveBeenCalled();
+    });
+
     it('confirms when none is running', async () => {
       const { service, migrationService } = build();
 
