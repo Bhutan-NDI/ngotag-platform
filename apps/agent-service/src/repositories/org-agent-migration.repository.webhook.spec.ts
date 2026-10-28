@@ -43,7 +43,7 @@ describe('OrgAgentMigrationRepository webhook probe queries', () => {
       expect(prisma.org_agent_migrations.updateMany).toHaveBeenCalledWith({
         where: {
           orgId: 'org-1',
-          status: { notIn: ['COMPLETED', 'FAILED', 'DISASTER_RESTORED'] },
+          status: { notIn: ['COMPLETED', 'FAILED', 'CANCELLED', 'DISASTER_RESTORED'] },
           webhookProbeHash: 'hash',
           webhookProbeExpiresAt: { gt: now }
         },

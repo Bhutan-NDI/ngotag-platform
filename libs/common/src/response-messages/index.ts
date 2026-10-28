@@ -400,7 +400,7 @@ export const ResponseMessages = {
       migrationCreated: 'Wallet move created',
       migrationChecked: 'Wallet move checks completed',
       migrationRehearsalStarted: 'Wallet move rehearsal started',
-      migrationStarted: 'Wallet move confirmed',
+      migrationScheduled: 'Wallet move scheduled',
       migrationCancelled: 'Wallet move cancelled',
       migrationRestored: 'Wallet move rolled back to the shared agent',
       migrationFetched: 'Wallet move fetched successfully',

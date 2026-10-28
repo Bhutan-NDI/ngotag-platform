@@ -2038,10 +2038,21 @@ export class AgentServiceService {
         const { orgDid, agentInvitation, deleteOrgAgent } =
           await this.agentServiceRepository.deleteOrgAgentByOrg(orgId);
 
-        // Make the HTTP DELETE request
-        const deleteWallet = await this.commonService.httpDelete(url, {
-          headers: { authorization: getApiKey }
-        });
+        // httpDelete throws on a 404 (also when the connection is refused, which is not "already gone")
+        let deleteWallet: { status: number };
+        try {
+          deleteWallet = await this.commonService.httpDelete(url, {
+            headers: { authorization: getApiKey }
+          });
+        } catch (error) {
+          const refused = JSON.stringify(error?.getResponse?.() ?? '').includes(
+            CommonConstants.RESP_ERR_HTTP_ECONNREFUSED
+          );
+          if (HttpStatus.NOT_FOUND !== error?.getStatus?.() || refused) {
+            throw error;
+          }
+          deleteWallet = { status: HttpStatus.NOT_FOUND };
+        }
 
         // 204 = deleted, 404 = already gone — both are acceptable (idempotent delete)
         if (deleteWallet.status !== HttpStatus.NO_CONTENT && deleteWallet.status !== HttpStatus.NOT_FOUND) {

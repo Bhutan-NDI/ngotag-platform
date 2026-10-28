@@ -49,7 +49,7 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
     row: {
       id: MIGRATION_ID,
       orgId: ORG_ID,
-      status: Status.REHEARSED as string,
+      status: Status.SCHEDULED as string,
       startedBy: USER_ID,
       tenantId: 'tenant-1',
       targetAdminEndpoint: DEDICATED.endpoint,
