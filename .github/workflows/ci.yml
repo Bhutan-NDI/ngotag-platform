@@ -1,0 +1,102 @@
+name: Continuous Integration
+
+# `make <environment>-<service>` and the deploy workflow wait for the Validate check
+# on the exact commit they release, so it runs on every change to develop and main.
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-automation:
+    name: Release automation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      services: ${{ steps.services.outputs.services }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # mikefarah yq v4 is preinstalled on GitHub-hosted Ubuntu runners.
+      - name: Validate release automation
+        run: make release-check
+
+      - name: List released services
+        id: services
+        run: |
+          echo "services=$(jq -c '[.services | to_entries[] | {service: .key, app: .value.app}]' \
+            .github/platform-release-contract.json)" >> "$GITHUB_OUTPUT"
+
+  # Native arm64 runners: services are compiled on the architecture they run on.
+  build:
+    needs: release-automation
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.release-automation.outputs.services) }}
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+
+      # Same package manager version as the Dockerfiles.
+      - name: Install pnpm
+        run: npm install -g pnpm@9.15.3 --ignore-scripts
+
+      - name: Locate the pnpm store
+        id: pnpm
+        run: echo "store=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm.outputs.store }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      # The Dockerfiles install from the root manifest and lockfile before copying the
+      # workspace packages, so install the same way outside the checkout.
+      - name: Install locked dependencies as in the Docker build
+        run: |
+          deps="$RUNNER_TEMP/dependencies"
+          mkdir -p "$deps"
+          cp package.json pnpm-lock.yaml pnpm-workspace.yaml "$deps/"
+          pnpm --dir "$deps" install --frozen-lockfile --ignore-scripts
+          ln -s "$deps/node_modules" node_modules
+          pnpm exec prisma generate --schema=libs/prisma-service/prisma/schema.prisma
+
+      - name: Build ${{ matrix.app }}
+        run: pnpm run build ${{ matrix.app }}
+
+  validate:
+    needs: [release-automation, build]
+    if: always()
+    name: Validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to pass
+        env:
+          RELEASE_AUTOMATION: ${{ needs.release-automation.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          test "$RELEASE_AUTOMATION" = success || { echo "release automation checks: $RELEASE_AUTOMATION" >&2; exit 1; }
+          test "$BUILD" = success || { echo "service builds: $BUILD" >&2; exit 1; }
