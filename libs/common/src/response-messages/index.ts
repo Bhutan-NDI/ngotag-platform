@@ -464,7 +464,8 @@ export const ResponseMessages = {
       migrationInvalidTransition: 'This migration cannot move to the requested state from its current state',
       migrationStateChanged: 'The migration changed state while the request was being handled -- please retry',
       migrationOrgNotShared: 'Only an organization on the shared agent can be migrated to a dedicated agent',
-      migrationEndpointInvalid: 'The dedicated agent admin and DIDComm addresses must be distinct HTTPS URLs',
+      migrationEndpointInvalid:
+        'The dedicated agent admin and DIDComm addresses must be distinct HTTPS URLs, and the DIDComm address must be public and carry no credentials',
       migrationPreflightNotPassed: 'The preflight checks must pass before the rehearsal can run',
       migrationRehearsalRunning: 'A rehearsal is already running for this migration',
       migrationOwnerRequired: 'Only an owner of the organization can move its wallet',
