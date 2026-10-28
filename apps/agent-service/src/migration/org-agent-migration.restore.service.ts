@@ -105,6 +105,10 @@ export class OrgAgentMigrationRestoreService {
         if ('CONFLICT' === error.kind && 'TENANT_PURGED' === error.agentCode) {
           throw new BadRequestException(ResponseMessages.agent.error.migrationRestoreNotAllowed);
         }
+        // An earlier call is still handing the queued messages back; a second drain would lose some of them.
+        if ('CONFLICT' === error.kind && 'RELAY_BUSY' === error.agentCode) {
+          throw new ConflictException(ResponseMessages.agent.error.migrationRestoreBusy);
+        }
       }
       this.logger.error(`[restore] ${migration.id}: could not take the relay off: ${this.describe(error)}`);
       throw new ServiceUnavailableException(ResponseMessages.agent.error.agentDown);

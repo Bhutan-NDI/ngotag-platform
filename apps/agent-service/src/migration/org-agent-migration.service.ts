@@ -8,17 +8,10 @@ import { AgentServiceRepository } from '../repositories/agent-service.repository
 import { OrgAgentMigrationPatch, OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import { ICreateOrgAgentMigration, IListOrgAgentMigrations } from './org-agent-migration.interface';
 import { canTransition, isAbortable } from './org-agent-migration.state-machine';
+import { isHttpsUrl, normaliseDidcommEndpoint } from './org-agent-migration.endpoint';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
-
-const isHttps = (value: string): boolean => {
-  try {
-    return 'https:' === new URL(value).protocol;
-  } catch {
-    return false;
-  }
-};
 
 /**
  * Owns the lifecycle of an org's move from the shared agent to a dedicated one: creating it, reading it, and
@@ -35,11 +28,12 @@ export class OrgAgentMigrationService {
 
   async createMigration(payload: ICreateOrgAgentMigration): Promise<org_agent_migrations> {
     try {
-      const { orgId, userId, targetAdminEndpoint, targetDidcommEndpoint } = payload;
+      const { orgId, userId, targetAdminEndpoint } = payload;
+      const targetDidcommEndpoint = normaliseDidcommEndpoint(payload.targetDidcommEndpoint);
 
       if (
-        !isHttps(targetAdminEndpoint) ||
-        !isHttps(targetDidcommEndpoint) ||
+        !isHttpsUrl(targetAdminEndpoint) ||
+        !targetDidcommEndpoint ||
         new URL(targetAdminEndpoint).origin === new URL(targetDidcommEndpoint).origin
       ) {
         throw new BadRequestException(ResponseMessages.agent.error.migrationEndpointInvalid);
@@ -117,7 +111,8 @@ export class OrgAgentMigrationService {
     migrationId: string,
     to: OrgAgentMigrationStatus,
     actor: string | null,
-    patch?: OrgAgentMigrationPatch
+    patch?: OrgAgentMigrationPatch,
+    options?: Pick<Parameters<OrgAgentMigrationRepository['transition']>[0], 'where' | 'event'>
   ): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
@@ -127,7 +122,7 @@ export class OrgAgentMigrationService {
     if (!canTransition(from, to)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
-    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch });
+    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch, ...options });
   }
 
   /**
@@ -168,7 +163,14 @@ export class OrgAgentMigrationService {
 
     let cancelled: org_agent_migrations;
     try {
-      cancelled = await this.abort(migration.id, 'CANCELLED_BY_OWNER', userId);
+      // From the status just checked, not a fresh read: a move the scheduler froze in between must refuse, not abort.
+      cancelled = await this.migrationRepository.transition({
+        id: migration.id,
+        from: migration.status as OrgAgentMigrationStatus,
+        to: OrgAgentMigrationStatus.FAILED,
+        actor: userId,
+        patch: { error: 'CANCELLED_BY_OWNER', targetTokenEncrypted: null }
+      });
     } catch (error) {
       // The scheduler claimed it between the read and the write.
       if (error instanceof ConflictException) {
@@ -176,11 +178,17 @@ export class OrgAgentMigrationService {
       }
       throw error;
     }
-    await this.migrationRepository.recordEvent(migration.id, {
-      action: 'MOVE_CANCELLED',
-      actor: userId,
-      detail: { by: 'OWNER' }
-    });
+    try {
+      await this.migrationRepository.recordEvent(migration.id, {
+        action: 'MOVE_CANCELLED',
+        actor: userId,
+        detail: { by: 'OWNER' }
+      });
+    } catch (error) {
+      this.logger.error(
+        `[cancel] could not audit the cancellation: ${error instanceof Error ? error.message : 'failed'}`
+      );
+    }
     return cancelled;
   }
 }

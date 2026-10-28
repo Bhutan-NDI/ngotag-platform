@@ -298,6 +298,8 @@ model org_agent_migrations {
   webhookProbeHash       String?                      @db.VarChar
   webhookProbeExpiresAt  DateTime?                    @db.Timestamptz(6)
   webhookConfirmedAt     DateTime?                    @db.Timestamptz(6)
+  // When the window's webhook check last ran, so tries are spaced without holding the migration's lease.
+  webhookCheckedAt       DateTime?                    @db.Timestamptz(6)
   // PULL or PUSH, set by preflight: whether the dedicated agent can reach S3 for the export.
   downloadMethod         String?                      @db.VarChar(8)
   // No relation to `organisation`: the audit trail is permanent and must outlive the organisation (SAD §5.2).

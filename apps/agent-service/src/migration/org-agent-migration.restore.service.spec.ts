@@ -330,6 +330,16 @@ describe('OrgAgentMigrationRestoreService', () => {
       expect(world.world.leaseHeld).toBe(true);
     });
 
+    it('answers busy, and frees the lease, while the agent is still handing queued messages back', async () => {
+      const world = buildWorld();
+      world.agentClient.restoreRelay.mockRejectedValue(new MigrationAgentError('CONFLICT', 409, 'RELAY_BUSY'));
+
+      await expect(world.service.restore(ORG_ID, ADMIN_ID)).rejects.toBeInstanceOf(ConflictException);
+
+      expect(world.migrationRepository.releaseLease).toHaveBeenCalledTimes(1);
+      expect(world.world.orgAgent.orgAgentTypeId).toBe('dedicated-type');
+    });
+
     it('refuses without changing the org when the shared copy is already purged', async () => {
       const world = buildWorld();
       world.agentClient.restoreRelay.mockRejectedValue(new MigrationAgentError('CONFLICT', 409, 'TENANT_PURGED'));

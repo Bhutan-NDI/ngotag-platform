@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { EmailService } from '@credebl/common/email.service';
 import { EmailDto } from '@credebl/common/dtos/email.dto';
 import { CommonConstants } from '@credebl/common/common.constant';
+import { escapeHtml } from '@credebl/common/common.utils';
 import { org_agent_migrations } from '@prisma/client';
 import { AgentServiceRepository } from '../repositories/agent-service.repository';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
@@ -24,6 +25,7 @@ interface IAlertDescription {
   subject: string;
   what: string;
   who?: string;
+  actorLabel?: string;
   targetLabel?: string;
 }
 
@@ -44,6 +46,8 @@ const DESCRIPTIONS: Record<KeyExportAlertKind, IAlertDescription> = {
     subject: 'A wallet move is stuck after the switch',
     who: 'The platform',
     what: 'switched the organisation to its new agent but could not finish the move. The organisation stays paused until the failing step succeeds, and it keeps retrying',
+    // The actor is the owner who confirmed the move, not whoever the platform's own retry acts for.
+    actorLabel: 'Move confirmed by',
     targetLabel: 'The new agent'
   },
   [KeyExportAlertKind.DISASTER_RESTORE]: {
@@ -53,10 +57,6 @@ const DESCRIPTIONS: Record<KeyExportAlertKind, IAlertDescription> = {
     targetLabel: 'The agent that was lost'
   }
 };
-
-const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-
-export const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (character) => ESCAPES[character]);
 
 // The host only: enough to spot an export going somewhere unexpected, without printing the full address.
 const hostOf = (address: string): string => {
@@ -129,7 +129,7 @@ export class OrgAgentMigrationAlertService {
   ): [string, string][] {
     return [
       ['Organisation', orgName ?? migration.orgId],
-      ['Done by', actorEmail ?? 'an unknown user'],
+      [description.actorLabel ?? 'Done by', actorEmail ?? 'an unknown user'],
       [description.targetLabel ?? 'Keys are going to', hostOf(migration.targetAdminEndpoint)],
       ['Time', new Date().toISOString()]
     ];
