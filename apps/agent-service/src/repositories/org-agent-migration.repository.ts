@@ -6,14 +6,14 @@ import { PrismaService } from '@credebl/prisma-service';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { FileUploadStatus } from 'apps/api-gateway/src/enum';
 import { OrgRoles } from 'libs/org-roles/enums';
-import { phaseFor, TERMINAL_STATUSES } from '../migration/org-agent-migration.state-machine';
+import { TERMINAL_STATUSES } from '../migration/org-agent-migration.state-machine';
 
 type MigrationRow = org_agent_migrations;
 
 // Everything a step may record on the row except what the state machine owns.
 export type OrgAgentMigrationPatch = Omit<
   Prisma.org_agent_migrationsUncheckedUpdateManyInput,
-  'id' | 'orgId' | 'status' | 'phase' | 'createDateTime' | 'lastChangedDateTime'
+  'id' | 'orgId' | 'status' | 'createDateTime' | 'lastChangedDateTime'
 >;
 
 const UNIQUE_VIOLATION = 'P2002';
@@ -60,7 +60,6 @@ export class OrgAgentMigrationRepository {
             orgId: params.orgId,
             startedBy: params.startedBy,
             status: OrgAgentMigrationStatus.CREATED,
-            phase: phaseFor(OrgAgentMigrationStatus.CREATED),
             tenantId: params.tenantId,
             sourceOrgAgentSnapshot: params.sourceOrgAgentSnapshot,
             targetAdminEndpoint: params.targetAdminEndpoint,
@@ -146,17 +145,11 @@ export class OrgAgentMigrationRepository {
     const { id, from, to, actor, patch, where, event } = params;
     try {
       return await this.prisma.$transaction(async (tx) => {
-        // The phase depends on whether a slot is booked, which this patch may be setting or clearing.
-        const scheduledFor =
-          patch && 'scheduledFor' in patch
-            ? (patch.scheduledFor as Date | null)
-            : await this.currentScheduledFor(tx, id);
         const { count } = await tx.org_agent_migrations.updateMany({
           where: { id, status: from, ...where },
           data: {
             ...patch,
             status: to,
-            phase: phaseFor(to, scheduledFor),
             lastChangedDateTime: new Date(),
             ...(OrgAgentMigrationStatus.COMPLETED === to ? { completedAt: new Date() } : {})
           }
@@ -233,7 +226,6 @@ export class OrgAgentMigrationRepository {
           data: {
             ...params.patch,
             status: OrgAgentMigrationStatus.CUTOVER,
-            phase: phaseFor(OrgAgentMigrationStatus.CUTOVER),
             lastChangedDateTime: new Date()
           }
         });
@@ -373,11 +365,11 @@ export class OrgAgentMigrationRepository {
     return 1 === count;
   }
 
-  /** Confirmed moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
+  /** Scheduled moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
   async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
     return this.prisma.org_agent_migrations.findMany({
       where: {
-        status: OrgAgentMigrationStatus.REHEARSED,
+        status: OrgAgentMigrationStatus.SCHEDULED,
         rehearsalStatus: REHEARSAL_DONE,
         scheduledFor: { lte: now },
         OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
@@ -514,7 +506,6 @@ export class OrgAgentMigrationRepository {
           where: { id: params.migrationId, status: OrgAgentMigrationStatus.STABILISING },
           data: {
             status: OrgAgentMigrationStatus.DISASTER_RESTORED,
-            phase: phaseFor(OrgAgentMigrationStatus.DISASTER_RESTORED),
             error: null,
             lastChangedDateTime: new Date()
           }
@@ -662,10 +653,5 @@ export class OrgAgentMigrationRepository {
           .filter((email): email is string => Boolean(email))
       )
     ];
-  }
-
-  private async currentScheduledFor(tx: Prisma.TransactionClient, id: string): Promise<Date | null> {
-    const row = await tx.org_agent_migrations.findUnique({ where: { id }, select: { scheduledFor: true } });
-    return row?.scheduledFor ?? null;
   }
 }

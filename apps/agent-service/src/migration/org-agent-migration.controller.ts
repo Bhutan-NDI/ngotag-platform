@@ -20,7 +20,7 @@ import {
   IPreflightReport,
   IRehearseOrgAgentMigration,
   IRestoreOrgAgentMigration,
-  IStartOrgAgentMigration,
+  IScheduleOrgAgentMigration,
   toPublicMigration
 } from './org-agent-migration.interface';
 
@@ -94,11 +94,11 @@ export class OrgAgentMigrationController {
   }
 
   // The owner's commitment: the typed org name and a slot. The scheduler starts the move when the slot arrives.
-  @MessagePattern({ cmd: 'start-org-agent-migration' })
-  async start(payload: IStartOrgAgentMigration): Promise<IOrgAgentMigration> {
+  @MessagePattern({ cmd: 'schedule-org-agent-migration' })
+  async schedule(payload: IScheduleOrgAgentMigration): Promise<IOrgAgentMigration> {
     try {
       await this.authorizer.assertOwner(payload.orgId, payload.userId);
-      return toPublicMigration(await this.scheduleService.confirm(payload));
+      return toPublicMigration(await this.scheduleService.schedule(payload));
     } catch (error) {
       throw new RpcException(error.response ?? error);
     }

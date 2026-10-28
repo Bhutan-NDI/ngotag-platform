@@ -1,4 +1,5 @@
 /* eslint-disable camelcase -- Mirrors the repository's org_agents relation name. */
+import { HttpException, HttpStatus } from '@nestjs/common';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { OrgAgentType } from '@credebl/enum/enum';
 import { AgentServiceService } from './agent-service.service';
@@ -75,5 +76,25 @@ describe('deleteWallet', () => {
       `${ENDPOINT}${CommonConstants.URL_SHAGENT_DELETE_SUB_WALLET}`.replace('#', 'tenant-1'),
       { headers: { authorization: 'admin-key' } }
     );
+  });
+
+  it('treats a 404 from the agent as already gone and still removes the org rows', async () => {
+    const { service, repository, commonService } = build(OrgAgentType.DEDICATED, null);
+    commonService.httpDelete.mockRejectedValue(
+      new HttpException({ statusCode: 404, error: 'Not Found' }, HttpStatus.NOT_FOUND)
+    );
+
+    await service.deleteWallet(ORG_ID, {} as never);
+
+    expect(repository.deleteOrgAgentByOrg).toHaveBeenCalledWith(ORG_ID);
+  });
+
+  it('does not treat a refused connection as already gone', async () => {
+    const { service, commonService } = build(OrgAgentType.DEDICATED, null);
+    commonService.httpDelete.mockRejectedValue(
+      new HttpException({ statusCode: 404, error: 'connect ECONNREFUSED 10.0.0.1:8004' }, HttpStatus.NOT_FOUND)
+    );
+
+    await expect(service.deleteWallet(ORG_ID, {} as never)).rejects.toBeDefined();
   });
 });

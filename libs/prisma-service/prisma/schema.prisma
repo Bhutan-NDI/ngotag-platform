@@ -259,7 +259,6 @@ model org_agent_migrations {
   lastChangedDateTime    DateTime                     @default(now()) @db.Timestamptz(6)
   orgId                  String                       @db.Uuid
   status                 String                       @default("CREATED") @db.VarChar(32)
-  phase                  String?                      @db.VarChar(32)
   startedBy              String                       @db.Uuid
   sourceOrgAgentSnapshot Json?
   tenantId               String?
