@@ -83,8 +83,16 @@ export class OrgAgentMigrationRehearsalService {
   }
 
   private async execute(migration: org_agent_migrations, actor: string): Promise<void> {
-    const shared = await this.access.shared();
-    const dedicated = await this.access.dedicated(migration);
+    let shared: IAgentAccess | undefined;
+    let dedicated: IAgentAccess | undefined;
+    try {
+      shared = await this.access.shared();
+      dedicated = await this.access.dedicated(migration);
+    } catch (error) {
+      this.logger.error(
+        `[rehearsal] ${migration.id} could not read agent access: ${error instanceof Error ? error.message : 'failed'}`
+      );
+    }
     if (!shared || !dedicated) {
       await this.recordFailure(migration.id, { code: 'AGENT_UNAVAILABLE' });
       return;
@@ -147,7 +155,11 @@ export class OrgAgentMigrationRehearsalService {
         record.exportCleanup = await this.deleteExport(shared, migration.tenantId, exportJobId);
       }
       const failure = error instanceof RehearsalFailure ? error : new RehearsalFailure('EXPORT', 'REHEARSAL_FAILED');
-      await this.recordFailure(migration.id, { ...record, step: failure.step, code: failure.code });
+      await this.recordFailure(
+        migration.id,
+        { ...record, step: failure.step, code: failure.code },
+        'FAILED' === record.exportCleanup ? exportJobId : undefined
+      );
     }
   }
 
@@ -207,7 +219,28 @@ export class OrgAgentMigrationRehearsalService {
     }
   }
 
+  // The agent refuses to delete an export that is still running, so a job cut short by a timeout is given time to settle.
+  private async awaitExportSettled(shared: IAgentAccess, tenantId: string, jobId: string): Promise<void> {
+    const deadline = Date.now() + envMs('ORG_MIGRATION_EXPORT_CLEANUP_WAIT_MS', 2 * MINUTE_MS);
+    const intervalMs = envMs('ORG_MIGRATION_POLL_INTERVAL_MS', 5000);
+    for (;;) {
+      try {
+        const job = await this.agentClient.getExportJob(shared.endpoint, shared.token, tenantId, jobId);
+        if ('completed' === job.status || 'failed' === job.status) {
+          return;
+        }
+      } catch {
+        return;
+      }
+      if (Date.now() >= deadline) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
   private async deleteExport(shared: IAgentAccess, tenantId: string, jobId: string): Promise<'DELETED' | 'FAILED'> {
+    await this.awaitExportSettled(shared, tenantId, jobId);
     try {
       await this.agentClient.deleteExport(shared.endpoint, shared.token, tenantId, jobId);
       return 'DELETED';
@@ -219,11 +252,17 @@ export class OrgAgentMigrationRehearsalService {
     }
   }
 
-  private async recordFailure(migrationId: string, record: IRehearsalRecord & { code: string }): Promise<void> {
+  // `leftoverExportJobId` keeps an export that could not be deleted findable, so a later run or a sweeper can remove it.
+  private async recordFailure(
+    migrationId: string,
+    record: IRehearsalRecord & { code: string },
+    leftoverExportJobId?: string
+  ): Promise<void> {
     try {
       await this.migrationRepository.update(migrationId, {
         rehearsalStatus: 'FAILED',
-        rehearsal: { ...record, finishedAt: new Date().toISOString() } as never
+        rehearsal: { ...record, finishedAt: new Date().toISOString() } as never,
+        ...(leftoverExportJobId ? { exportJobId: leftoverExportJobId } : {})
       });
     } catch (error) {
       this.logger.error(`[rehearsal] could not record failure: ${error instanceof Error ? error.message : 'failed'}`);
