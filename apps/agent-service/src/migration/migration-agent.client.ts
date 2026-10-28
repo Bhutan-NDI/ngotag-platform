@@ -257,7 +257,13 @@ export class MigrationAgentClient {
   createSelfAttestedCredential(
     adminEndpoint: string,
     token: string,
-    body: { '@context': string[]; type: string[]; credentialSubject: Record<string, unknown>; proofType: string }
+    body: {
+      '@context': string[];
+      type: string[];
+      credentialSubject: Record<string, unknown>;
+      proofType: string;
+      did?: string;
+    }
   ): Promise<ISelfAttestedCredential> {
     return this.request('post', adminEndpoint, '/agent/credential/self-attested', token, body);
   }

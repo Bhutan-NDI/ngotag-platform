@@ -77,7 +77,7 @@ export class OrgAgentMigrationController {
       const { migration, report } = await this.preflightService.run(active.id, payload, payload.userId);
       return { migration: toPublicMigration(migration), preflight: report };
     } catch (error) {
-      throw new RpcException(error.response ?? error);
+      throw error instanceof RpcException ? error : new RpcException(error.response ?? error);
     }
   }
 
