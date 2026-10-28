@@ -8,17 +8,10 @@ import { AgentServiceRepository } from '../repositories/agent-service.repository
 import { OrgAgentMigrationPatch, OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import { ICreateOrgAgentMigration, IListOrgAgentMigrations } from './org-agent-migration.interface';
 import { canTransition, isAbortable } from './org-agent-migration.state-machine';
+import { isHttpsUrl, normaliseDidcommEndpoint } from './org-agent-migration.endpoint';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
-
-const isHttps = (value: string): boolean => {
-  try {
-    return 'https:' === new URL(value).protocol;
-  } catch {
-    return false;
-  }
-};
 
 /**
  * Owns the lifecycle of an org's move from the shared agent to a dedicated one: creating it, reading it, and
@@ -35,11 +28,12 @@ export class OrgAgentMigrationService {
 
   async createMigration(payload: ICreateOrgAgentMigration): Promise<org_agent_migrations> {
     try {
-      const { orgId, userId, targetAdminEndpoint, targetDidcommEndpoint } = payload;
+      const { orgId, userId, targetAdminEndpoint } = payload;
+      const targetDidcommEndpoint = normaliseDidcommEndpoint(payload.targetDidcommEndpoint);
 
       if (
-        !isHttps(targetAdminEndpoint) ||
-        !isHttps(targetDidcommEndpoint) ||
+        !isHttpsUrl(targetAdminEndpoint) ||
+        !targetDidcommEndpoint ||
         new URL(targetAdminEndpoint).origin === new URL(targetDidcommEndpoint).origin
       ) {
         throw new BadRequestException(ResponseMessages.agent.error.migrationEndpointInvalid);

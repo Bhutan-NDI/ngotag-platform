@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { EmailService } from '@credebl/common/email.service';
 import { EmailDto } from '@credebl/common/dtos/email.dto';
 import { CommonConstants } from '@credebl/common/common.constant';
+import { escapeHtml } from '@credebl/common/common.utils';
 import { org_agent_migrations } from '@prisma/client';
 import { AgentServiceRepository } from '../repositories/agent-service.repository';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
@@ -27,10 +28,6 @@ const DESCRIPTIONS: Record<KeyExportAlertKind, { subject: string; what: string }
     what: 'exported the organisation’s wallet, including its signing keys, for a rehearsal of the move'
   }
 };
-
-const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-
-export const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (character) => ESCAPES[character]);
 
 // The host only: enough to spot an export going somewhere unexpected, without printing the full address.
 const hostOf = (address: string): string => {

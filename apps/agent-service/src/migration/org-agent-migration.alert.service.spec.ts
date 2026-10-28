@@ -1,5 +1,5 @@
 /* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type, prefer-destructuring */
-import { escapeHtml, KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
+import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
 
 const ORG_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 const USER_ID = 'a1b2c3d4-5717-4562-b3fc-2c963f66afa6';
@@ -87,7 +87,7 @@ describe('OrgAgentMigrationAlertService', () => {
 
     const { emailHtml } = sendEmail.mock.calls[0][0];
     expect(emailHtml).not.toContain('<script>');
-    expect(emailHtml).toContain('&lt;script&gt;alert(1)&lt;/script&gt; &amp; Co');
+    expect(emailHtml).toContain('&lt;script&gt;alert(1)&lt;&#x2F;script&gt; &amp; Co');
   });
 
   it('keeps going when one recipient fails, and counts only what was sent', async () => {
@@ -128,13 +128,5 @@ describe('OrgAgentMigrationAlertService', () => {
     await service.alertKeyExport(migration, KeyExportAlertKind.REHEARSAL_EXPORT, USER_ID);
 
     expect(sendEmail.mock.calls[0][0].emailText).toContain(ORG_ID);
-  });
-});
-
-describe('escapeHtml', () => {
-  it('escapes the characters that can break out of text and attributes', () => {
-    expect(escapeHtml(`<a href="x" onclick='y'>&</a>`)).toBe(
-      '&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;&lt;/a&gt;'
-    );
   });
 });
