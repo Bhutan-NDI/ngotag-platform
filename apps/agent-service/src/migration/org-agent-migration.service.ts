@@ -8,17 +8,10 @@ import { AgentServiceRepository } from '../repositories/agent-service.repository
 import { OrgAgentMigrationPatch, OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import { ICreateOrgAgentMigration, IListOrgAgentMigrations } from './org-agent-migration.interface';
 import { canTransition, isAbortable } from './org-agent-migration.state-machine';
+import { isHttpsUrl, normaliseDidcommEndpoint } from './org-agent-migration.endpoint';
 
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
-
-const isHttps = (value: string): boolean => {
-  try {
-    return 'https:' === new URL(value).protocol;
-  } catch {
-    return false;
-  }
-};
 
 /**
  * Owns the lifecycle of an org's move from the shared agent to a dedicated one: creating it, reading it, and
@@ -35,11 +28,12 @@ export class OrgAgentMigrationService {
 
   async createMigration(payload: ICreateOrgAgentMigration): Promise<org_agent_migrations> {
     try {
-      const { orgId, userId, targetAdminEndpoint, targetDidcommEndpoint } = payload;
+      const { orgId, userId, targetAdminEndpoint } = payload;
+      const targetDidcommEndpoint = normaliseDidcommEndpoint(payload.targetDidcommEndpoint);
 
       if (
-        !isHttps(targetAdminEndpoint) ||
-        !isHttps(targetDidcommEndpoint) ||
+        !isHttpsUrl(targetAdminEndpoint) ||
+        !targetDidcommEndpoint ||
         new URL(targetAdminEndpoint).origin === new URL(targetDidcommEndpoint).origin
       ) {
         throw new BadRequestException(ResponseMessages.agent.error.migrationEndpointInvalid);
@@ -117,7 +111,8 @@ export class OrgAgentMigrationService {
     migrationId: string,
     to: OrgAgentMigrationStatus,
     actor: string | null,
-    patch?: OrgAgentMigrationPatch
+    patch?: OrgAgentMigrationPatch,
+    options?: Pick<Parameters<OrgAgentMigrationRepository['transition']>[0], 'where' | 'event'>
   ): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
@@ -127,7 +122,7 @@ export class OrgAgentMigrationService {
     if (!canTransition(from, to)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
-    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch });
+    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch, ...options });
   }
 
   /**
@@ -135,7 +130,12 @@ export class OrgAgentMigrationService {
    * changed on either agent, so the rehearsal still stands: the owner picks a new slot and confirms again.
    * @throws when there is no such migration, or it is not waiting for its slot
    */
-  async unschedule(migrationId: string, reason: string): Promise<org_agent_migrations> {
+  async unschedule(
+    migrationId: string,
+    reason: string,
+    // The slot the caller read: a slot the owner has booked since is left alone.
+    expectedScheduledFor?: Date | null
+  ): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
       throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
@@ -148,7 +148,8 @@ export class OrgAgentMigrationService {
       from: OrgAgentMigrationStatus.REHEARSED,
       to: OrgAgentMigrationStatus.REHEARSED,
       actor: null,
-      patch: { scheduledFor: null, error: reason }
+      patch: { scheduledFor: null, error: reason },
+      ...(undefined === expectedScheduledFor ? {} : { where: { scheduledFor: expectedScheduledFor } })
     });
   }
 

@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
 import { CommonService } from '@credebl/common';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import { OrganizationRepository } from '../repositories/organization.repository';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { OrgRolesService } from '@credebl/org-roles';
@@ -1919,12 +1920,13 @@ export class OrganizationService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }
