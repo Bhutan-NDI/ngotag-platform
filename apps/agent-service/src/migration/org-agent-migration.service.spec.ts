@@ -210,8 +210,8 @@ describe('OrgAgentMigrationService', () => {
   });
 
   describe('abort', () => {
-    it.each([Status.CREATED, Status.REHEARSED, Status.FROZEN, Status.EXPORTING, Status.IMPORTING, Status.VERIFYING])(
-      'cancels a migration in %s with the error code recorded',
+    it.each([Status.SCHEDULED, Status.FROZEN, Status.EXPORTING, Status.IMPORTING, Status.VERIFYING])(
+      'fails a migration in %s with the error code recorded',
       async (status) => {
         const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
 
@@ -227,15 +227,21 @@ describe('OrgAgentMigrationService', () => {
       }
     );
 
-    it.each([Status.CUTOVER, Status.STABILISING, Status.ROTATING, Status.COMPLETED, Status.FAILED])(
-      'will not abort a migration in %s',
-      async (status) => {
-        const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
+    it.each([
+      Status.CREATED,
+      Status.REHEARSED,
+      Status.CUTOVER,
+      Status.STABILISING,
+      Status.ROTATING,
+      Status.COMPLETED,
+      Status.FAILED,
+      Status.CANCELLED
+    ])('will not abort a migration in %s', async (status) => {
+      const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
 
-        await expect(service.abort(MIGRATION_ID, 'X', null)).rejects.toThrow(BadRequestException);
-        expect(migrationRepository.transition).not.toHaveBeenCalled();
-      }
-    );
+      await expect(service.abort(MIGRATION_ID, 'X', null)).rejects.toThrow(BadRequestException);
+      expect(migrationRepository.transition).not.toHaveBeenCalled();
+    });
   });
 });
 
