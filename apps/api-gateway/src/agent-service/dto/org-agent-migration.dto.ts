@@ -73,7 +73,7 @@ export class PreflightOrgAgentMigrationDto {
   backupsConfirmed?: boolean;
 }
 
-export class StartOrgAgentMigrationDto {
+export class ScheduleOrgAgentMigrationDto {
   @ApiProperty({ description: 'The name of the organisation, typed by the owner to confirm the move.' })
   @IsString({ message: 'confirmationName must be in string format.' })
   @IsNotEmpty({ message: 'confirmationName is required.' })
