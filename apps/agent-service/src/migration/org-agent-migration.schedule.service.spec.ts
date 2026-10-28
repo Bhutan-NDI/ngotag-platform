@@ -89,6 +89,23 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
       await expect(schedule(service)).rejects.toBeInstanceOf(BadRequestException);
     });
 
+    it('refuses a slot the rehearsal will be too old for, even though the rehearsal is fresh now', async () => {
+      const { service, migrationService } = build();
+
+      await expect(
+        schedule(service, { scheduledFor: new Date(Date.now() + 8 * DAY).toISOString() })
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(migrationService.advance).not.toHaveBeenCalled();
+    });
+
+    it('accepts a slot still inside the rehearsal limit', async () => {
+      const { service } = build();
+
+      await expect(
+        schedule(service, { scheduledFor: new Date(Date.now() + 5 * DAY).toISOString() })
+      ).resolves.toBeDefined();
+    });
+
     it('reads the limit from the environment', async () => {
       process.env.ORG_MIGRATION_REHEARSAL_MAX_AGE_DAYS = '30';
       const { service } = build({
@@ -179,6 +196,7 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
     });
 
     it('accepts the far edge of the window', async () => {
+      process.env.ORG_MIGRATION_REHEARSAL_MAX_AGE_DAYS = '30';
       const { service } = build();
 
       await expect(schedule(service, { scheduledFor: new Date(Date.now() + 14 * DAY - 1000) })).resolves.toBeDefined();
