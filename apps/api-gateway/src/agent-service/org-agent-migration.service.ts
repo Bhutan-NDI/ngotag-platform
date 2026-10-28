@@ -6,7 +6,7 @@ import {
   CreateOrgAgentMigrationDto,
   ListOrgAgentMigrationsDto,
   PreflightOrgAgentMigrationDto,
-  StartOrgAgentMigrationDto
+  ScheduleOrgAgentMigrationDto
 } from './dto/org-agent-migration.dto';
 
 /**
@@ -47,8 +47,8 @@ export class OrgAgentMigrationService extends BaseService {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'rehearse-org-agent-migration', { orgId, userId });
   }
 
-  start(orgId: string, userId: string, dto: StartOrgAgentMigrationDto): Promise<object> {
-    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'start-org-agent-migration', {
+  schedule(orgId: string, userId: string, dto: ScheduleOrgAgentMigrationDto): Promise<object> {
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'schedule-org-agent-migration', {
       orgId,
       userId,
       confirmationName: dto.confirmationName,

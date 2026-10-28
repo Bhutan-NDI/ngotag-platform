@@ -18,13 +18,13 @@ const build = () => {
   const migrationService = {
     createMigration: jest.fn().mockResolvedValue(row()),
     getMigration: jest.fn().mockResolvedValue(row()),
-    cancel: jest.fn().mockResolvedValue(row({ status: 'FAILED', error: 'CANCELLED_BY_OWNER' })),
+    cancel: jest.fn().mockResolvedValue(row({ status: 'CANCELLED' })),
     listMigrations: jest.fn().mockResolvedValue({ total: 1, migrations: [row()] })
   };
   const report = { ranAt: 'now', passed: true, checks: [] };
   const preflightService = { run: jest.fn().mockResolvedValue({ migration: row({ id: 'm1' }), report }) };
   const rehearsalService = { start: jest.fn().mockResolvedValue(row({ rehearsalStatus: 'RUNNING' })) };
-  const scheduleService = { confirm: jest.fn().mockResolvedValue(row({ status: 'REHEARSED', scheduledFor: 'slot' })) };
+  const scheduleService = { schedule: jest.fn().mockResolvedValue(row({ status: 'REHEARSED', scheduledFor: 'slot' })) };
   const restoreService = { restore: jest.fn().mockResolvedValue(row({ status: 'DISASTER_RESTORED' })) };
   const authorizer = {
     assertOwner: jest.fn().mockResolvedValue(undefined),
@@ -67,7 +67,7 @@ describe('OrgAgentMigrationController', () => {
     ['createMigration', 'migrate-org-agent'],
     ['preflight', 'preflight-org-agent-migration'],
     ['rehearse', 'rehearse-org-agent-migration'],
-    ['start', 'start-org-agent-migration'],
+    ['schedule', 'schedule-org-agent-migration'],
     ['cancel', 'cancel-org-agent-migration'],
     ['disasterRestore', 'disaster-restore-org-agent-migration'],
     ['getMigration', 'get-org-agent-migration'],
@@ -263,7 +263,7 @@ describe('OrgAgentMigrationController', () => {
     });
   });
 
-  describe('start-org-agent-migration', () => {
+  describe('schedule-org-agent-migration', () => {
     const payload = {
       orgId: ORG_ID,
       userId: USER_ID,
@@ -271,13 +271,13 @@ describe('OrgAgentMigrationController', () => {
       scheduledFor: '2026-10-25T01:00:00Z'
     };
 
-    it('checks the caller owns the org, then confirms the move and hides the token', async () => {
+    it('checks the caller owns the org, then schedules the move and hides the token', async () => {
       const { controller, authorizer, scheduleService } = build();
 
-      const result = await controller.start(payload);
+      const result = await controller.schedule(payload);
 
       expect(authorizer.assertOwner).toHaveBeenCalledWith(ORG_ID, USER_ID);
-      expect(scheduleService.confirm).toHaveBeenCalledWith(payload);
+      expect(scheduleService.schedule).toHaveBeenCalledWith(payload);
       expect(result).toMatchObject({ status: 'REHEARSED' });
       expect(JSON.stringify(result)).not.toContain(SECRET);
     });
@@ -288,16 +288,16 @@ describe('OrgAgentMigrationController', () => {
         new RpcException('Only an owner of the organization can move its wallet')
       );
 
-      await expect(controller.start(payload)).rejects.toBeInstanceOf(RpcException);
+      await expect(controller.schedule(payload)).rejects.toBeInstanceOf(RpcException);
 
-      expect(scheduleService.confirm).not.toHaveBeenCalled();
+      expect(scheduleService.schedule).not.toHaveBeenCalled();
     });
 
     it('surfaces a refusal as an RPC error', async () => {
       const { controller, scheduleService } = build();
-      scheduleService.confirm.mockRejectedValue(new Error('wrong name'));
+      scheduleService.schedule.mockRejectedValue(new Error('wrong name'));
 
-      await expect(controller.start(payload)).rejects.toBeInstanceOf(RpcException);
+      await expect(controller.schedule(payload)).rejects.toBeInstanceOf(RpcException);
     });
   });
 
@@ -309,7 +309,7 @@ describe('OrgAgentMigrationController', () => {
 
       expect(authorizer.assertOwner).toHaveBeenCalledWith(ORG_ID, USER_ID);
       expect(migrationService.cancel).toHaveBeenCalledWith(ORG_ID, USER_ID);
-      expect(result).toMatchObject({ status: 'FAILED', error: 'CANCELLED_BY_OWNER' });
+      expect(result).toMatchObject({ status: 'CANCELLED' });
       expect(JSON.stringify(result)).not.toContain(SECRET);
     });
 

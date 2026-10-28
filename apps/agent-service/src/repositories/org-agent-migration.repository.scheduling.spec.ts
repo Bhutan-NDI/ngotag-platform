@@ -55,7 +55,7 @@ describe('OrgAgentMigrationRepository scheduling queries', () => {
 
       expect(prisma.org_agent_migrations.findMany).toHaveBeenCalledWith({
         where: {
-          status: 'REHEARSED',
+          status: 'SCHEDULED',
           rehearsalStatus: 'DONE',
           scheduledFor: { lte: now },
           OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
@@ -95,7 +95,7 @@ describe('OrgAgentMigrationRepository scheduling queries', () => {
       await repository.findStalled(new Date(), 1000);
 
       const text = JSON.stringify(prisma.org_agent_migrations.findMany.mock.calls[0][0]);
-      for (const status of ['REHEARSED', 'CREATED', 'STABILISING', 'ROTATING', 'COMPLETED', 'FAILED']) {
+      for (const status of ['SCHEDULED', 'REHEARSED', 'CREATED', 'STABILISING', 'ROTATING', 'COMPLETED', 'FAILED']) {
         expect(text).not.toContain(`"${status}"`);
       }
     });

@@ -1,6 +1,6 @@
 /* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type */
 import { ConflictException } from '@nestjs/common';
-import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
+import { OrgAgentMigrationStatus, ORG_AGENT_MIGRATION_TERMINAL_STATUSES } from '@credebl/enum/enum';
 import { OrganizationRepository } from './organization.repository';
 
 const ORG_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
@@ -36,16 +36,11 @@ describe('OrganizationRepository.deleteOrg and wallet moves', () => {
 
     await repository.deleteOrg(ORG_ID);
 
+    expect(ORG_AGENT_MIGRATION_TERMINAL_STATUSES).toContain(OrgAgentMigrationStatus.CANCELLED);
     expect(tx.org_agent_migrations.count).toHaveBeenCalledWith({
       where: {
         orgId: ORG_ID,
-        status: {
-          notIn: [
-            OrgAgentMigrationStatus.COMPLETED,
-            OrgAgentMigrationStatus.FAILED,
-            OrgAgentMigrationStatus.DISASTER_RESTORED
-          ]
-        }
+        status: { notIn: [...ORG_AGENT_MIGRATION_TERMINAL_STATUSES] }
       }
     });
   });
