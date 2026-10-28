@@ -5,14 +5,14 @@ import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { PrismaService } from '@credebl/prisma-service';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { FileUploadStatus } from 'apps/api-gateway/src/enum';
-import { phaseFor, TERMINAL_STATUSES } from '../migration/org-agent-migration.state-machine';
+import { TERMINAL_STATUSES } from '../migration/org-agent-migration.state-machine';
 
 type MigrationRow = org_agent_migrations;
 
 // Everything a step may record on the row except what the state machine owns.
 export type OrgAgentMigrationPatch = Omit<
   Prisma.org_agent_migrationsUncheckedUpdateManyInput,
-  'id' | 'orgId' | 'status' | 'phase' | 'createDateTime' | 'lastChangedDateTime'
+  'id' | 'orgId' | 'status' | 'createDateTime' | 'lastChangedDateTime'
 >;
 
 const UNIQUE_VIOLATION = 'P2002';
@@ -45,7 +45,6 @@ export class OrgAgentMigrationRepository {
             orgId: params.orgId,
             startedBy: params.startedBy,
             status: OrgAgentMigrationStatus.CREATED,
-            phase: phaseFor(OrgAgentMigrationStatus.CREATED),
             tenantId: params.tenantId,
             sourceOrgAgentSnapshot: params.sourceOrgAgentSnapshot,
             targetAdminEndpoint: params.targetAdminEndpoint,
@@ -122,17 +121,11 @@ export class OrgAgentMigrationRepository {
     const { id, from, to, actor, patch } = params;
     try {
       return await this.prisma.$transaction(async (tx) => {
-        // The phase depends on whether a slot is booked, which this patch may be setting or clearing.
-        const scheduledFor =
-          patch && 'scheduledFor' in patch
-            ? (patch.scheduledFor as Date | null)
-            : await this.currentScheduledFor(tx, id);
         const { count } = await tx.org_agent_migrations.updateMany({
           where: { id, status: from },
           data: {
             ...patch,
             status: to,
-            phase: phaseFor(to, scheduledFor),
             lastChangedDateTime: new Date()
           }
         });
@@ -204,10 +197,5 @@ export class OrgAgentMigrationRepository {
       this.prisma.status_list_allocation.count({ where: { orgId } })
     ]);
     return { oidcIssuers, oid4vpVerifiers, x509Certificates, credentialDefinitions, statusLists };
-  }
-
-  private async currentScheduledFor(tx: Prisma.TransactionClient, id: string): Promise<Date | null> {
-    const row = await tx.org_agent_migrations.findUnique({ where: { id }, select: { scheduledFor: true } });
-    return row?.scheduledFor ?? null;
   }
 }
