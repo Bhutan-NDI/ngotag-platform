@@ -90,6 +90,14 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       Object.assign(world.row, patch);
       return clone();
     }),
+    attachNewInvitation: jest.fn(async (params: any) => {
+      world.invitations.push(params);
+      Object.assign(world.row, {
+        newInvitationDid: params.newInvitationDid,
+        legacyInvitationDid: params.legacyInvitationDid
+      });
+      return clone();
+    }),
     recordEvent: jest.fn(async (_id: string, entry: { action: string; detail?: unknown }) => {
       world.events.push({ action: entry.action, detail: entry.detail });
     }),
@@ -201,11 +209,7 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       id: 'agent-row-1',
       organisation: { name: 'Acme Ltd', logoUrl: 'https://logo.example.com/a.png' }
     })),
-    getInvitationDidByOrgId: jest.fn(async () => ({ invitationDid: 'did:peer:2.legacy' })),
-    saveAgentConnectionInvitations: jest.fn(async (...args: unknown[]) => {
-      world.invitations.push(args);
-      return {};
-    })
+    getInvitationDidByOrgId: jest.fn(async () => ({ invitationDid: 'did:peer:2.legacy' }))
   };
   const connectionService: Record<string, jest.Mock> = {
     storeConnectionObjectAndReturnUrl: jest.fn(async () => 'https://short.example.com/abc')
@@ -243,6 +247,7 @@ beforeEach(() => {
   process.env.ORG_MIGRATION_DRAIN_MS = '1';
   process.env.ORG_MIGRATION_POLL_INTERVAL_MS = '1';
   process.env.ORG_MIGRATION_RETRY_MS = '1';
+  process.env.ORG_MIGRATION_EXPORT_CLEANUP_WAIT_MS = '20';
 });
 
 afterEach(() => {
@@ -250,6 +255,7 @@ afterEach(() => {
     'ORG_MIGRATION_DRAIN_MS',
     'ORG_MIGRATION_POLL_INTERVAL_MS',
     'ORG_MIGRATION_RETRY_MS',
+    'ORG_MIGRATION_EXPORT_CLEANUP_WAIT_MS',
     'ORG_MIGRATION_JOB_TIMEOUT_MS',
     'ORG_MIGRATION_STABILISATION_HOURS',
     'ORG_MIGRATION_COUNT_TOLERANCE'
@@ -428,7 +434,7 @@ describe('move day: the whole move', () => {
   });
 
   it('creates the new reusable invitation on the dedicated agent and records it beside the old one', async () => {
-    const { executor, world, agentClient, connectionRepository, connectionService } = buildWorld();
+    const { executor, world, agentClient, migrationRepository, connectionService } = buildWorld();
 
     await executor.run(MIGRATION_ID, USER_ID);
 
@@ -442,22 +448,24 @@ describe('move day: the whole move', () => {
       'https://didcomm.org.example.com?oob=abc',
       true
     );
-    expect(connectionRepository.saveAgentConnectionInvitations).toHaveBeenCalledWith(
-      'https://short.example.com/abc',
-      'agent-row-1',
-      ORG_ID,
-      'did:peer:2.new'
-    );
+    expect(migrationRepository.attachNewInvitation).toHaveBeenCalledWith({
+      migrationId: MIGRATION_ID,
+      orgId: ORG_ID,
+      agentId: 'agent-row-1',
+      connectionInvitation: 'https://short.example.com/abc',
+      newInvitationDid: 'did:peer:2.new',
+      legacyInvitationDid: 'did:peer:2.legacy'
+    });
     expect(world.row).toMatchObject({ newInvitationDid: 'did:peer:2.new', legacyInvitationDid: 'did:peer:2.legacy' });
   });
 
   it('reads the old invitation before saving the new one, so the new one is never taken for the old', async () => {
-    const { executor, connectionRepository } = buildWorld();
+    const { executor, connectionRepository, migrationRepository } = buildWorld();
 
     await executor.run(MIGRATION_ID, USER_ID);
 
     expect(connectionRepository.getInvitationDidByOrgId.mock.invocationCallOrder[0]).toBeLessThan(
-      connectionRepository.saveAgentConnectionInvitations.mock.invocationCallOrder[0]
+      migrationRepository.attachNewInvitation.mock.invocationCallOrder[0]
     );
   });
 
@@ -670,7 +678,30 @@ describe('move day: aborting before the switch', () => {
     expect(isFrozen(world.world.row.status as Status)).toBe(false);
   });
 
-  it.each(failures.filter(([, code]) => !['RELAY_FAILED'].includes(code)))(
+  const BEFORE_THE_FREEZE_WORK = [
+    'VERIFICATION_FAILED:ENDPOINT',
+    'VERIFICATION_FAILED:RELEASE',
+    'VERIFICATION_FAILED:CONFIG',
+    'VERIFICATION_FAILED:RELAY_PROBE'
+  ];
+
+  it.each(failures.filter(([, code]) => BEFORE_THE_FREEZE_WORK.includes(code)))(
+    'when %s: fails before the relay is held, anything is exported or the target is touched',
+    async (_name, code, arrange) => {
+      const world = buildWorld();
+      arrange(world);
+
+      await world.executor.run(MIGRATION_ID, USER_ID);
+
+      expect(world.world.row).toMatchObject({ status: Status.FAILED, error: code });
+      expect(world.agentClient.putRelay).not.toHaveBeenCalled();
+      expect(world.agentClient.createImportSession).not.toHaveBeenCalled();
+      expect(world.agentClient.startSealedExport).not.toHaveBeenCalled();
+      expect(world.agentClient.startImport).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(failures.filter(([, code]) => !['RELAY_FAILED', ...BEFORE_THE_FREEZE_WORK].includes(code)))(
     'when %s: puts the held messages back and removes the relay',
     async (_name, _code, arrange) => {
       const world = buildWorld();
@@ -752,6 +783,66 @@ describe('move day: aborting before the switch', () => {
     expect(world.world.heldMessages).toBe(0);
   });
 
+  it('does not take a 409 for a relay that is gone: it empties the buffer again and retries the removal', async () => {
+    const world = buildWorld();
+    world.agentClient.getImportJob.mockResolvedValue({ jobId: 'import-1', status: 'failed' });
+    world.agentClient.deleteRelay.mockImplementationOnce(async () => {
+      throw new MigrationAgentError('CONFLICT', 409, 'RELAY_BUFFER_NOT_EMPTY');
+    });
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.agentClient.reinjectRelay).toHaveBeenCalledTimes(2);
+    expect(world.agentClient.deleteRelay).toHaveBeenCalledTimes(2);
+    expect(world.world.row.status).toBe(Status.FAILED);
+    expect(world.world.relay).toBe('none');
+  });
+
+  it('keeps the org frozen when the relay keeps refusing removal because messages keep arriving', async () => {
+    const world = buildWorld();
+    world.agentClient.getImportJob.mockResolvedValue({ jobId: 'import-1', status: 'failed' });
+    world.agentClient.deleteRelay.mockRejectedValue(new MigrationAgentError('CONFLICT', 409, 'RELAY_BUFFER_NOT_EMPTY'));
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.world.row.status).toBe(Status.IMPORTING);
+    expect(world.world.events.map((event) => event.action)).toContain('MOVE_ABORT_INCOMPLETE');
+  });
+
+  it('leaves the abort incomplete while another re-inject is still running on the agent', async () => {
+    const world = buildWorld();
+    world.agentClient.getImportJob.mockResolvedValue({ jobId: 'import-1', status: 'failed' });
+    world.agentClient.reinjectRelay.mockRejectedValue(new MigrationAgentError('CONFLICT', 409, 'RELAY_BUSY'));
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.world.row.status).toBe(Status.IMPORTING);
+    expect(world.agentClient.deleteRelay).not.toHaveBeenCalled();
+  });
+
+  it('puts the messages back before it waits on or deletes the export', async () => {
+    const world = buildWorld();
+    world.agentClient.getImportJob.mockResolvedValue({ jobId: 'import-1', status: 'failed' });
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.calls.indexOf('reinjectRelay')).toBeLessThan(world.calls.indexOf('deleteExport'));
+  });
+
+  it('waits for a running export to finish before it deletes it, and says when the delete fails', async () => {
+    const world = buildWorld();
+    world.agentClient.getImportJob.mockResolvedValue({ jobId: 'import-1', status: 'failed' });
+    world.agentClient.getExportJob.mockResolvedValueOnce(exportedJob);
+    world.agentClient.getExportJob
+      .mockResolvedValueOnce({ ...exportedJob, status: 'in-progress' })
+      .mockResolvedValueOnce({ ...exportedJob, status: 'in-progress' });
+    world.agentClient.deleteExport.mockRejectedValue(new MigrationAgentError('NOT_FOUND', 404));
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.logger.warn).toHaveBeenCalledWith(expect.stringContaining('was not deleted from S3'));
+  });
+
   it('treats a relay entry that is already gone as cleaned up', async () => {
     const world = buildWorld();
     world.agentClient.getImportJob.mockResolvedValue({ jobId: 'import-1', status: 'failed' });
@@ -794,7 +885,8 @@ describe('move day: signing check', () => {
       '@context': ['https://www.w3.org/2018/credentials/v1'],
       type: ['VerifiableCredential'],
       credentialSubject: {},
-      proofType: 'EcdsaSecp256k1Signature2019'
+      proofType: 'EcdsaSecp256k1Signature2019',
+      did: ORG_DID
     });
     expect(world.agentClient.verifyCredential).toHaveBeenCalledWith(DEDICATED.endpoint, DEDICATED.token, {
       issuer: ORG_DID,

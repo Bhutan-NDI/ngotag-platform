@@ -225,6 +225,36 @@ export class OrgAgentMigrationRepository {
     }
   }
 
+  /** Saves the org's new reusable invitation and records its DID on the migration, together or not at all. */
+  async attachNewInvitation(params: {
+    migrationId: string;
+    orgId: string;
+    agentId: string;
+    connectionInvitation: string;
+    newInvitationDid: string;
+    legacyInvitationDid: string | null;
+  }): Promise<MigrationRow> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.agent_invitations.create({
+        data: {
+          orgId: String(params.orgId),
+          agentId: params.agentId,
+          connectionInvitation: params.connectionInvitation,
+          multiUse: true,
+          invitationDid: params.newInvitationDid
+        }
+      });
+      return tx.org_agent_migrations.update({
+        where: { id: params.migrationId },
+        data: {
+          newInvitationDid: params.newInvitationDid,
+          legacyInvitationDid: params.legacyInvitationDid,
+          lastChangedDateTime: new Date()
+        }
+      });
+    });
+  }
+
   /** Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). */
   async update(id: string, patch: OrgAgentMigrationPatch): Promise<MigrationRow> {
     return this.prisma.org_agent_migrations.update({
