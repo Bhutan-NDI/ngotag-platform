@@ -1,7 +1,7 @@
 /* eslint-disable camelcase */
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { Prisma, org_agent_migrations } from '@prisma/client';
-import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
+import { ORG_AGENT_MIGRATION_FROZEN_STATUSES, OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { PrismaService } from '@credebl/prisma-service';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { FileUploadStatus } from 'apps/api-gateway/src/enum';
@@ -120,8 +120,12 @@ export class OrgAgentMigrationRepository {
     to: OrgAgentMigrationStatus;
     actor: string | null;
     patch?: OrgAgentMigrationPatch;
+    // Conditions the row must still meet, beyond being in `from`.
+    where?: Prisma.org_agent_migrationsWhereInput;
+    // Written as the transition's own audit entry, so it cannot be lost on its own.
+    event?: { action: string; detail?: Prisma.InputJsonValue };
   }): Promise<MigrationRow> {
-    const { id, from, to, actor, patch } = params;
+    const { id, from, to, actor, patch, where, event } = params;
     try {
       return await this.prisma.$transaction(async (tx) => {
         // The phase depends on whether a slot is booked, which this patch may be setting or clearing.
@@ -130,7 +134,7 @@ export class OrgAgentMigrationRepository {
             ? (patch.scheduledFor as Date | null)
             : await this.currentScheduledFor(tx, id);
         const { count } = await tx.org_agent_migrations.updateMany({
-          where: { id, status: from },
+          where: { id, status: from, ...where },
           data: {
             ...patch,
             status: to,
@@ -142,7 +146,13 @@ export class OrgAgentMigrationRepository {
           throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
         }
         await tx.org_agent_migration_events.create({
-          data: { migrationId: id, fromStatus: from, toStatus: to, actor }
+          data: {
+            migrationId: id,
+            fromStatus: from,
+            toStatus: to,
+            actor,
+            ...(event ? { action: event.action, ...(undefined === event.detail ? {} : { detail: event.detail }) } : {})
+          }
         });
         return tx.org_agent_migrations.findUniqueOrThrow({ where: { id } });
       });
@@ -226,6 +236,36 @@ export class OrgAgentMigrationRepository {
     }
   }
 
+  /** Saves the org's new reusable invitation and records its DID on the migration, together or not at all. */
+  async attachNewInvitation(params: {
+    migrationId: string;
+    orgId: string;
+    agentId: string;
+    connectionInvitation: string;
+    newInvitationDid: string;
+    legacyInvitationDid: string | null;
+  }): Promise<MigrationRow> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.agent_invitations.create({
+        data: {
+          orgId: String(params.orgId),
+          agentId: params.agentId,
+          connectionInvitation: params.connectionInvitation,
+          multiUse: true,
+          invitationDid: params.newInvitationDid
+        }
+      });
+      return tx.org_agent_migrations.update({
+        where: { id: params.migrationId },
+        data: {
+          newInvitationDid: params.newInvitationDid,
+          legacyInvitationDid: params.legacyInvitationDid,
+          lastChangedDateTime: new Date()
+        }
+      });
+    });
+  }
+
   /**
    * Takes the lease on a migration unless another replica holds it. The lease expires on its own, so a replica that
    * dies holding it does not block the migration for long.
@@ -307,6 +347,13 @@ export class OrgAgentMigrationRepository {
           }
         ]
       }
+    });
+  }
+
+  /** Moves that hold an org frozen right now, across every replica. */
+  async countInFlight(): Promise<number> {
+    return this.prisma.org_agent_migrations.count({
+      where: { status: { in: [...ORG_AGENT_MIGRATION_FROZEN_STATUSES] } }
     });
   }
 
