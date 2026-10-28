@@ -187,7 +187,7 @@ export class OrgAgentMigrationExecutor {
     migrationId: string
   ): Promise<{ migration: org_agent_migrations; deadlineAt: number } | undefined> {
     const migration = await this.migrationRepository.getById(migrationId);
-    if (!migration || OrgAgentMigrationStatus.REHEARSED !== migration.status) {
+    if (!migration || OrgAgentMigrationStatus.SCHEDULED !== migration.status) {
       return undefined;
     }
     const deadlineAt = Date.now() + (migration.predictedFreezeMs ?? DEFAULT_FREEZE_MS);

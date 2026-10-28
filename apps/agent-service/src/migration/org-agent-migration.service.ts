@@ -126,9 +126,9 @@ export class OrgAgentMigrationService {
   }
 
   /**
-   * Cancels a migration that has not reached the switch: the org stays exactly as it was. `errorCode` is a
-   * stable, sanitised code (for example VERIFICATION_FAILED), never raw error text. The stored token for the dedicated
-   * agent is dropped: a finished migration has no use for a credential.
+   * Fails a scheduled or started migration that has not reached the switch: the org stays exactly as it was. `errorCode`
+   * is a stable, sanitised code (for example VERIFICATION_FAILED), never raw error text. The stored token for the
+   * dedicated agent is dropped: a finished migration has no use for a credential.
    */
   async abort(migrationId: string, errorCode: string, actor: string | null): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
@@ -149,7 +149,7 @@ export class OrgAgentMigrationService {
 
   /**
    * The owner calls the move off before it starts. Once the org is frozen the executor owns the move, so this only
-   * applies while it is being prepared or waiting for its slot.
+   * applies while it is being prepared or waiting for its slot (CREATED, REHEARSED or SCHEDULED).
    * @throws when there is no move, or it has already started
    */
   async cancel(orgId: string, userId: string): Promise<org_agent_migrations> {
@@ -157,7 +157,7 @@ export class OrgAgentMigrationService {
     if (!migration) {
       throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
     }
-    if (![OrgAgentMigrationStatus.CREATED, OrgAgentMigrationStatus.REHEARSED].includes(migration.status as never)) {
+    if (!canTransition(migration.status as OrgAgentMigrationStatus, OrgAgentMigrationStatus.CANCELLED)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationCancelNotAllowed);
     }
 
@@ -167,9 +167,9 @@ export class OrgAgentMigrationService {
       cancelled = await this.migrationRepository.transition({
         id: migration.id,
         from: migration.status as OrgAgentMigrationStatus,
-        to: OrgAgentMigrationStatus.FAILED,
+        to: OrgAgentMigrationStatus.CANCELLED,
         actor: userId,
-        patch: { error: 'CANCELLED_BY_OWNER', targetTokenEncrypted: null }
+        patch: { targetTokenEncrypted: null }
       });
     } catch (error) {
       // The scheduler claimed it between the read and the write.

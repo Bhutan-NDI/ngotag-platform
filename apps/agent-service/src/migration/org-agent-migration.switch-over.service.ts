@@ -189,9 +189,12 @@ export class OrgAgentMigrationSwitchOverService {
       return;
     }
 
-    // The agent lost its job (a restart that dropped it): start it again rather than wait for nothing. A finished job
-    // is not restarted for holders who connected after it: they connected on the new agent and need no rotation.
-    if ('idle' === status.job.status) {
+    // The agent lost its job, or a finished one left connections that still need rotating (the agent counts holders who
+    // connected after its cutoff as updated, so they do not restart it).
+    if (
+      'idle' === status.job.status ||
+      ('completed' === status.job.status && (0 < status.counts.pending || 0 < status.counts.retrying))
+    ) {
       try {
         status = await this.agentClient.startRotation(dedicated.endpoint, dedicated.token);
       } catch {

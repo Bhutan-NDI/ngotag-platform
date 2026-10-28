@@ -40,7 +40,7 @@ export interface ICancelOrgAgentMigration {
   userId: string;
 }
 
-export interface IStartOrgAgentMigration {
+export interface IScheduleOrgAgentMigration {
   orgId: string;
   userId: string;
   confirmationName: string;
@@ -105,7 +105,6 @@ export const PUBLIC_MIGRATION_FIELDS = [
   'lastChangedDateTime',
   'orgId',
   'status',
-  'phase',
   'startedBy',
   'targetAdminEndpoint',
   'targetDidcommEndpoint',
