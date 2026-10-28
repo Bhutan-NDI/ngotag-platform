@@ -88,11 +88,11 @@ describe('OrgAgentMigrationRepository', () => {
       const where = { rehearsalStatus: 'DONE', scheduledFor: { lte: new Date('2026-10-20T00:00:00Z') } };
 
       await expect(
-        repository.transition({ id: ID, from: Status.REHEARSED, to: Status.FROZEN, actor: null, where })
+        repository.transition({ id: ID, from: Status.SCHEDULED, to: Status.FROZEN, actor: null, where })
       ).rejects.toBeInstanceOf(ConflictException);
 
       expect(migrationUpdateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: ID, status: Status.REHEARSED, ...where } })
+        expect.objectContaining({ where: { id: ID, status: Status.SCHEDULED, ...where } })
       );
     });
 
@@ -101,8 +101,8 @@ describe('OrgAgentMigrationRepository', () => {
 
       await repository.transition({
         id: ID,
-        from: Status.REHEARSED,
-        to: Status.REHEARSED,
+        from: Status.SCHEDULED,
+        to: Status.SCHEDULED,
         actor: USER_ID,
         event: { action: 'MOVE_CONFIRMED', detail: { immediate: true } }
       });
@@ -110,8 +110,8 @@ describe('OrgAgentMigrationRepository', () => {
       expect(eventCreate).toHaveBeenCalledWith({
         data: {
           migrationId: ID,
-          fromStatus: Status.REHEARSED,
-          toStatus: Status.REHEARSED,
+          fromStatus: Status.SCHEDULED,
+          toStatus: Status.SCHEDULED,
           actor: USER_ID,
           action: 'MOVE_CONFIRMED',
           detail: { immediate: true }

@@ -272,11 +272,11 @@ export class OrgAgentMigrationRepository {
     return 1 === count;
   }
 
-  /** Confirmed moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
+  /** Scheduled moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
   async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
     return this.prisma.org_agent_migrations.findMany({
       where: {
-        status: OrgAgentMigrationStatus.REHEARSED,
+        status: OrgAgentMigrationStatus.SCHEDULED,
         rehearsalStatus: REHEARSAL_DONE,
         scheduledFor: { lte: now },
         OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
