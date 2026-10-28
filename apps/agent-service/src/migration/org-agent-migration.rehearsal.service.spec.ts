@@ -340,6 +340,44 @@ describe('OrgAgentMigrationRehearsalService leftover exports', () => {
     expect(agentClient.deleteExport).toHaveBeenCalledWith(SHARED.endpoint, SHARED.token, 'tenant-1', 'export-1');
   });
 
+  it('clears the id once the export is deleted, so a later rehearsal has nothing stale to remove', async () => {
+    const { execute, migrationService } = build();
+
+    await execute();
+
+    expect(migrationService.advance.mock.calls[0][3]).toMatchObject({ exportJobId: null });
+  });
+
+  it('clears the id of a leftover that is deleted, before the new export is recorded', async () => {
+    const { execute, migrationRepository } = build();
+
+    await execute({ ...migrationRow(), exportJobId: 'left-over' } as never);
+
+    const patches = migrationRepository.update.mock.calls.map(([, patch]) => patch);
+    expect(patches.findIndex((patch) => null === patch.exportJobId)).toBeLessThan(
+      patches.findIndex((patch) => 'export-1' === patch.exportJobId)
+    );
+  });
+
+  it('treats a leftover the agent no longer knows as already deleted, and goes on', async () => {
+    const { execute, agentClient, migrationService } = build();
+    agentClient.deleteExport.mockRejectedValueOnce(new MigrationAgentError('NOT_FOUND', 404));
+
+    await execute({ ...migrationRow(), exportJobId: 'expired' } as never);
+
+    expect(agentClient.startSealedExport).toHaveBeenCalled();
+    expect(migrationService.advance).toHaveBeenCalled();
+  });
+
+  it('leaves the id null on a failure whose export was cleaned up', async () => {
+    const { execute, migrationRepository, agentClient } = build();
+    agentClient.startImport.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+    await execute();
+
+    expect(failureRecorded(migrationRepository)).toMatchObject({ exportJobId: null });
+  });
+
   it('stops, keeping the leftover findable, when it cannot be removed, instead of starting a new export over it', async () => {
     const { execute, agentClient, migrationService, migrationRepository } = build();
     agentClient.deleteExport.mockRejectedValue(new MigrationAgentError('CONFLICT', 409));
@@ -461,7 +499,7 @@ describe('OrgAgentMigrationRehearsalService rehearsal run', () => {
       USER_ID,
       expect.objectContaining({
         counts: completedImport.counts,
-        exportJobId: 'export-1',
+        exportJobId: null,
         importJobId: 'import-1',
         importKeyFingerprint: createHash('sha256').update(Buffer.from(PUBLIC_KEY, 'base64')).digest('hex'),
         storageVersion: '0.5',
