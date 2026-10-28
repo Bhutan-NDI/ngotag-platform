@@ -86,6 +86,42 @@ describe('OrgAgentMigrationRepository', () => {
   });
 
   describe('transition', () => {
+    it('adds the extra conditions to the claim, so a row that changed since it was read is refused', async () => {
+      const { repository, migrationUpdateMany } = buildRepository({ updateCount: 0 });
+      const where = { rehearsalStatus: 'DONE', scheduledFor: { lte: new Date('2026-10-20T00:00:00Z') } };
+
+      await expect(
+        repository.transition({ id: ID, from: Status.REHEARSED, to: Status.FROZEN, actor: null, where })
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      expect(migrationUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: ID, status: Status.REHEARSED, ...where } })
+      );
+    });
+
+    it('writes an audit entry of its own into the same event, so it cannot be lost on its own', async () => {
+      const { repository, eventCreate } = buildRepository();
+
+      await repository.transition({
+        id: ID,
+        from: Status.REHEARSED,
+        to: Status.REHEARSED,
+        actor: USER_ID,
+        event: { action: 'MOVE_CONFIRMED', detail: { immediate: true } }
+      });
+
+      expect(eventCreate).toHaveBeenCalledWith({
+        data: {
+          migrationId: ID,
+          fromStatus: Status.REHEARSED,
+          toStatus: Status.REHEARSED,
+          actor: USER_ID,
+          action: 'MOVE_CONFIRMED',
+          detail: { immediate: true }
+        }
+      });
+    });
+
     it('only updates a row still in the expected state, and records the event', async () => {
       const { repository, migrationUpdateMany, eventCreate } = buildRepository();
 

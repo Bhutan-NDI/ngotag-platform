@@ -1,5 +1,5 @@
 /* eslint-disable camelcase */
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { org_agent_migrations } from '@prisma/client';
@@ -7,6 +7,7 @@ import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration
 import { envMs } from './migration-job-poller';
 import { OrgAgentMigrationExecutor } from './org-agent-migration.executor.service';
 import { OrgAgentMigrationPreflightService } from './org-agent-migration.preflight.service';
+import { isRehearsalStale } from './org-agent-migration.schedule.service';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 
 const MINUTE_MS = 60 * 1000;
@@ -81,7 +82,7 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
 
   private async startDueMoves(): Promise<void> {
     const limit = envMs('ORG_MIGRATION_MAX_CONCURRENT', DEFAULT_MAX_CONCURRENT);
-    const room = limit - this.active.size;
+    const room = limit - (await this.migrationRepository.countInFlight());
     if (0 >= room) {
       return;
     }
@@ -111,13 +112,19 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
       return;
     }
 
+    // A move that missed its slot is taken off it before any check, which would otherwise touch the dedicated agent.
+    if (this.waited(migration) > this.startWindowMs()) {
+      await this.unschedule(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
+      return;
+    }
+    // The freeze budget comes from the rehearsal, so a move on a rehearsal that has gone stale is not started either.
+    if (isRehearsalStale(migration)) {
+      await this.unschedule(migration, 'REHEARSAL_STALE', { reason: 'REHEARSAL_STALE' });
+      return;
+    }
     const failedCheck = await this.failedCheck(migration);
     if (failedCheck) {
       await this.deferOrUnschedule(migration, failedCheck);
-      return;
-    }
-    if (this.waited(migration) > this.startWindowMs()) {
-      await this.unschedule(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
       return;
     }
 
@@ -162,7 +169,15 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
     reason: string,
     detail: Record<string, string>
   ): Promise<void> {
-    await this.migrationService.unschedule(migration.id, reason);
+    try {
+      await this.migrationService.unschedule(migration.id, reason, migration.scheduledFor);
+    } catch (error) {
+      // The owner moved the slot while the checks ran: their new slot stands.
+      if (error instanceof ConflictException) {
+        return;
+      }
+      throw error;
+    }
     await this.migrationRepository.recordEvent(migration.id, { action: 'MOVE_UNSCHEDULED', actor: null, detail });
   }
 

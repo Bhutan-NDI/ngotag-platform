@@ -4,6 +4,7 @@ import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { org_agent_migrations } from '@prisma/client';
 import { REHEARSAL_DONE, OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
+import { envMs } from './migration-job-poller';
 import { IStartOrgAgentMigration } from './org-agent-migration.interface';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 
@@ -12,9 +13,11 @@ const CLOCK_SKEW_MS = 60 * 1000;
 const DEFAULT_MAX_LEAD_DAYS = 14;
 const DEFAULT_REHEARSAL_MAX_AGE_DAYS = 7;
 
-const maxLeadMs = (): number => {
-  const days = Number(process.env.ORG_MIGRATION_MAX_LEAD_DAYS);
-  return (Number.isFinite(days) && 0 < days ? days : DEFAULT_MAX_LEAD_DAYS) * DAY_MS;
+const maxLeadMs = (): number => envMs('ORG_MIGRATION_MAX_LEAD_DAYS', DEFAULT_MAX_LEAD_DAYS) * DAY_MS;
+
+export const isRehearsalStale = (migration: { rehearsal: unknown }): boolean => {
+  const rehearsedAt = (migration.rehearsal as { finishedAt?: string } | null)?.finishedAt;
+  return !rehearsedAt || Date.now() - new Date(rehearsedAt).getTime() > rehearsalMaxAgeMs();
 };
 
 const rehearsalMaxAgeMs = (): number => {
@@ -51,8 +54,7 @@ export class OrgAgentMigrationScheduleService {
     }
 
     // The freeze budget comes from the rehearsal, and a wallet grows, so an old rehearsal no longer predicts it.
-    const rehearsedAt = (migration.rehearsal as { finishedAt?: string } | null)?.finishedAt;
-    if (!rehearsedAt || Date.now() - new Date(rehearsedAt).getTime() > rehearsalMaxAgeMs()) {
+    if (isRehearsalStale(migration)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationRehearsalStale);
     }
 
@@ -65,16 +67,18 @@ export class OrgAgentMigrationScheduleService {
     const now = Date.now();
     const slot = this.slotFrom(payload.scheduledFor, now);
 
-    const updated = await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.REHEARSED, userId, {
-      scheduledFor: slot,
-      error: null
-    });
-    await this.migrationRepository.recordEvent(migration.id, {
-      action: 'MOVE_CONFIRMED',
-      actor: userId,
-      detail: { scheduledFor: slot.toISOString(), immediate: undefined === payload.scheduledFor }
-    });
-    return updated;
+    return this.migrationService.advance(
+      migration.id,
+      OrgAgentMigrationStatus.REHEARSED,
+      userId,
+      { scheduledFor: slot, error: null },
+      {
+        event: {
+          action: 'MOVE_CONFIRMED',
+          detail: { scheduledFor: slot.toISOString(), immediate: undefined === payload.scheduledFor }
+        }
+      }
+    );
   }
 
   // No slot means now. A given slot must be in the future (a minute of clock skew allowed) and inside the window.

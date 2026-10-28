@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 /* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type, no-mixed-operators */
 import { OrgAgentMigrationStatus as Status } from '@credebl/enum/enum';
 import { OrgAgentMigrationScheduler } from './org-agent-migration.scheduler';
@@ -10,6 +11,7 @@ const due = (id = 'm1', overrides = {}) => ({
   status: Status.REHEARSED,
   startedBy: USER_ID,
   scheduledFor: new Date(Date.now() - MINUTE),
+  rehearsal: { finishedAt: new Date().toISOString() },
   ...overrides
 });
 
@@ -20,6 +22,7 @@ const build = () => {
   const migrationRepository = {
     findDueForStart: jest.fn().mockResolvedValue([]),
     findStalled: jest.fn().mockResolvedValue([]),
+    countInFlight: jest.fn().mockResolvedValue(0),
     tryAcquireLease: jest.fn().mockResolvedValue(true),
     getConfirmingActor: jest.fn().mockResolvedValue('owner-1'),
     recordEvent: jest.fn().mockResolvedValue(undefined)
@@ -129,18 +132,31 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
     migrationRepository.findDueForStart.mockResolvedValue([due('m1'), due('m2')]);
 
     await scheduler.tick();
+    migrationRepository.countInFlight.mockResolvedValue(1);
     await scheduler.tick();
 
     expect(executor.run).toHaveBeenCalledTimes(1);
     expect(migrationRepository.findDueForStart).toHaveBeenCalledTimes(1);
   });
 
-  it('asks only for as many moves as it has room for', async () => {
-    const { scheduler, migrationRepository } = build();
+  it('counts the moves other replicas are running, not just its own', async () => {
+    const { scheduler, executor, migrationRepository } = build();
+    migrationRepository.countInFlight.mockResolvedValue(2);
+    migrationRepository.findDueForStart.mockResolvedValue([due()]);
 
     await scheduler.tick();
 
-    expect(migrationRepository.findDueForStart).toHaveBeenCalledWith(expect.any(Date), 2);
+    expect(migrationRepository.findDueForStart).not.toHaveBeenCalled();
+    expect(executor.run).not.toHaveBeenCalled();
+  });
+
+  it('asks only for as many moves as it has room for', async () => {
+    const { scheduler, migrationRepository } = build();
+    migrationRepository.countInFlight.mockResolvedValue(1);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.findDueForStart).toHaveBeenCalledWith(expect.any(Date), 1);
   });
 
   it('survives a move that crashes', async () => {
@@ -180,7 +196,7 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
 });
 
 describe('OrgAgentMigrationScheduler: a missed slot', () => {
-  it('takes a move whose checks pass, but that is found after its start window, off its slot without freezing anything', async () => {
+  it('takes a move found after its start window off its slot before running any check, without freezing anything', async () => {
     const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
     migrationRepository.findDueForStart.mockResolvedValue([
       due('m1', { scheduledFor: new Date(Date.now() - 6 * 60 * MINUTE) })
@@ -188,13 +204,13 @@ describe('OrgAgentMigrationScheduler: a missed slot', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'SLOT_MISSED');
+    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'SLOT_MISSED', expect.any(Date));
     expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
       action: 'MOVE_UNSCHEDULED',
       actor: null,
       detail: { reason: 'SLOT_MISSED' }
     });
-    expect(preflightService.run).toHaveBeenCalled();
+    expect(preflightService.run).not.toHaveBeenCalled();
     expect(executor.run).not.toHaveBeenCalled();
   });
 
@@ -230,7 +246,44 @@ describe('OrgAgentMigrationScheduler: a missed slot', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'SLOT_MISSED');
+    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'SLOT_MISSED', expect.any(Date));
+    expect(executor.run).not.toHaveBeenCalled();
+  });
+});
+
+describe('OrgAgentMigrationScheduler: a slot the owner changed, and a stale rehearsal', () => {
+  it('unschedules only the slot it read, so a slot the owner booked meanwhile is left alone', async () => {
+    const { scheduler, migrationService, migrationRepository } = build();
+    const slot = new Date(Date.now() - 6 * 60 * MINUTE);
+    migrationRepository.findDueForStart.mockResolvedValue([due('m1', { scheduledFor: slot })]);
+
+    await scheduler.tick();
+
+    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'SLOT_MISSED', slot);
+  });
+
+  it('treats a slot that was moved while it worked as no error, and records nothing', async () => {
+    const { scheduler, migrationService, migrationRepository, logger } = build();
+    migrationService.unschedule.mockRejectedValue(new ConflictException('changed'));
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: new Date(Date.now() - 6 * 60 * MINUTE) })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.recordEvent).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('does not start a move on a rehearsal that has gone stale, and takes it off its slot', async () => {
+    const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
+    const old = new Date(Date.now() - 8 * 24 * 60 * MINUTE).toISOString();
+    migrationRepository.findDueForStart.mockResolvedValue([due('m1', { rehearsal: { finishedAt: old } })]);
+
+    await scheduler.tick();
+
+    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'REHEARSAL_STALE', expect.any(Date));
+    expect(preflightService.run).not.toHaveBeenCalled();
     expect(executor.run).not.toHaveBeenCalled();
   });
 });
@@ -259,16 +312,22 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
     expect(migrationService.unschedule).not.toHaveBeenCalled();
   });
 
+  // The checks take time: the window can close while they run, which is the one place a failed check cancels.
+  const failingAfter = (id: string, ms: number) => async () => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return failing(id);
+  };
+
   it('takes the move off its slot, naming the check, once the start window has passed', async () => {
     const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
-    preflightService.run.mockResolvedValue(failing('NO_BULK_JOB'));
+    preflightService.run.mockImplementation(failingAfter('NO_BULK_JOB', 100));
     migrationRepository.findDueForStart.mockResolvedValue([
-      due('m1', { scheduledFor: new Date(Date.now() - 45 * MINUTE) })
+      due('m1', { scheduledFor: new Date(Date.now() - (30 * MINUTE - 50)) })
     ]);
 
     await scheduler.tick();
 
-    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:NO_BULK_JOB');
+    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:NO_BULK_JOB', expect.any(Date));
     expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
       action: 'MOVE_UNSCHEDULED',
       actor: null,
@@ -280,14 +339,18 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
   it('reads the start window from the environment', async () => {
     process.env.ORG_MIGRATION_START_WINDOW_MS = String(2 * MINUTE);
     const { scheduler, migrationService, preflightService, migrationRepository } = build();
-    preflightService.run.mockResolvedValue(failing('DIDCOMM_REACHABLE'));
+    preflightService.run.mockImplementation(failingAfter('DIDCOMM_REACHABLE', 100));
     migrationRepository.findDueForStart.mockResolvedValue([
-      due('m1', { scheduledFor: new Date(Date.now() - 5 * MINUTE) })
+      due('m1', { scheduledFor: new Date(Date.now() - (2 * MINUTE - 50)) })
     ]);
 
     await scheduler.tick();
 
-    expect(migrationService.unschedule).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:DIDCOMM_REACHABLE');
+    expect(migrationService.unschedule).toHaveBeenCalledWith(
+      'm1',
+      'PREFLIGHT_FAILED:DIDCOMM_REACHABLE',
+      expect.any(Date)
+    );
   });
 
   it('treats checks that could not run as a failed check, and does not freeze', async () => {
