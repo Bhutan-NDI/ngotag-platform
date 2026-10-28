@@ -1,6 +1,7 @@
 import { HttpService } from '@nestjs/axios';
 import { Injectable } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
+import { envMs } from './migration-job-poller';
 
 export interface IAgentRuntimeConfig {
   autoAcceptConnections: boolean;
@@ -90,6 +91,7 @@ export class MigrationAgentError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 15000;
+const RESTORE_TIMEOUT_MS = 10 * 60 * 1000;
 
 const trimSlash = (url: string): string => url.replace(/\/+$/, '');
 
@@ -107,7 +109,8 @@ export class MigrationAgentClient {
     baseUrl: string,
     path: string,
     token: string,
-    body?: unknown
+    body?: unknown,
+    timeoutMs: number = REQUEST_TIMEOUT_MS
   ): Promise<T> {
     try {
       const response = await firstValueFrom(
@@ -116,7 +119,7 @@ export class MigrationAgentClient {
           url: `${trimSlash(baseUrl)}${path}`,
           data: body,
           headers: { authorization: token, accept: 'application/json' },
-          timeout: REQUEST_TIMEOUT_MS
+          timeout: timeoutMs
         })
       );
       return response.data;
@@ -285,13 +288,15 @@ export class MigrationAgentClient {
   }
 
   // Takes the relay off for good, even a forwarding one: queued messages go back to the tenant first.
+  // The agent hands every queued message back before it answers, and hours of traffic may be waiting.
   restoreRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<{ injected: number; failed: number }> {
     return this.request(
       'post',
       sharedEndpoint,
       `/multi-tenancy/relay/${encodeURIComponent(tenantId)}/restore`,
       token,
-      {}
+      {},
+      envMs('ORG_MIGRATION_RESTORE_TIMEOUT_MS', RESTORE_TIMEOUT_MS)
     );
   }
 

@@ -280,6 +280,11 @@ export class OrgAgentMigrationRepository {
     return 1 === count;
   }
 
+  /** Frees a lease the caller holds, so a retry is not refused as busy for the rest of it. */
+  async releaseLease(id: string): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({ where: { id }, data: { leaseUntil: null } });
+  }
+
   /** Confirmed moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
   async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
     return this.prisma.org_agent_migrations.findMany({
