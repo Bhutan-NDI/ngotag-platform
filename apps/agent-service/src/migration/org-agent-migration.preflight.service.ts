@@ -17,7 +17,7 @@ import {
   fail,
   pass
 } from './migration-agent-checks';
-import { DownloadMethod, IPreflightReport, PreflightCheckId } from './org-agent-migration.interface';
+import { DownloadMethod, IPreflightReport, IRehearsalRecord, PreflightCheckId } from './org-agent-migration.interface';
 import { OrgAgentMigrationWebhookService } from './org-agent-migration.webhook.service';
 
 type Check = AgentCheck;
@@ -249,8 +249,8 @@ export class OrgAgentMigrationPreflightService {
   }
 
   // An agent that cannot reach S3 is not refused, the platform sends it the export instead. With the method locked
-  // (the final check) a rehearsed PULL that can no longer reach S3 fails, since the move's budget was sized for it, and
-  // a rehearsed PUSH stays PUSH.
+  // (the final check) it is the method the rehearsal ran: a PULL that can no longer reach S3 fails, since the move's
+  // budget was sized for it, and a PUSH stays PUSH.
   private async checkDownloadMethod(
     migration: org_agent_migrations,
     token: string | undefined,
@@ -261,7 +261,7 @@ export class OrgAgentMigrationPreflightService {
     if (!token || !info) {
       return undefined;
     }
-    const rehearsed = lock ? (migration.downloadMethod as DownloadMethod | null) : null;
+    const rehearsed = lock ? ((migration.rehearsal as IRehearsalRecord | null)?.downloadMethod ?? 'PULL') : null;
     try {
       const bucket = await this.agentClient.getExportBucket(migration.targetAdminEndpoint, token);
       const reachable = bucket.configured && bucket.reachable;
