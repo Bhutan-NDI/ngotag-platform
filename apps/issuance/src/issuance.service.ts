@@ -3,6 +3,7 @@ import { IssuanceWorkCoordinator } from './issuance-work.coordinator';
 /* eslint-disable no-useless-catch */
 /* eslint-disable camelcase */
 import { CommonService } from '@credebl/common';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import {
   BadRequestException,
   ConflictException,
@@ -725,22 +726,6 @@ export class IssuanceService {
       results.push(schemaRequest);
     }
     return results;
-  }
-
-  async _getIssueCredentials(
-    url: string,
-    apiKey: string
-  ): Promise<{
-    response: string;
-  }> {
-    try {
-      const pattern = { cmd: 'agent-get-all-issued-credentials' };
-      const payload = { url, apiKey };
-      return await this.natsCall(pattern, payload);
-    } catch (error) {
-      this.logger.error(`[_getIssueCredentials] [NATS call]- error in fetch credentials : ${JSON.stringify(error)}`);
-      throw error;
-    }
   }
 
   async getIssueCredentialsbyCredentialRecordId(
@@ -2080,12 +2065,13 @@ export class IssuanceService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }
