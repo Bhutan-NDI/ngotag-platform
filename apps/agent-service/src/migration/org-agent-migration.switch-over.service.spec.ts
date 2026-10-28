@@ -64,6 +64,13 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       Object.assign(world.row, patch);
       return clone();
     }),
+    updateIfStatus: jest.fn(async (_id: string, status: string, patch: Record<string, unknown>) => {
+      if (world.row.status !== status) {
+        return false;
+      }
+      Object.assign(world.row, patch);
+      return true;
+    }),
     recordEvent: jest.fn(async (_id: string, entry: { action: string; detail?: unknown }) => {
       world.events.push({ action: entry.action, detail: entry.detail });
     })
@@ -371,6 +378,25 @@ describe('checking webhooks while the window is open', () => {
     expect(world.world.row.error).toBe('WEBHOOK_NOT_CONFIGURED');
     expect(actions(world.world)).toEqual(['WEBHOOK_UNCONFIRMED']);
   });
+
+  it.each([
+    ['arrives', { confirmed: true }, null],
+    ['does not arrive', { confirmed: false, code: 'WEBHOOK_UNREACHABLE' }, null]
+  ])(
+    'writes and audits nothing when a restore finished the migration while the check %s',
+    async (_name, outcome, error) => {
+      const world = open();
+      world.webhookService.check.mockImplementation(async () => {
+        world.world.row.status = Status.DISASTER_RESTORED;
+        return outcome;
+      });
+
+      await world.service.checkWebhook(MIGRATION_ID);
+
+      expect(world.world.row.error).toBe(error);
+      expect(actions(world.world)).toEqual([]);
+    }
+  );
 
   it('says nothing about a check that could not run, since that is not a webhook problem', async () => {
     const world = open();

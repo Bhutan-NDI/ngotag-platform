@@ -168,13 +168,17 @@ export class OrgAgentMigrationSwitchOverService {
     }
 
     const result = await this.webhookService.check(migration, dedicated);
+    // Only while the window is still open: a disaster restore may have finished the migration during the probe.
+    const stabilising = OrgAgentMigrationStatus.STABILISING;
     if (result.confirmed) {
       const cleared = migration.error?.startsWith('WEBHOOK_') ? { error: null } : {};
-      await this.migrationRepository.update(migration.id, cleared);
-      await this.audit(migration.id, 'WEBHOOK_CONFIRMED', {});
+      if (await this.migrationRepository.updateIfStatus(migration.id, stabilising, cleared)) {
+        await this.audit(migration.id, 'WEBHOOK_CONFIRMED', {});
+      }
     } else if (result.code.startsWith('WEBHOOK_') && migration.error !== result.code) {
-      await this.migrationRepository.update(migration.id, { error: result.code });
-      await this.audit(migration.id, 'WEBHOOK_UNCONFIRMED', { reason: result.code });
+      if (await this.migrationRepository.updateIfStatus(migration.id, stabilising, { error: result.code })) {
+        await this.audit(migration.id, 'WEBHOOK_UNCONFIRMED', { reason: result.code });
+      }
     }
   }
 
