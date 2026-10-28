@@ -15,14 +15,14 @@ const DEFAULT_REHEARSAL_MAX_AGE_DAYS = 7;
 
 const maxLeadMs = (): number => envMs('ORG_MIGRATION_MAX_LEAD_DAYS', DEFAULT_MAX_LEAD_DAYS) * DAY_MS;
 
-export const isRehearsalStale = (migration: { rehearsal: unknown }): boolean => {
-  const rehearsedAt = (migration.rehearsal as { finishedAt?: string } | null)?.finishedAt;
-  return !rehearsedAt || Date.now() - new Date(rehearsedAt).getTime() > rehearsalMaxAgeMs();
-};
-
 const rehearsalMaxAgeMs = (): number => {
   const days = Number(process.env.ORG_MIGRATION_REHEARSAL_MAX_AGE_DAYS);
   return (Number.isFinite(days) && 0 < days ? days : DEFAULT_REHEARSAL_MAX_AGE_DAYS) * DAY_MS;
+};
+
+export const isRehearsalStale = (migration: { rehearsal: unknown }, at: number = Date.now()): boolean => {
+  const rehearsedAt = (migration.rehearsal as { finishedAt?: string } | null)?.finishedAt;
+  return !rehearsedAt || at - new Date(rehearsedAt).getTime() > rehearsalMaxAgeMs();
 };
 
 /**
@@ -54,11 +54,6 @@ export class OrgAgentMigrationScheduleService {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
 
-    // The freeze budget comes from the rehearsal, and a wallet grows, so an old rehearsal no longer predicts it.
-    if (isRehearsalStale(migration)) {
-      throw new BadRequestException(ResponseMessages.agent.error.migrationRehearsalStale);
-    }
-
     // Exact, as typed: the owner is confirming they know which organisation is moving.
     const orgName = await this.migrationRepository.getOrgName(orgId);
     if (!orgName || 'string' !== typeof confirmationName || confirmationName.trim() !== orgName.trim()) {
@@ -81,6 +76,11 @@ export class OrgAgentMigrationScheduleService {
 
     const now = Date.now();
     const slot = this.slotFrom(payload.scheduledFor, now);
+
+    // The freeze budget comes from the rehearsal, and a wallet grows, so it must still predict it when the slot arrives.
+    if (isRehearsalStale(migration, slot.getTime())) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationRehearsalStale);
+    }
 
     return this.migrationService.advance(
       migration.id,
