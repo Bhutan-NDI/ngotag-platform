@@ -123,7 +123,9 @@ describe('OrgAgentMigrationPreflightService', () => {
 
     describe('in the final check before the freeze, with the method locked', () => {
       const locked = { ...input, keepDownloadMethod: true };
-      const rehearsedAs = (method: 'PULL' | 'PUSH') => ({ migration: migrationRow({ downloadMethod: method }) });
+      const rehearsedAs = (method: 'PULL' | 'PUSH', stored: 'PULL' | 'PUSH' | null = method) => ({
+        migration: migrationRow({ downloadMethod: stored, rehearsal: { downloadMethod: method } })
+      });
 
       it('keeps a rehearsed PULL while the agent can still reach its bucket', async () => {
         const { service, migrationRepository } = build(rehearsedAs('PULL'));
@@ -158,12 +160,29 @@ describe('OrgAgentMigrationPreflightService', () => {
         expect(methodOf(migrationRepository)).toBe('PUSH');
       });
 
-      it('still decides afresh when nothing was rehearsed yet', async () => {
-        const { service, migrationRepository } = build();
+      it('locks to the method the rehearsal ran, not the one a later preflight stored', async () => {
+        const { service, migrationRepository, agentClient } = build(rehearsedAs('PULL', 'PUSH'));
+        agentClient.getExportBucket.mockResolvedValue({ configured: true, reachable: false, reason: 'TIMEOUT' });
 
-        await service.run(MIGRATION_ID, locked);
+        const { report } = await service.run(MIGRATION_ID, locked);
 
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+          status: 'FAIL',
+          code: 'DOWNLOAD_METHOD_CHANGED'
+        });
         expect(methodOf(migrationRepository)).toBe('PULL');
+      });
+
+      it('treats a rehearsal with no recorded method as PULL, and does not turn it into PUSH on one failed probe', async () => {
+        const { service, agentClient } = build({ migration: migrationRow({ downloadMethod: null, rehearsal: {} }) });
+        agentClient.getExportBucket.mockResolvedValue({ configured: true, reachable: false, reason: 'TIMEOUT' });
+
+        const { report } = await service.run(MIGRATION_ID, locked);
+
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+          status: 'FAIL',
+          code: 'DOWNLOAD_METHOD_CHANGED'
+        });
       });
     });
 
