@@ -213,22 +213,25 @@ describe('OrgAgentMigrationService', () => {
   });
 
   describe('cancel', () => {
-    it.each([Status.CREATED, Status.REHEARSED])('lets the owner call off a move in %s', async (status) => {
-      const { service, migrationRepository } = buildService({
-        migration: { id: MIGRATION_ID, status },
-        active: { id: MIGRATION_ID, status }
-      });
+    it.each([Status.CREATED, Status.REHEARSED, Status.SCHEDULED])(
+      'lets the owner call off a move in %s',
+      async (status) => {
+        const { service, migrationRepository } = buildService({
+          migration: { id: MIGRATION_ID, status },
+          active: { id: MIGRATION_ID, status }
+        });
 
-      await service.cancel(ORG_ID, USER_ID);
+        await service.cancel(ORG_ID, USER_ID);
 
-      expect(migrationRepository.transition).toHaveBeenCalledWith({
-        id: MIGRATION_ID,
-        from: status,
-        to: Status.FAILED,
-        actor: USER_ID,
-        patch: { error: 'CANCELLED_BY_OWNER', targetTokenEncrypted: null }
-      });
-    });
+        expect(migrationRepository.transition).toHaveBeenCalledWith({
+          id: MIGRATION_ID,
+          from: status,
+          to: Status.CANCELLED,
+          actor: USER_ID,
+          patch: { targetTokenEncrypted: null }
+        });
+      }
+    );
 
     it('records who cancelled it', async () => {
       const { service, migrationRepository } = buildService();
@@ -304,8 +307,8 @@ describe('OrgAgentMigrationService', () => {
       expect(migrationRepository.transition.mock.calls[0][0].patch).toMatchObject({ targetTokenEncrypted: null });
     });
 
-    it.each([Status.CREATED, Status.REHEARSED, Status.FROZEN, Status.EXPORTING, Status.IMPORTING, Status.VERIFYING])(
-      'cancels a migration in %s with the error code recorded',
+    it.each([Status.SCHEDULED, Status.FROZEN, Status.EXPORTING, Status.IMPORTING, Status.VERIFYING])(
+      'fails a migration in %s with the error code recorded',
       async (status) => {
         const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
 
@@ -321,14 +324,20 @@ describe('OrgAgentMigrationService', () => {
       }
     );
 
-    it.each([Status.CUTOVER, Status.STABILISING, Status.ROTATING, Status.COMPLETED, Status.FAILED])(
-      'will not abort a migration in %s',
-      async (status) => {
-        const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
+    it.each([
+      Status.CREATED,
+      Status.REHEARSED,
+      Status.CUTOVER,
+      Status.STABILISING,
+      Status.ROTATING,
+      Status.COMPLETED,
+      Status.FAILED,
+      Status.CANCELLED
+    ])('will not abort a migration in %s', async (status) => {
+      const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
 
-        await expect(service.abort(MIGRATION_ID, 'X', null)).rejects.toThrow(BadRequestException);
-        expect(migrationRepository.transition).not.toHaveBeenCalled();
-      }
-    );
+      await expect(service.abort(MIGRATION_ID, 'X', null)).rejects.toThrow(BadRequestException);
+      expect(migrationRepository.transition).not.toHaveBeenCalled();
+    });
   });
 });

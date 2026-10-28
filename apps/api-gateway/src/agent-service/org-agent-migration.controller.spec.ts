@@ -45,7 +45,7 @@ describe('wallet move routes', () => {
     create: jest.fn(),
     preflight: jest.fn(),
     rehearse: jest.fn(),
-    start: jest.fn(),
+    schedule: jest.fn(),
     cancel: jest.fn(),
     disasterRestore: jest.fn(),
     get: jest.fn(),
@@ -212,16 +212,16 @@ describe('wallet move routes', () => {
     });
   });
 
-  describe('POST /orgs/:orgId/agents/migrate/start', () => {
+  describe('POST /orgs/:orgId/agents/migrate/schedule', () => {
     const slot = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
 
-    it('lets an owner confirm the move with the typed name and a slot, as the user in the token', async () => {
+    it('lets an owner schedule the move with the typed name and a slot, as the user in the token', async () => {
       const response = await request(app.getHttpServer())
-        .post(`/orgs/${ORG_ID}/agents/migrate/start`)
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
         .send({ confirmationName: 'Acme Ltd', scheduledFor: slot, userId: 'someone-else' });
 
       expect(response.status).toBe(200);
-      expect(service.start).toHaveBeenCalledWith(ORG_ID, 'user-1', {
+      expect(service.schedule).toHaveBeenCalledWith(ORG_ID, 'user-1', {
         confirmationName: 'Acme Ltd',
         scheduledFor: slot
       });
@@ -229,18 +229,18 @@ describe('wallet move routes', () => {
 
     it('lets an owner start at once by leaving the slot out', async () => {
       const response = await request(app.getHttpServer())
-        .post(`/orgs/${ORG_ID}/agents/migrate/start`)
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
         .send({ confirmationName: 'Acme Ltd' });
 
       expect(response.status).toBe(200);
-      expect(service.start).toHaveBeenCalledWith(ORG_ID, 'user-1', { confirmationName: 'Acme Ltd' });
+      expect(service.schedule).toHaveBeenCalledWith(ORG_ID, 'user-1', { confirmationName: 'Acme Ltd' });
     });
 
     it('does not ask for a fresh sign-in: the endpoints were fixed when the move was created', async () => {
       currentUser = owner({ sessionCreatedAt: minutesAgo(180) });
 
       const response = await request(app.getHttpServer())
-        .post(`/orgs/${ORG_ID}/agents/migrate/start`)
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
         .send({ confirmationName: 'Acme Ltd' });
 
       expect(response.status).toBe(200);
@@ -250,18 +250,18 @@ describe('wallet move routes', () => {
       currentUser = userWith([membership(ORG_ID, role)]);
 
       const response = await request(app.getHttpServer())
-        .post(`/orgs/${ORG_ID}/agents/migrate/start`)
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
         .send({ confirmationName: 'Acme Ltd' });
 
       expect(response.status).toBe(403);
-      expect(service.start).not.toHaveBeenCalled();
+      expect(service.schedule).not.toHaveBeenCalled();
     });
 
     it('refuses an owner of a different organisation', async () => {
       currentUser = userWith([membership(OTHER_ORG_ID, 'owner')]);
 
       const response = await request(app.getHttpServer())
-        .post(`/orgs/${ORG_ID}/agents/migrate/start`)
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
         .send({ confirmationName: 'Acme Ltd' });
 
       expect(response.status).toBe(403);
@@ -273,10 +273,10 @@ describe('wallet move routes', () => {
       ['a typed name that is not text', { confirmationName: 5 }],
       ['a slot that is not a date', { confirmationName: 'Acme Ltd', scheduledFor: 'tomorrow-ish' }]
     ])('rejects %s with 400', async (_name, body) => {
-      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/start`).send(body);
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/schedule`).send(body);
 
       expect(response.status).toBe(400);
-      expect(service.start).not.toHaveBeenCalled();
+      expect(service.schedule).not.toHaveBeenCalled();
     });
   });
 
