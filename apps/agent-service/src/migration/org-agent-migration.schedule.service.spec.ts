@@ -68,7 +68,7 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
       const { service, migrationRepository, migrationService } = build();
       migrationRepository.hasActiveBulkIssuance.mockResolvedValue(true);
 
-      const error = await confirm(service).catch((e) => e);
+      const error = await schedule(service).catch((e) => e);
 
       expect(error).toBeInstanceOf(HttpException);
       expect(error.getStatus()).toBe(409);
@@ -85,7 +85,7 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
       migrationRepository.hasActiveBulkIssuance.mockResolvedValue(true);
 
       await expect(
-        confirm(service, { scheduledFor: new Date(Date.now() + 2 * DAY).toISOString() })
+        schedule(service, { scheduledFor: new Date(Date.now() + 2 * DAY).toISOString() })
       ).resolves.toBeDefined();
 
       expect(migrationService.advance).toHaveBeenCalled();
@@ -95,7 +95,7 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
     it('confirms when none is running', async () => {
       const { service, migrationService } = build();
 
-      await expect(confirm(service)).resolves.toBeDefined();
+      await expect(schedule(service)).resolves.toBeDefined();
       expect(migrationService.advance).toHaveBeenCalled();
     });
 
@@ -103,7 +103,7 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
       const { service, migrationRepository } = build();
       migrationRepository.hasActiveBulkIssuance.mockResolvedValue(true);
 
-      await expect(confirm(service, { confirmationName: 'Someone else' })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(schedule(service, { confirmationName: 'Someone else' })).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
