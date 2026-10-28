@@ -23,28 +23,28 @@ const build = (options: { migration?: object | null; orgName?: string | null } =
     getOrgName: jest.fn().mockResolvedValue('orgName' in options ? options.orgName : 'Acme Ltd'),
     recordEvent: jest.fn().mockResolvedValue(undefined)
   };
-  const migrationService = { advance: jest.fn().mockResolvedValue({ id: 'm1', status: Status.REHEARSED }) };
+  const migrationService = { advance: jest.fn().mockResolvedValue({ id: 'm1', status: Status.SCHEDULED }) };
   const service = new OrgAgentMigrationScheduleService(migrationRepository as never, migrationService as never);
   return { service, migrationRepository, migrationService };
 };
 
-const confirm = (service: OrgAgentMigrationScheduleService, overrides = {}) =>
-  service.confirm({ orgId: ORG_ID, userId: USER_ID, confirmationName: 'Acme Ltd', ...overrides });
+const schedule = (service: OrgAgentMigrationScheduleService, overrides = {}) =>
+  service.schedule({ orgId: ORG_ID, userId: USER_ID, confirmationName: 'Acme Ltd', ...overrides });
 
 afterEach(() => {
   delete process.env.ORG_MIGRATION_MAX_LEAD_DAYS;
 });
 
-describe('OrgAgentMigrationScheduleService.confirm', () => {
+describe('OrgAgentMigrationScheduleService.schedule', () => {
   it('books the slot the owner picked, as that owner, and records the confirmation', async () => {
     const { service, migrationService, migrationRepository } = build();
     const slot = new Date(Date.now() + 3 * DAY);
 
-    await confirm(service, { scheduledFor: slot.toISOString() });
+    await schedule(service, { scheduledFor: slot.toISOString() });
 
     expect(migrationService.advance).toHaveBeenCalledWith(
       'm1',
-      Status.REHEARSED,
+      Status.SCHEDULED,
       USER_ID,
       { scheduledFor: slot },
       { event: { action: 'MOVE_CONFIRMED', detail: { scheduledFor: slot.toISOString(), immediate: false } } }
@@ -56,7 +56,7 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     const { service, migrationService } = build();
     const before = Date.now();
 
-    await confirm(service);
+    await schedule(service);
 
     const [, , , patch, options] = migrationService.advance.mock.calls[0];
     expect(patch.scheduledFor.getTime()).toBeGreaterThanOrEqual(before);
@@ -64,10 +64,12 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     expect(options.event.detail.immediate).toBe(true);
   });
 
-  it('lets the owner move the slot by confirming again', async () => {
-    const { service, migrationService } = build({ migration: row({ scheduledFor: new Date(Date.now() + DAY) }) });
+  it('lets the owner move the slot by scheduling again', async () => {
+    const { service, migrationService } = build({
+      migration: row({ status: Status.SCHEDULED, scheduledFor: new Date(Date.now() + DAY) })
+    });
 
-    await confirm(service, { scheduledFor: new Date(Date.now() + 2 * DAY).toISOString() });
+    await schedule(service, { scheduledFor: new Date(Date.now() + 2 * DAY).toISOString() });
 
     expect(migrationService.advance).toHaveBeenCalledTimes(1);
   });
@@ -76,7 +78,7 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     it.each(['acme ltd', 'Acme Limited', '', 'Acme  Ltd'])('refuses "%s"', async (typed) => {
       const { service, migrationService } = build();
 
-      await expect(confirm(service, { confirmationName: typed })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(schedule(service, { confirmationName: typed })).rejects.toBeInstanceOf(BadRequestException);
 
       expect(migrationService.advance).not.toHaveBeenCalled();
     });
@@ -84,7 +86,7 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     it('ignores spaces around it', async () => {
       const { service, migrationService } = build();
 
-      await confirm(service, { confirmationName: '  Acme Ltd ' });
+      await schedule(service, { confirmationName: '  Acme Ltd ' });
 
       expect(migrationService.advance).toHaveBeenCalled();
     });
@@ -92,13 +94,13 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     it('refuses when nothing was typed', async () => {
       const { service } = build();
 
-      await expect(confirm(service, { confirmationName: undefined })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(schedule(service, { confirmationName: undefined })).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('does not reveal the name in the refusal', async () => {
       const { service } = build();
 
-      const error = await confirm(service, { confirmationName: 'nope' }).catch((e) => e);
+      const error = await schedule(service, { confirmationName: 'nope' }).catch((e) => e);
 
       expect(JSON.stringify(error.getResponse())).not.toContain('Acme');
     });
@@ -106,7 +108,7 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     it('refuses when the org has no readable name', async () => {
       const { service } = build({ orgName: null });
 
-      await expect(confirm(service)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(schedule(service)).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
@@ -118,7 +120,7 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     ])('refuses a slot %s', async (_name, scheduledFor) => {
       const { service, migrationService } = build();
 
-      await expect(confirm(service, { scheduledFor })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(schedule(service, { scheduledFor })).rejects.toBeInstanceOf(BadRequestException);
 
       expect(migrationService.advance).not.toHaveBeenCalled();
     });
@@ -126,23 +128,23 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     it('accepts a slot a few seconds in the past, for clock skew', async () => {
       const { service } = build();
 
-      await expect(confirm(service, { scheduledFor: new Date(Date.now() - 5000) })).resolves.toBeDefined();
+      await expect(schedule(service, { scheduledFor: new Date(Date.now() - 5000) })).resolves.toBeDefined();
     });
 
     it('accepts the far edge of the window', async () => {
       const { service } = build();
 
-      await expect(confirm(service, { scheduledFor: new Date(Date.now() + 14 * DAY - 1000) })).resolves.toBeDefined();
+      await expect(schedule(service, { scheduledFor: new Date(Date.now() + 14 * DAY - 1000) })).resolves.toBeDefined();
     });
 
     it('reads the window from the environment', async () => {
       process.env.ORG_MIGRATION_MAX_LEAD_DAYS = '3';
       const { service } = build();
 
-      await expect(confirm(service, { scheduledFor: new Date(Date.now() + 4 * DAY) })).rejects.toBeInstanceOf(
+      await expect(schedule(service, { scheduledFor: new Date(Date.now() + 4 * DAY) })).rejects.toBeInstanceOf(
         BadRequestException
       );
-      await expect(confirm(service, { scheduledFor: new Date(Date.now() + 2 * DAY) })).resolves.toBeDefined();
+      await expect(schedule(service, { scheduledFor: new Date(Date.now() + 2 * DAY) })).resolves.toBeDefined();
     });
   });
 
@@ -150,7 +152,7 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     it('refuses before any rehearsal', async () => {
       const { service } = build({ migration: row({ status: Status.CREATED, rehearsalStatus: null }) });
 
-      await expect(confirm(service)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(schedule(service)).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it.each([
@@ -159,7 +161,7 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
     ])('refuses when %s', async (_name, overrides) => {
       const { service, migrationService } = build({ migration: row(overrides) });
 
-      await expect(confirm(service, { scheduledFor: new Date(Date.now() + DAY) })).rejects.toBeInstanceOf(
+      await expect(schedule(service, { scheduledFor: new Date(Date.now() + DAY) })).rejects.toBeInstanceOf(
         BadRequestException
       );
 
@@ -171,14 +173,14 @@ describe('OrgAgentMigrationScheduleService.confirm', () => {
       async (status) => {
         const { service } = build({ migration: row({ status }) });
 
-        await expect(confirm(service)).rejects.toBeInstanceOf(BadRequestException);
+        await expect(schedule(service)).rejects.toBeInstanceOf(BadRequestException);
       }
     );
 
     it('refuses when the org has no active migration', async () => {
       const { service } = build({ migration: null });
 
-      await expect(confirm(service)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(schedule(service)).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

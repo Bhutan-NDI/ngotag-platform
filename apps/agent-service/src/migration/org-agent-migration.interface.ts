@@ -35,7 +35,7 @@ export interface ICancelOrgAgentMigration {
   userId: string;
 }
 
-export interface IStartOrgAgentMigration {
+export interface IScheduleOrgAgentMigration {
   orgId: string;
   userId: string;
   confirmationName: string;
