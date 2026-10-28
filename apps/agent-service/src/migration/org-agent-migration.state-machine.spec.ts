@@ -10,8 +10,6 @@ import {
   isAbortable,
   isFrozen,
   isTerminal,
-  OrgAgentMigrationPhase,
-  phaseFor,
   TERMINAL_STATUSES
 } from './org-agent-migration.state-machine';
 
@@ -19,10 +17,15 @@ const ALL = Object.values(Status);
 
 const ALLOWED: [Status, Status][] = [
   [Status.CREATED, Status.REHEARSED],
-  [Status.CREATED, Status.FAILED],
+  [Status.CREATED, Status.CANCELLED],
   [Status.REHEARSED, Status.REHEARSED],
-  [Status.REHEARSED, Status.FROZEN],
-  [Status.REHEARSED, Status.FAILED],
+  [Status.REHEARSED, Status.SCHEDULED],
+  [Status.REHEARSED, Status.CANCELLED],
+  [Status.SCHEDULED, Status.SCHEDULED],
+  [Status.SCHEDULED, Status.REHEARSED],
+  [Status.SCHEDULED, Status.FROZEN],
+  [Status.SCHEDULED, Status.CANCELLED],
+  [Status.SCHEDULED, Status.FAILED],
   [Status.FROZEN, Status.EXPORTING],
   [Status.FROZEN, Status.FAILED],
   [Status.EXPORTING, Status.IMPORTING],
@@ -57,6 +60,7 @@ describe('org agent migration state machine', () => {
     const path = [
       Status.CREATED,
       Status.REHEARSED,
+      Status.SCHEDULED,
       Status.FROZEN,
       Status.EXPORTING,
       Status.IMPORTING,
@@ -69,8 +73,15 @@ describe('org agent migration state machine', () => {
     path.slice(1).forEach((to, index) => expect(canTransition(path[index], to)).toBe(true));
   });
 
-  it('cannot skip the rehearsal', () => {
+  it('cannot skip the rehearsal or the schedule', () => {
     expect(canTransition(Status.CREATED, Status.FROZEN)).toBe(false);
+    expect(canTransition(Status.REHEARSED, Status.FROZEN)).toBe(false);
+  });
+
+  it('lets the owner cancel until the move starts, and only then', () => {
+    const cancellable = ALL.filter((status) => canTransition(status, Status.CANCELLED));
+
+    expect(cancellable).toEqual([Status.CREATED, Status.REHEARSED, Status.SCHEDULED]);
   });
 
   it('has no way out of a finished migration', () => {
@@ -83,14 +94,7 @@ describe('org agent migration state machine', () => {
 
   it('can abort exactly until the switch, and is frozen exactly from FROZEN to CUTOVER', () => {
     const abortable = ALL.filter(isAbortable);
-    expect(abortable).toEqual([
-      Status.CREATED,
-      Status.REHEARSED,
-      Status.FROZEN,
-      Status.EXPORTING,
-      Status.IMPORTING,
-      Status.VERIFYING
-    ]);
+    expect(abortable).toEqual([Status.SCHEDULED, Status.FROZEN, Status.EXPORTING, Status.IMPORTING, Status.VERIFYING]);
     expect(isAbortable(Status.CUTOVER)).toBe(false);
     expect(isAbortable(Status.STABILISING)).toBe(false);
 
@@ -103,7 +107,7 @@ describe('org agent migration state machine', () => {
     const sql = readFileSync(
       join(
         __dirname,
-        '../../../../libs/prisma-service/prisma/migrations/20261019000000_org_agent_migrations/migration.sql'
+        '../../../../libs/prisma-service/prisma/migrations/20261028010000_org_agent_migrations_scheduled_cancelled/migration.sql'
       ),
       'utf8'
     );
@@ -111,37 +115,5 @@ describe('org agent migration state machine', () => {
     const inIndex = (match?.[1] ?? '').split(',').map((value) => value.trim().replace(/'/g, ''));
 
     expect([...inIndex].sort()).toEqual([...TERMINAL_STATUSES].sort());
-  });
-
-  describe('phaseFor', () => {
-    it.each([
-      [Status.CREATED, null, OrgAgentMigrationPhase.PREPARE],
-      [Status.REHEARSED, null, OrgAgentMigrationPhase.PREPARE],
-      [Status.REHEARSED, new Date(), OrgAgentMigrationPhase.SCHEDULED],
-      [Status.FROZEN, null, OrgAgentMigrationPhase.MOVE],
-      [Status.EXPORTING, null, OrgAgentMigrationPhase.MOVE],
-      [Status.IMPORTING, null, OrgAgentMigrationPhase.MOVE],
-      [Status.VERIFYING, null, OrgAgentMigrationPhase.MOVE],
-      [Status.CUTOVER, null, OrgAgentMigrationPhase.MOVE],
-      [Status.STABILISING, null, OrgAgentMigrationPhase.FIRST_48_HOURS],
-      [Status.ROTATING, null, OrgAgentMigrationPhase.CHANGE_OF_ADDRESS],
-      [Status.COMPLETED, null, OrgAgentMigrationPhase.COMPLETE],
-      [Status.FAILED, null, OrgAgentMigrationPhase.CANCELLED],
-      [Status.DISASTER_RESTORED, null, OrgAgentMigrationPhase.RESTORED]
-    ])('maps %s (scheduledFor %p) to %s', (status, scheduledFor, phase) => {
-      expect(phaseFor(status, scheduledFor)).toBe(phase);
-    });
-
-    it('covers every status', () => {
-      for (const status of ALL) {
-        expect(() => phaseFor(status)).not.toThrow();
-      }
-    });
-
-    it('fits the 32-character phase column', () => {
-      for (const phase of Object.values(OrgAgentMigrationPhase)) {
-        expect(phase.length).toBeLessThanOrEqual(32);
-      }
-    });
   });
 });

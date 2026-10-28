@@ -209,8 +209,8 @@ describe('OrgAgentMigrationService', () => {
   });
 
   describe('abort', () => {
-    it.each([Status.CREATED, Status.REHEARSED, Status.FROZEN, Status.EXPORTING, Status.IMPORTING, Status.VERIFYING])(
-      'cancels a migration in %s with the error code recorded',
+    it.each([Status.SCHEDULED, Status.FROZEN, Status.EXPORTING, Status.IMPORTING, Status.VERIFYING])(
+      'fails a migration in %s with the error code recorded',
       async (status) => {
         const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
 
@@ -226,28 +226,34 @@ describe('OrgAgentMigrationService', () => {
       }
     );
 
-    it.each([Status.CUTOVER, Status.STABILISING, Status.ROTATING, Status.COMPLETED, Status.FAILED])(
-      'will not abort a migration in %s',
-      async (status) => {
-        const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
+    it.each([
+      Status.CREATED,
+      Status.REHEARSED,
+      Status.CUTOVER,
+      Status.STABILISING,
+      Status.ROTATING,
+      Status.COMPLETED,
+      Status.FAILED,
+      Status.CANCELLED
+    ])('will not abort a migration in %s', async (status) => {
+      const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
 
-        await expect(service.abort(MIGRATION_ID, 'X', null)).rejects.toThrow(BadRequestException);
-        expect(migrationRepository.transition).not.toHaveBeenCalled();
-      }
-    );
+      await expect(service.abort(MIGRATION_ID, 'X', null)).rejects.toThrow(BadRequestException);
+      expect(migrationRepository.transition).not.toHaveBeenCalled();
+    });
   });
 
   describe('unschedule', () => {
-    it('takes a rehearsed move off its slot and leaves it rehearsed, naming why', async () => {
+    it('takes a scheduled move off its slot and puts it back to rehearsed, naming why', async () => {
       const { service, migrationRepository } = buildService({
-        migration: { id: MIGRATION_ID, status: Status.REHEARSED, scheduledFor: new Date() }
+        migration: { id: MIGRATION_ID, status: Status.SCHEDULED, scheduledFor: new Date() }
       });
 
       await service.unschedule(MIGRATION_ID, 'SLOT_MISSED');
 
       expect(migrationRepository.transition).toHaveBeenCalledWith({
         id: MIGRATION_ID,
-        from: Status.REHEARSED,
+        from: Status.SCHEDULED,
         to: Status.REHEARSED,
         actor: null,
         patch: { scheduledFor: null, error: 'SLOT_MISSED' }
@@ -256,7 +262,7 @@ describe('OrgAgentMigrationService', () => {
 
     it('matches the slot the caller read, so a slot the owner booked in the meantime is not wiped', async () => {
       const { service, migrationRepository } = buildService({
-        migration: { id: MIGRATION_ID, status: Status.REHEARSED, scheduledFor: new Date('2026-11-01T10:00:00Z') }
+        migration: { id: MIGRATION_ID, status: Status.SCHEDULED, scheduledFor: new Date('2026-11-01T10:00:00Z') }
       });
       const readSlot = new Date('2026-11-01T10:00:00Z');
 
@@ -267,7 +273,7 @@ describe('OrgAgentMigrationService', () => {
       );
     });
 
-    it.each([Status.CREATED, Status.FROZEN, Status.STABILISING, Status.FAILED])(
+    it.each([Status.CREATED, Status.REHEARSED, Status.FROZEN, Status.STABILISING, Status.FAILED])(
       'refuses a migration in %s, which is not waiting for its slot',
       async (status) => {
         const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });

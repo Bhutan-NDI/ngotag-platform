@@ -8,7 +8,7 @@ const USER_ID = 'a1b2c3d4-5717-4562-b3fc-2c963f66afa6';
 
 const due = (id = 'm1', overrides = {}) => ({
   id,
-  status: Status.REHEARSED,
+  status: Status.SCHEDULED,
   startedBy: USER_ID,
   scheduledFor: new Date(Date.now() - MINUTE),
   rehearsal: { finishedAt: new Date().toISOString() },
