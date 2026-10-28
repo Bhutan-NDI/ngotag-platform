@@ -92,6 +92,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.ORG_MIGRATION_POLL_INTERVAL_MS;
   delete process.env.ORG_MIGRATION_JOB_TIMEOUT_MS;
+  delete process.env.ORG_MIGRATION_EXPORT_CLEANUP_WAIT_MS;
 });
 
 describe('predictFreezeMs', () => {
@@ -205,6 +206,19 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
   ])('does not export when %s, and frees the rehearsal for another attempt', async (_name, result) => {
     const { service, alertService, migrationRepository } = build();
     alertService.alertKeyExport.mockResolvedValue(result);
+    const execute = jest.spyOn(service as any, 'execute').mockResolvedValue(undefined);
+
+    await expect(service.start(ORG_ID, USER_ID)).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(failureRecorded(migrationRepository)).toMatchObject({
+      rehearsal: expect.objectContaining({ code: 'ALERT_FAILED' })
+    });
+  });
+
+  it('treats an alert that throws like one that reached nobody, so the rehearsal is not left running', async () => {
+    const { service, alertService, migrationRepository } = build();
+    alertService.alertKeyExport.mockRejectedValue(new Error('database is down'));
     const execute = jest.spyOn(service as any, 'execute').mockResolvedValue(undefined);
 
     await expect(service.start(ORG_ID, USER_ID)).rejects.toBeInstanceOf(ServiceUnavailableException);
@@ -332,6 +346,7 @@ describe('OrgAgentMigrationRehearsalService download method', () => {
       'getExportJob',
       'pushImport',
       'getImportJob',
+      'getExportJob',
       'deleteExport'
     ]);
   });
@@ -371,6 +386,7 @@ describe('OrgAgentMigrationRehearsalService rehearsal run', () => {
       'getExportJob',
       'startImport',
       'getImportJob',
+      'getExportJob',
       'deleteExport'
     ]);
     expect(agentClient.startSealedExport).toHaveBeenCalledWith(SHARED.endpoint, SHARED.token, 'tenant-1', PUBLIC_KEY);
@@ -419,7 +435,7 @@ describe('OrgAgentMigrationRehearsalService rehearsal run', () => {
 
     await execute();
 
-    expect(agentClient.getExportJob).toHaveBeenCalledTimes(3);
+    expect(agentClient.getExportJob).toHaveBeenCalledTimes(4);
     expect(agentClient.startImport).toHaveBeenCalledTimes(1);
   });
 
@@ -477,6 +493,7 @@ describe('OrgAgentMigrationRehearsalService rehearsal run', () => {
 
   it('gives up with a timeout when a job never finishes', async () => {
     process.env.ORG_MIGRATION_JOB_TIMEOUT_MS = '20';
+    process.env.ORG_MIGRATION_EXPORT_CLEANUP_WAIT_MS = '20';
     const { execute, migrationRepository, agentClient } = build();
     agentClient.getExportJob.mockResolvedValue({ ...completedExport, status: 'in-progress' });
 
@@ -486,6 +503,36 @@ describe('OrgAgentMigrationRehearsalService rehearsal run', () => {
       rehearsal: expect.objectContaining({ step: 'EXPORT', code: 'REHEARSAL_TIMEOUT' })
     });
     expect(agentClient.deleteExport).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for a running export to settle before it deletes it', async () => {
+    const { service, agentClient } = build();
+    agentClient.getExportJob
+      .mockResolvedValueOnce({ ...completedExport, status: 'in-progress' })
+      .mockResolvedValueOnce({ ...completedExport, status: 'in-progress' })
+      .mockResolvedValue(completedExport);
+
+    await expect((service as any).deleteExport(SHARED, 'tenant-1', 'export-1')).resolves.toBe('DELETED');
+
+    expect(agentClient.getExportJob).toHaveBeenCalledTimes(3);
+    expect(agentClient.deleteExport.mock.invocationCallOrder[0]).toBeGreaterThan(
+      agentClient.getExportJob.mock.invocationCallOrder[2]
+    );
+  });
+
+  it('keeps the id of an export it could not delete, so a later run can remove it', async () => {
+    process.env.ORG_MIGRATION_JOB_TIMEOUT_MS = '20';
+    process.env.ORG_MIGRATION_EXPORT_CLEANUP_WAIT_MS = '20';
+    const { execute, migrationRepository, agentClient } = build();
+    agentClient.getExportJob.mockResolvedValue({ ...completedExport, status: 'in-progress' });
+    agentClient.deleteExport.mockRejectedValue(new MigrationAgentError('CONFLICT', 409));
+
+    await execute();
+
+    expect(failureRecorded(migrationRepository)).toMatchObject({
+      exportJobId: 'export-1',
+      rehearsal: expect.objectContaining({ code: 'REHEARSAL_TIMEOUT', exportCleanup: 'FAILED' })
+    });
   });
 
   it('tolerates two failed polls in a row, but not three', async () => {
@@ -514,6 +561,18 @@ describe('OrgAgentMigrationRehearsalService rehearsal run', () => {
 
     expect(migrationService.advance.mock.calls[0][3].rehearsal).toMatchObject({ exportCleanup: 'FAILED' });
     expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('records that the agents were unavailable when the stored credentials cannot be decrypted', async () => {
+    const { execute, access, migrationRepository, agentClient } = build();
+    access.dedicated.mockRejectedValue(new BadRequestException('decrypt failed'));
+
+    await execute();
+
+    expect(failureRecorded(migrationRepository)).toMatchObject({
+      rehearsal: expect.objectContaining({ code: 'AGENT_UNAVAILABLE' })
+    });
+    expect(agentClient.createImportSession).not.toHaveBeenCalled();
   });
 
   it('records that the agents were unavailable when no credentials can be found', async () => {

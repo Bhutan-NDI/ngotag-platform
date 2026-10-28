@@ -312,6 +312,48 @@ describe('MigrationAgentClient.pushImport', () => {
     expect(config.maxBodyLength).toBe(Infinity);
   });
 
+  it('does not follow redirects on the upload, which would make axios keep the whole body in memory', async () => {
+    const { client, post } = build();
+
+    await client.pushImport('https://admin.org.example.com', 'root-token', input);
+
+    expect(post.mock.calls[0][2].maxRedirects).toBe(0);
+  });
+
+  it('never gives the transfer longer than the budget it was given', async () => {
+    const { client, get, post } = build();
+
+    await client.pushImport('https://admin.org.example.com', 'root-token', input, 20000);
+
+    expect(get.mock.calls[0][1].timeout).toBe(20000);
+    expect(post.mock.calls[0][2].timeout).toBe(20000);
+  });
+
+  it('reports a download that breaks part way as DOWNLOAD_FAILED, not as the agent being unreachable', async () => {
+    const artifact = new Readable({ read: () => undefined });
+    const post = jest.fn().mockImplementation(() => {
+      artifact.emit('error', new Error('socket hang up'));
+      return throwError(() => ({}));
+    });
+    const get = jest.fn().mockReturnValue(of({ data: artifact, headers: {} }));
+    const client = new MigrationAgentClient({ get, post } as never);
+
+    const error = await client.pushImport('https://admin.org.example.com', 'tok', input).catch((e) => e);
+
+    expect(error).toMatchObject({ kind: 'FAILED', agentCode: 'DOWNLOAD_FAILED' });
+  });
+
+  it('frees the connection of a refused download instead of holding it until the idle timeout', async () => {
+    const body = { destroy: jest.fn() };
+    const get = jest.fn().mockReturnValue(throwError(() => ({ response: { status: 403, data: body } })));
+    const client = new MigrationAgentClient({ get, post: jest.fn() } as never);
+
+    const error = await client.pushImport('https://admin.org.example.com', 'tok', input).catch((e) => e);
+
+    expect(error).toMatchObject({ agentCode: 'DOWNLOAD_FAILED' });
+    expect(body.destroy).toHaveBeenCalled();
+  });
+
   it('marks a dry run, as the rehearsal does', async () => {
     const { client, post } = build();
 
@@ -367,5 +409,37 @@ describe('MigrationAgentClient.pushImport', () => {
     const error = await client.pushImport('https://admin.org.example.com', 'SECRET-TOKEN', input).catch((e) => e);
 
     expect(`${error.message} ${JSON.stringify(error)} ${error.stack}`).not.toMatch(/SECRET/);
+  });
+});
+
+describe('MigrationAgentClient timeouts', () => {
+  const timeoutOf = async (call: (client: MigrationAgentClient) => Promise<unknown>): Promise<number> => {
+    const request = jest.fn(() => of({ data: {} }));
+    await call(new MigrationAgentClient({ request } as never));
+    return (request.mock.calls[0] as unknown as [{ timeout: number }])[0].timeout;
+  };
+
+  afterEach(() => {
+    delete process.env.ORG_MIGRATION_RESTORE_TIMEOUT_MS;
+  });
+
+  it('gives an ordinary call 15 seconds', async () => {
+    await expect(timeoutOf((client) => client.getRelay('https://shared.example.com', 'tok', 'tenant-1'))).resolves.toBe(
+      15000
+    );
+  });
+
+  it('gives the relay restore much longer, because it hands every queued message back before it answers', async () => {
+    const timeout = await timeoutOf((client) => client.restoreRelay('https://shared.example.com', 'tok', 'tenant-1'));
+
+    expect(timeout).toBeGreaterThan(15000);
+  });
+
+  it('reads the restore timeout from the environment', async () => {
+    process.env.ORG_MIGRATION_RESTORE_TIMEOUT_MS = '45000';
+
+    await expect(
+      timeoutOf((client) => client.restoreRelay('https://shared.example.com', 'tok', 'tenant-1'))
+    ).resolves.toBe(45000);
   });
 });

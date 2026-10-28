@@ -1,12 +1,12 @@
 /* eslint-disable camelcase */
 import { Injectable, Logger } from '@nestjs/common';
-import { OrgAgentMigrationStatus, OrgAgentType } from '@credebl/enum/enum';
+import { DidMethod, OrgAgentMigrationStatus, OrgAgentType, ProofType } from '@credebl/enum/enum';
 import { org_agent_migrations } from '@prisma/client';
 import { createHash } from 'crypto';
 import { ConnectionRepository } from '../../../connection/src/connection.repository';
 import { ConnectionService } from '../../../connection/src/connection.service';
 import { AgentServiceRepository } from '../repositories/agent-service.repository';
-import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
+import { OrgAgentMigrationRepository, REHEARSAL_DONE } from '../repositories/org-agent-migration.repository';
 import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
 import { checkConfig, checkEndpoint, checkRelease } from './migration-agent-checks';
 import { IPortabilityJob, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
@@ -20,6 +20,7 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DEFAULT_FREEZE_MS = 15 * MINUTE_MS;
 const DEFAULT_STABILISATION_HOURS = 48;
 const COMPLETION_ATTEMPTS = 3;
+const RELAY_CLEAR_ATTEMPTS = 3;
 
 interface IMoveCounts {
   entries: number;
@@ -63,23 +64,24 @@ const stabilisationMs = (): number => {
   );
 };
 
+// The signature suite follows the key behind the DID, as platform issuance picks it.
+const signingProofType = (orgDid: string): ProofType =>
+  orgDid.includes(DidMethod.POLYGON) ? ProofType.POLYGON_PROOFTYPE : ProofType.NO_LEDGER_PROOFTYPE;
+
 /**
- * Whether the move brought over about as much as the rehearsal did. Records can fall between the rehearsal and the
- * move (the cron purge removes old ones), so a small drop is tolerated; a large one means the merge lost something.
+ * Whether the move brought over what the rehearsal did. Records can fall between the rehearsal and the move (the cron
+ * purge removes old ones), so a small drop in entries is tolerated. Keys are the org's identity and are never purged,
+ * so none may be missing. With no rehearsal to compare with there is nothing to vouch for the move.
  */
 export const countsMatchRehearsal = (
   rehearsal: IMoveCounts | null | undefined,
   moved: IMoveCounts | null | undefined,
   tolerance: number
 ): boolean => {
-  if (!moved || !Number.isFinite(moved.entries) || !Number.isFinite(moved.keys)) {
+  if (!moved || !rehearsal || !Number.isFinite(moved.entries) || !Number.isFinite(moved.keys)) {
     return false;
   }
-  if (!rehearsal) {
-    return true;
-  }
-  const floorOf = (value: number): number => Math.floor(value * (1 - tolerance));
-  return moved.entries >= floorOf(rehearsal.entries) && moved.keys >= floorOf(rehearsal.keys);
+  return moved.entries >= Math.floor(rehearsal.entries * (1 - tolerance)) && moved.keys >= rehearsal.keys;
 };
 
 /**
@@ -191,9 +193,15 @@ export class OrgAgentMigrationExecutor {
     }
     const deadlineAt = Date.now() + (migration.predictedFreezeMs ?? DEFAULT_FREEZE_MS);
     try {
-      const frozen = await this.migrationService.advance(migrationId, OrgAgentMigrationStatus.FROZEN, actor, {
-        freezeDeadline: new Date(deadlineAt)
-      });
+      // Still due: a slot moved, or a rehearsal started, after the scheduler read the row must stop this claim. The
+      // rehearsal's key fingerprint is dropped so the trail only shows the move's own once its export exists.
+      const frozen = await this.migrationService.advance(
+        migrationId,
+        OrgAgentMigrationStatus.FROZEN,
+        actor,
+        { freezeDeadline: new Date(deadlineAt), importKeyFingerprint: null },
+        { where: { rehearsalStatus: REHEARSAL_DONE, scheduledFor: { lte: new Date() } } }
+      );
       return { migration: frozen, deadlineAt };
     } catch (error) {
       this.logger.warn(`[move] ${migrationId}: not started, ${this.describe(error)}`);
@@ -214,6 +222,8 @@ export class OrgAgentMigrationExecutor {
       throw new MoveFailure('AGENT_UNAVAILABLE');
     }
 
+    await this.preCheck(ctx);
+
     // Calls that already hold the org's key keep running; wait for them before the wallet is read.
     await sleep(Math.min(envMs('ORG_MIGRATION_DRAIN_MS', MINUTE_MS), Math.max(ctx.deadlineAt - Date.now(), 0)));
     this.checkBudget(ctx);
@@ -223,6 +233,29 @@ export class OrgAgentMigrationExecutor {
     await this.call('RELAY_FAILED', () =>
       this.agentClient.putRelay(ctx.shared.endpoint, ctx.shared.token, ctx.migration.tenantId, { mode: 'HOLD' })
     );
+  }
+
+  // The checks that do not need the imported wallet run first: once the import has happened the target is no longer
+  // pristine, so a failure after it leaves the org unable to retry until someone clears that agent.
+  private async preCheck(ctx: IMoveContext): Promise<void> {
+    const { shared, dedicated, migration } = ctx;
+    const [info, sharedInfo] = await Promise.all([
+      this.call('VERIFICATION_FAILED:AGENT', () => this.agentClient.getAgentInfo(dedicated.endpoint, dedicated.token)),
+      this.call('VERIFICATION_FAILED:AGENT', () => this.agentClient.getAgentInfo(shared.endpoint, shared.token))
+    ]);
+    this.expect('ENDPOINT', 'PASS' === checkEndpoint(info, migration.targetDidcommEndpoint).status);
+    this.expect('RELEASE', 'PASS' === checkRelease(info, sharedInfo).status);
+    this.expect('CONFIG', 'PASS' === checkConfig(info, sharedInfo).status);
+
+    const probe = await this.call('VERIFICATION_FAILED:RELAY_PROBE', () =>
+      this.agentClient.probeRelayTarget(
+        shared.endpoint,
+        shared.token,
+        migration.tenantId,
+        migration.targetDidcommEndpoint
+      )
+    );
+    this.expect('RELAY_PROBE', probe.reachable);
   }
 
   private async exportWallet(ctx: IMoveContext): Promise<void> {
@@ -271,14 +304,19 @@ export class OrgAgentMigrationExecutor {
     const push = 'PUSH' === ctx.migration.downloadMethod;
     const job = await this.call('IMPORT_FAILED', () =>
       push
-        ? this.agentClient.pushImport(dedicated.endpoint, dedicated.token, {
-            downloadUrl: exported.downloadUrl,
-            sessionId,
-            checksum: exported.checksum,
-            sealedStoreKey: exported.sealedStoreKey,
-            storageVersion: exported.storageVersion,
-            dryRun: false
-          })
+        ? this.agentClient.pushImport(
+            dedicated.endpoint,
+            dedicated.token,
+            {
+              downloadUrl: exported.downloadUrl,
+              sessionId,
+              checksum: exported.checksum,
+              sealedStoreKey: exported.sealedStoreKey,
+              storageVersion: exported.storageVersion,
+              dryRun: false
+            },
+            ctx.deadlineAt - Date.now()
+          )
         : this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
             sessionId,
             exportUrl: exported.downloadUrl,
@@ -298,7 +336,7 @@ export class OrgAgentMigrationExecutor {
 
   // The checks of ADR-WM-006, in order; the first one that fails aborts the move and names itself.
   private async verify(ctx: IMoveContext, moved: IMoveCounts): Promise<void> {
-    const { shared, dedicated, migration } = ctx;
+    const { migration } = ctx;
     this.checkBudget(ctx);
     ctx.migration = await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.VERIFYING, ctx.actor);
 
@@ -306,25 +344,7 @@ export class OrgAgentMigrationExecutor {
     const rehearsal = migration.counts as unknown as IMoveCounts | null;
     this.expect('COUNTS', countsMatchRehearsal(rehearsal, moved, Number.isFinite(tolerance) ? tolerance : 0.2));
 
-    const [info, sharedInfo] = await Promise.all([
-      this.call('VERIFICATION_FAILED:AGENT', () => this.agentClient.getAgentInfo(dedicated.endpoint, dedicated.token)),
-      this.call('VERIFICATION_FAILED:AGENT', () => this.agentClient.getAgentInfo(shared.endpoint, shared.token))
-    ]);
-    this.expect('ENDPOINT', 'PASS' === checkEndpoint(info, migration.targetDidcommEndpoint).status);
-    this.expect('RELEASE', 'PASS' === checkRelease(info, sharedInfo).status);
-    this.expect('CONFIG', 'PASS' === checkConfig(info, sharedInfo).status);
-
     this.expect('SIGN_VERIFY', await this.signAndVerify(ctx));
-
-    const probe = await this.call('VERIFICATION_FAILED:RELAY_PROBE', () =>
-      this.agentClient.probeRelayTarget(
-        shared.endpoint,
-        shared.token,
-        migration.tenantId,
-        migration.targetDidcommEndpoint
-      )
-    );
-    this.expect('RELAY_PROBE', probe.reachable);
 
     await this.audit(migration.id, 'MOVE_VERIFIED', {
       entries: moved.entries,
@@ -352,7 +372,8 @@ export class OrgAgentMigrationExecutor {
         '@context': ['https://www.w3.org/2018/credentials/v1'],
         type: ['VerifiableCredential'],
         credentialSubject: {},
-        proofType: 'Ed25519Signature2018'
+        proofType: signingProofType(orgDid),
+        did: orgDid
       })
     );
     const issuer = credential?.issuer as string | { id?: string } | undefined;
@@ -478,13 +499,12 @@ export class OrgAgentMigrationExecutor {
     }
 
     const shortened = await this.connectionService.storeConnectionObjectAndReturnUrl(created.invitationUrl, true);
-    await this.connectionRepository.saveAgentConnectionInvitations(
-      shortened,
-      orgAgent.id,
-      migration.orgId,
-      created.invitationDid
-    );
-    await this.migrationRepository.update(migration.id, {
+    // One transaction: a failure between the two writes cannot leave a row that a repeat would duplicate.
+    await this.migrationRepository.attachNewInvitation({
+      migrationId: migration.id,
+      orgId: migration.orgId,
+      agentId: orgAgent.id,
+      connectionInvitation: shortened,
       newInvitationDid: created.invitationDid,
       legacyInvitationDid: legacy?.invitationDid ?? null
     });
@@ -503,6 +523,8 @@ export class OrgAgentMigrationExecutor {
   private async unfreeze(ctx: IMoveContext): Promise<void> {
     await this.migrationService.advance(ctx.migration.id, OrgAgentMigrationStatus.STABILISING, ctx.actor, {
       stabilisationEndsAt: new Date(Date.now() + stabilisationMs()),
+      // Preflight's probe does not count: the window's own check must show the webhook working now.
+      webhookConfirmedAt: null,
       // The token now lives on the org's agent row; the migration no longer needs its own copy.
       targetTokenEncrypted: null
     });
@@ -526,28 +548,11 @@ export class OrgAgentMigrationExecutor {
 
     const { shared } = ctx;
     const exportJobId = ctx.exportJobId ?? current.exportJobId;
-    if (shared && exportJobId) {
-      await this.deleteExport(shared, current.tenantId, exportJobId);
-    }
 
     let clean = true;
     let reinjected: { injected: number; failed: number } | undefined;
     if (ctx.relayHeld && shared && current.tenantId) {
-      let messagesBack = true;
-      try {
-        reinjected = await this.agentClient.reinjectRelay(shared.endpoint, shared.token, current.tenantId);
-      } catch (error) {
-        messagesBack = this.isAbsent(error);
-        clean = messagesBack;
-      }
-      // Never remove the relay while held messages may still be in it: that would drop them.
-      if (messagesBack) {
-        try {
-          await this.agentClient.deleteRelay(shared.endpoint, shared.token, current.tenantId);
-        } catch (error) {
-          clean = this.isAbsent(error);
-        }
-      }
+      ({ clean, reinjected } = await this.clearRelay(shared, current.tenantId));
     }
 
     if (!clean) {
@@ -567,21 +572,80 @@ export class OrgAgentMigrationExecutor {
       reinjected: reinjected?.injected ?? 0,
       reinjectFailed: reinjected?.failed ?? 0
     });
+
+    // After the messages are back and the org is unfrozen: it may wait for a running export to finish.
+    if (shared && exportJobId) {
+      await this.deleteExport(shared, current.tenantId, exportJobId);
+    }
     return true;
   }
 
-  // A relay entry that is not there (or not holding) needs no cleanup.
-  private isAbsent(error: unknown): boolean {
-    return error instanceof MigrationAgentError && ['NOT_FOUND', 'CONFLICT'].includes(error.kind);
+  /**
+   * Hands the held messages back and removes the relay. A relay that was refused removal because messages arrived
+   * after the hand-back is emptied again and retried; one that is busy, or whose agent cannot be reached, leaves the
+   * abort incomplete so the scheduler retries it. Only a relay that is not there needs no cleanup.
+   */
+  private async clearRelay(
+    shared: IAgentAccess,
+    tenantId: string
+  ): Promise<{ clean: boolean; reinjected?: { injected: number; failed: number } }> {
+    const total = { injected: 0, failed: 0 };
+    for (let attempt = 0; attempt < RELAY_CLEAR_ATTEMPTS; attempt += 1) {
+      try {
+        const back = await this.agentClient.reinjectRelay(shared.endpoint, shared.token, tenantId);
+        total.injected += back.injected;
+        total.failed += back.failed;
+      } catch (error) {
+        if (this.isGone(error)) {
+          return { clean: true, reinjected: total };
+        }
+        if (!this.isAgentCode(error, 'RELAY_NOT_HOLDING')) {
+          return { clean: false, reinjected: total };
+        }
+      }
+      // Never remove the relay while held messages may still be in it: that would drop them.
+      try {
+        await this.agentClient.deleteRelay(shared.endpoint, shared.token, tenantId);
+        return { clean: true, reinjected: total };
+      } catch (error) {
+        if (this.isGone(error)) {
+          return { clean: true, reinjected: total };
+        }
+        if (!this.isAgentCode(error, 'RELAY_BUFFER_NOT_EMPTY')) {
+          return { clean: false, reinjected: total };
+        }
+      }
+    }
+    return { clean: false, reinjected: total };
   }
 
+  private isGone(error: unknown): boolean {
+    return error instanceof MigrationAgentError && 'NOT_FOUND' === error.kind;
+  }
+
+  private isAgentCode(error: unknown, code: string): boolean {
+    return error instanceof MigrationAgentError && 'CONFLICT' === error.kind && code === error.agentCode;
+  }
+
+  // The agent refuses to delete an export that is still running, so a job cut short is given time to finish first.
   private async deleteExport(shared: IAgentAccess, tenantId: string, jobId: string): Promise<void> {
+    const deadline = Date.now() + envMs('ORG_MIGRATION_EXPORT_CLEANUP_WAIT_MS', 2 * MINUTE_MS);
+    for (;;) {
+      try {
+        const job = await this.agentClient.getExportJob(shared.endpoint, shared.token, tenantId, jobId);
+        if ('completed' === job.status || 'failed' === job.status || Date.now() >= deadline) {
+          break;
+        }
+      } catch {
+        break;
+      }
+      await sleep(envMs('ORG_MIGRATION_POLL_INTERVAL_MS', 5000));
+    }
     try {
       await this.agentClient.deleteExport(shared.endpoint, shared.token, tenantId, jobId);
     } catch (error) {
-      if (!this.isAbsent(error)) {
-        this.logger.warn(`[move] export ${jobId} was not deleted from S3: ${this.describe(error)}`);
-      }
+      // A 404 is either an export already removed or an agent without the delete route, so it is not silent.
+      this.logger.warn(`[move] export ${jobId} was not deleted from S3: ${this.describe(error)}`);
     }
   }
 

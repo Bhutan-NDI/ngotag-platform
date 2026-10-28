@@ -50,7 +50,8 @@ export class OrgAgentMigrationPreflightService {
    */
   async run(
     migrationId: string,
-    input: { apiKey?: string; backupsConfirmed?: boolean },
+    // `keepDownloadMethod`: the final check before the freeze, which must not switch to a method nobody rehearsed.
+    input: { apiKey?: string; backupsConfirmed?: boolean; keepDownloadMethod?: boolean },
     actor: string | null = null
   ): Promise<{ migration: org_agent_migrations; report: IPreflightReport }> {
     const migration = await this.migrationRepository.getById(migrationId);
@@ -89,7 +90,13 @@ export class OrgAgentMigrationPreflightService {
       this.checkWebhook(migration, token, dedicatedInfo, record)
     ]);
 
-    const downloadMethod = await this.checkDownloadMethod(migration, token, dedicatedInfo, record);
+    const downloadMethod = await this.checkDownloadMethod(
+      migration,
+      token,
+      dedicatedInfo,
+      record,
+      input.keepDownloadMethod
+    );
 
     const report = this.buildReport(checks);
     const updated = await this.migrationRepository.update(migration.id, {
@@ -241,23 +248,37 @@ export class OrgAgentMigrationPreflightService {
     record(PreflightCheckId.WEBHOOK_DELIVERS, result.confirmed ? pass() : fail(result.code));
   }
 
-  // Never fails: an agent that cannot reach S3 is not refused, the platform sends it the export instead.
+  // An agent that cannot reach S3 is not refused, the platform sends it the export instead. With the method locked
+  // (the final check) a rehearsed PULL that can no longer reach S3 fails, since the move's budget was sized for it, and
+  // a rehearsed PUSH stays PUSH.
   private async checkDownloadMethod(
     migration: org_agent_migrations,
     token: string | undefined,
     info: IAgentInfo | undefined,
-    record: (id: PreflightCheckId, check: Check) => void
+    record: (id: PreflightCheckId, check: Check) => void,
+    lock = false
   ): Promise<DownloadMethod | undefined> {
     if (!token || !info) {
       return undefined;
     }
+    const rehearsed = lock ? (migration.downloadMethod as DownloadMethod | null) : null;
     try {
       const bucket = await this.agentClient.getExportBucket(migration.targetAdminEndpoint, token);
-      if (bucket.configured && bucket.reachable) {
+      const reachable = bucket.configured && bucket.reachable;
+      const reason = bucket.configured ? (bucket.reason ?? 'UNREACHABLE') : 'BUCKET_NOT_CONFIGURED';
+      if (rehearsed) {
+        record(
+          PreflightCheckId.DOWNLOAD_METHOD,
+          'PULL' === rehearsed && !reachable
+            ? fail('DOWNLOAD_METHOD_CHANGED', { rehearsed, reason })
+            : pass({ method: rehearsed })
+        );
+        return rehearsed;
+      }
+      if (reachable) {
         record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: 'PULL' }));
         return 'PULL';
       }
-      const reason = bucket.configured ? (bucket.reason ?? 'UNREACHABLE') : 'BUCKET_NOT_CONFIGURED';
       record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: 'PUSH', reason }));
       return 'PUSH';
     } catch {

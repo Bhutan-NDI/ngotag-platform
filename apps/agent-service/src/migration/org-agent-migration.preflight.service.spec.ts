@@ -126,6 +126,52 @@ describe('OrgAgentMigrationPreflightService', () => {
       expect(methodOf(migrationRepository)).toBe('PUSH');
     });
 
+    describe('in the final check before the freeze, with the method locked', () => {
+      const locked = { ...input, keepDownloadMethod: true };
+      const rehearsedAs = (method: 'PULL' | 'PUSH') => ({ migration: migrationRow({ downloadMethod: method }) });
+
+      it('keeps a rehearsed PULL while the agent can still reach its bucket', async () => {
+        const { service, migrationRepository } = build(rehearsedAs('PULL'));
+
+        const { report } = await service.run(MIGRATION_ID, locked);
+
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({ status: 'PASS', detail: { method: 'PULL' } });
+        expect(methodOf(migrationRepository)).toBe('PULL');
+      });
+
+      it('does not switch a rehearsed PULL to PUSH over one failed probe: the check fails instead', async () => {
+        const { service, migrationRepository, agentClient } = build(rehearsedAs('PULL'));
+        agentClient.getExportBucket.mockResolvedValue({ configured: true, reachable: false, reason: 'TIMEOUT' });
+
+        const { report } = await service.run(MIGRATION_ID, locked);
+
+        expect(report.passed).toBe(false);
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+          status: 'FAIL',
+          code: 'DOWNLOAD_METHOD_CHANGED',
+          detail: { rehearsed: 'PULL', reason: 'TIMEOUT' }
+        });
+        expect(methodOf(migrationRepository)).toBe('PULL');
+      });
+
+      it('keeps a rehearsed PUSH even when the agent can now reach its bucket', async () => {
+        const { service, migrationRepository } = build(rehearsedAs('PUSH'));
+
+        const { report } = await service.run(MIGRATION_ID, locked);
+
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({ status: 'PASS', detail: { method: 'PUSH' } });
+        expect(methodOf(migrationRepository)).toBe('PUSH');
+      });
+
+      it('still decides afresh when nothing was rehearsed yet', async () => {
+        const { service, migrationRepository } = build();
+
+        await service.run(MIGRATION_ID, locked);
+
+        expect(methodOf(migrationRepository)).toBe('PULL');
+      });
+    });
+
     it('leaves the method as it was when the agent cannot be asked', async () => {
       const { service, migrationRepository, agentClient } = build();
       agentClient.getExportBucket.mockRejectedValue(new MigrationAgentError('NOT_FOUND', 404));
