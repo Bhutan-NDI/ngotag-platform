@@ -267,6 +267,25 @@ describe('OrgAgentMigrationService', () => {
       expect(migrationRepository.recordEvent).not.toHaveBeenCalled();
     });
 
+    it('cancels from the status it checked, so a move frozen in between is refused rather than aborted', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.FROZEN },
+        active: { id: MIGRATION_ID, status: Status.REHEARSED }
+      });
+      migrationRepository.transition.mockRejectedValue(new ConflictException('changed'));
+
+      await expect(service.cancel(ORG_ID, USER_ID)).rejects.toThrow(BadRequestException);
+
+      expect(migrationRepository.transition).toHaveBeenCalledWith(expect.objectContaining({ from: Status.REHEARSED }));
+    });
+
+    it('still answers success when only the audit entry could not be written', async () => {
+      const { service, migrationRepository } = buildService();
+      migrationRepository.recordEvent.mockRejectedValue(new Error('db blip'));
+
+      await expect(service.cancel(ORG_ID, USER_ID)).resolves.toEqual({ id: MIGRATION_ID });
+    });
+
     it('refuses when the org has no active move', async () => {
       const { service } = buildService({ active: null });
 

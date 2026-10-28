@@ -163,7 +163,14 @@ export class OrgAgentMigrationService {
 
     let cancelled: org_agent_migrations;
     try {
-      cancelled = await this.abort(migration.id, 'CANCELLED_BY_OWNER', userId);
+      // From the status just checked, not a fresh read: a move the scheduler froze in between must refuse, not abort.
+      cancelled = await this.migrationRepository.transition({
+        id: migration.id,
+        from: migration.status as OrgAgentMigrationStatus,
+        to: OrgAgentMigrationStatus.FAILED,
+        actor: userId,
+        patch: { error: 'CANCELLED_BY_OWNER', targetTokenEncrypted: null }
+      });
     } catch (error) {
       // The scheduler claimed it between the read and the write.
       if (error instanceof ConflictException) {
@@ -171,11 +178,17 @@ export class OrgAgentMigrationService {
       }
       throw error;
     }
-    await this.migrationRepository.recordEvent(migration.id, {
-      action: 'MOVE_CANCELLED',
-      actor: userId,
-      detail: { by: 'OWNER' }
-    });
+    try {
+      await this.migrationRepository.recordEvent(migration.id, {
+        action: 'MOVE_CANCELLED',
+        actor: userId,
+        detail: { by: 'OWNER' }
+      });
+    } catch (error) {
+      this.logger.error(
+        `[cancel] could not audit the cancellation: ${error instanceof Error ? error.message : 'failed'}`
+      );
+    }
     return cancelled;
   }
 }
