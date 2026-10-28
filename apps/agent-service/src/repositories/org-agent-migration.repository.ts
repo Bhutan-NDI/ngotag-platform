@@ -226,6 +226,36 @@ export class OrgAgentMigrationRepository {
     }
   }
 
+  /** Saves the org's new reusable invitation and records its DID on the migration, together or not at all. */
+  async attachNewInvitation(params: {
+    migrationId: string;
+    orgId: string;
+    agentId: string;
+    connectionInvitation: string;
+    newInvitationDid: string;
+    legacyInvitationDid: string | null;
+  }): Promise<MigrationRow> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.agent_invitations.create({
+        data: {
+          orgId: String(params.orgId),
+          agentId: params.agentId,
+          connectionInvitation: params.connectionInvitation,
+          multiUse: true,
+          invitationDid: params.newInvitationDid
+        }
+      });
+      return tx.org_agent_migrations.update({
+        where: { id: params.migrationId },
+        data: {
+          newInvitationDid: params.newInvitationDid,
+          legacyInvitationDid: params.legacyInvitationDid,
+          lastChangedDateTime: new Date()
+        }
+      });
+    });
+  }
+
   /**
    * Takes the lease on a migration unless another replica holds it. The lease expires on its own, so a replica that
    * dies holding it does not block the migration for long.
