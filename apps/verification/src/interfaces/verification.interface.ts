@@ -32,11 +32,6 @@ export interface IRequestProof {
   willConfirm?: boolean;
 }
 
-export interface IGetAllProofPresentations {
-  url: string;
-  apiKey: string;
-}
-
 export interface IGetProofPresentationById {
   url: string;
   apiKey?: string;

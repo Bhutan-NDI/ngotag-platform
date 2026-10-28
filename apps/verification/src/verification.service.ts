@@ -27,6 +27,7 @@ import {
 } from './interfaces/verification.interface';
 import { VerificationRepository } from './repositories/verification.repository';
 import { ATTRIBUTE_NAME_REGEX, CommonConstants } from '@credebl/common/common.constant';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import { RecordType, org_agents, organisation, presentations, user } from '@prisma/client';
 import { additionalInvitationDidsField, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import { AutoAccept, VerificationProcessState } from '@credebl/enum/enum';
@@ -1101,12 +1102,13 @@ export class VerificationService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }

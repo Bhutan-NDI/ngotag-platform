@@ -3,6 +3,7 @@ import { IssuanceWorkCoordinator } from './issuance-work.coordinator';
 /* eslint-disable no-useless-catch */
 /* eslint-disable camelcase */
 import { CommonService } from '@credebl/common';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import {
   BadRequestException,
   ConflictException,
@@ -274,8 +275,8 @@ export class IssuanceService {
       // Start each recipient only when a local offer slot is available, so this
       // request does not exhaust its own short capacity-wait budget.
       const limit = pLimit(this.issuanceWork.offerConcurrency);
-      const issuancePromises = credentialData.map((credentials) =>
-        limit(async () => {
+      const issuancePromises = credentialData.map((credentials) => {
+        return limit(async () => {
           const { connectionId, attributes, credential, options } = credentials;
           let issueData;
 
@@ -322,8 +323,8 @@ export class IssuanceService {
           }
 
           return this._sendCredentialCreateOffer(issueData, url, orgId);
-        })
-      );
+        });
+      });
 
       const results = await Promise.allSettled(issuancePromises);
 
@@ -1429,10 +1430,11 @@ export class IssuanceService {
         let filteredData = parsedData;
         if (previewRequest.searchByText) {
           const searchTerm = previewRequest.searchByText.toLowerCase();
-          filteredData = parsedData.filter(
-            (item) =>
+          filteredData = parsedData.filter((item) => {
+            return (
               item.email_identifier.toLowerCase().includes(searchTerm) || item.name.toLowerCase().includes(searchTerm)
-          );
+            );
+          });
         }
 
         // Apply pagination to the filtered data
@@ -1786,8 +1788,13 @@ export class IssuanceService {
 
   async processIssuanceData(jobDetails: IQueuePayload): Promise<boolean> {
     try {
-      const succeeded = await this.issuanceWork.bulkRow(jobDetails.orgId, jobDetails.fileUploadId, jobDetails.id, () =>
-        this.processBulkRow(jobDetails)
+      const succeeded = await this.issuanceWork.bulkRow(
+        jobDetails.orgId,
+        jobDetails.fileUploadId,
+        jobDetails.id,
+        () => {
+          return this.processBulkRow(jobDetails);
+        }
       );
       await this.completeBulkRow(jobDetails, succeeded);
       return succeeded;
@@ -2063,12 +2070,13 @@ export class IssuanceService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }
@@ -2086,8 +2094,8 @@ export class IssuanceService {
         const batchStartTime = Date.now();
 
         // Create an array of limited promises for the current batch
-        const saveFileDetailsPromises = batch.map((element) =>
-          limit(() => {
+        const saveFileDetailsPromises = batch.map((element) => {
+          return limit(() => {
             const credentialPayload = {
               credential_data: element,
               schemaId: parsedFileDetails.schemaLedgerId,
@@ -2099,8 +2107,8 @@ export class IssuanceService {
               credentialType: parsedFileDetails.credentialType
             };
             return this.issuanceRepository.saveFileDetails(credentialPayload, userId);
-          })
-        );
+          });
+        });
 
         this.logger.log(`Processing batch ${index + 1} with ${batch.length} elements...`);
 
