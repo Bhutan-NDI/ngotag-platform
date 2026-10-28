@@ -81,7 +81,7 @@ describe('OrgAgentMigrationService', () => {
         startedBy: USER_ID,
         tenantId: 'tenant-1',
         targetAdminEndpoint: 'https://admin.example.com',
-        targetDidcommEndpoint: 'https://didcomm.example.com'
+        targetDidcommEndpoint: 'https://didcomm.example.com/'
       });
       expect(call.sourceOrgAgentSnapshot).toMatchObject({
         agentEndPoint: 'https://shared.example.com',
@@ -99,7 +99,12 @@ describe('OrgAgentMigrationService', () => {
       ['an http admin address', { targetAdminEndpoint: 'http://admin.example.com' }],
       ['an http DIDComm address', { targetDidcommEndpoint: 'http://didcomm.example.com' }],
       ['a malformed address', { targetAdminEndpoint: 'not a url' }],
-      ['the same address for both', { targetDidcommEndpoint: 'https://admin.example.com/didcomm' }]
+      ['the same address for both', { targetDidcommEndpoint: 'https://admin.example.com/didcomm' }],
+      ['a private DIDComm address', { targetDidcommEndpoint: 'https://10.0.1.5:9001' }],
+      ['a loopback DIDComm address', { targetDidcommEndpoint: 'https://localhost:9001' }],
+      ['an IPv4-mapped private DIDComm address', { targetDidcommEndpoint: 'https://[::ffff:10.0.0.5]:9001' }],
+      ['a DIDComm address with credentials', { targetDidcommEndpoint: 'https://user:pw@didcomm.example.com' }],
+      ['an over-long DIDComm address', { targetDidcommEndpoint: `https://didcomm.example.com/${'a'.repeat(2048)}` }]
     ])('rejects %s', async (_name, overrides) => {
       const { service, migrationRepository } = buildService();
 
