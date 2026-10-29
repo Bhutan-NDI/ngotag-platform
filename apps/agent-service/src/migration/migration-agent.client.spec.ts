@@ -134,6 +134,15 @@ describe('MigrationAgentClient against a real HTTP server', () => {
     expect(JSON.parse(seen[1].body)).toEqual(body);
   });
 
+  it('gives a re-inject much longer than the default call, since the agent waits on each held message', async () => {
+    const httpService = { request: jest.fn(() => of({ data: { injected: 0, failed: 0 } })) };
+    const slowClient = new MigrationAgentClient(httpService as never);
+
+    await slowClient.reinjectRelay(baseUrl, 'tok', 'tenant-1');
+
+    expect(httpService.request).toHaveBeenCalledWith(expect.objectContaining({ timeout: 10 * 60 * 1000 }));
+  });
+
   it('sets, re-injects and removes a relay on the documented routes', async () => {
     await client.putRelay(baseUrl, 'tok', 'tenant-1', { mode: 'FORWARD', target: 'https://didcomm.example.org' });
     await client.putRelay(baseUrl, 'tok', 'tenant-1', { mode: 'HOLD' });
