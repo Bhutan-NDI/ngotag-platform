@@ -2,6 +2,7 @@
 import { HttpService } from '@nestjs/axios';
 import * as http from 'http';
 import { AddressInfo } from 'net';
+import { of } from 'rxjs';
 import { MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
 
 interface Seen {
@@ -110,6 +111,15 @@ describe('MigrationAgentClient against a real HTTP server', () => {
       'GET /agent/wallet/import/status/job%201'
     ]);
     expect(JSON.parse(seen[1].body)).toEqual(body);
+  });
+
+  it('gives a re-inject much longer than the default call, since the agent waits on each held message', async () => {
+    const httpService = { request: jest.fn(() => of({ data: { injected: 0, failed: 0 } })) };
+    const slowClient = new MigrationAgentClient(httpService as never);
+
+    await slowClient.reinjectRelay(baseUrl, 'tok', 'tenant-1');
+
+    expect(httpService.request).toHaveBeenCalledWith(expect.objectContaining({ timeout: 10 * 60 * 1000 }));
   });
 
   it('sets, re-injects and removes a relay on the documented routes', async () => {
