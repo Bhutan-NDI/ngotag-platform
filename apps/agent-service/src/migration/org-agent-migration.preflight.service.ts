@@ -104,17 +104,22 @@ export class OrgAgentMigrationPreflightService {
     );
 
     const report = this.buildReport(checks);
-    const updated = await this.migrationRepository.update(migration.id, {
-      preflight: report as never,
-      backupsConfirmedAt,
-      ...(freshToken && 'PASS' === checks.get(PreflightCheckId.TOKEN_IS_ROOT)?.status
-        ? { targetTokenEncrypted: this.access.encryptToken(freshToken) }
-        : {}),
-      ...(dedicatedInfo
-        ? { releaseVersion: dedicatedInfo.releaseVersion, storageVersion: dedicatedInfo.storageVersion }
-        : {}),
-      ...(downloadMethod ? { downloadMethod } : {})
-    });
+    // Only while the move is still open: a cancel or an abort that overlapped this run must not get the token back.
+    const updated = await this.migrationRepository.update(
+      migration.id,
+      {
+        preflight: report as never,
+        backupsConfirmedAt,
+        ...(freshToken && 'PASS' === checks.get(PreflightCheckId.TOKEN_IS_ROOT)?.status
+          ? { targetTokenEncrypted: this.access.encryptToken(freshToken) }
+          : {}),
+        ...(dedicatedInfo
+          ? { releaseVersion: dedicatedInfo.releaseVersion, storageVersion: dedicatedInfo.storageVersion }
+          : {}),
+        ...(downloadMethod ? { downloadMethod } : {})
+      },
+      [OrgAgentMigrationStatus.CREATED, OrgAgentMigrationStatus.REHEARSED, OrgAgentMigrationStatus.SCHEDULED]
+    );
     await this.auditRun(migration.id, actor, report);
     return { migration: updated, report };
   }
@@ -287,8 +292,10 @@ export class OrgAgentMigrationPreflightService {
       record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: 'PUSH', reason }));
       return 'PUSH';
     } catch {
-      // Not answering is another check's finding; the method stays what it was.
-      return undefined;
+      // The probe not answering (an agent without it, a timeout, a 5xx) is not a failed check, but it is not a skipped one
+      // either: the method is the rehearsed one, or PULL as before push mode existed, and the report says why.
+      record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: rehearsed ?? 'PULL', reason: 'PROBE_UNAVAILABLE' }));
+      return rehearsed ?? undefined;
     }
   }
 

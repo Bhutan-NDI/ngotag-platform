@@ -137,8 +137,15 @@ export class OrgAgentMigrationService {
    * Fails a scheduled or started migration that has not reached the switch: the org stays exactly as it was. `errorCode`
    * is a stable, sanitised code (for example VERIFICATION_FAILED), never raw error text. The stored token for the
    * dedicated agent is dropped: a finished migration has no use for a credential.
+   * @param expectedScheduledFor the slot the caller read: when the owner has moved it since, nothing is aborted
+   * @throws ConflictException when the slot is no longer the one given
    */
-  async abort(migrationId: string, errorCode: string, actor: string | null): Promise<org_agent_migrations> {
+  async abort(
+    migrationId: string,
+    errorCode: string,
+    actor: string | null,
+    expectedScheduledFor?: Date | null
+  ): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
       throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
@@ -151,7 +158,8 @@ export class OrgAgentMigrationService {
       from: migration.status as OrgAgentMigrationStatus,
       to: OrgAgentMigrationStatus.FAILED,
       actor,
-      patch: { error: errorCode, targetTokenEncrypted: null }
+      patch: { error: errorCode, targetTokenEncrypted: null },
+      ...(undefined === expectedScheduledFor ? {} : { where: { scheduledFor: expectedScheduledFor } })
     });
   }
 
@@ -169,22 +177,34 @@ export class OrgAgentMigrationService {
       throw new BadRequestException(ResponseMessages.agent.error.migrationCancelNotAllowed);
     }
 
-    let cancelled: org_agent_migrations;
-    try {
-      // From the status just checked, not a fresh read: a move the scheduler froze in between must refuse, not abort.
-      cancelled = await this.migrationRepository.transition({
-        id: migration.id,
-        from: migration.status as OrgAgentMigrationStatus,
-        to: OrgAgentMigrationStatus.CANCELLED,
-        actor: userId,
-        patch: { targetTokenEncrypted: null }
-      });
-    } catch (error) {
-      // The scheduler claimed it between the read and the write.
-      if (error instanceof ConflictException) {
-        throw new BadRequestException(ResponseMessages.agent.error.migrationCancelNotAllowed);
+    let cancelled: org_agent_migrations | undefined;
+    let current = migration;
+    for (let attempt = 0; !cancelled; attempt += 1) {
+      try {
+        // From the status just read, not a blind write: a move the scheduler froze in between must refuse, not abort.
+        cancelled = await this.migrationRepository.transition({
+          id: migration.id,
+          from: current.status as OrgAgentMigrationStatus,
+          to: OrgAgentMigrationStatus.CANCELLED,
+          actor: userId,
+          patch: { targetTokenEncrypted: null }
+        });
+      } catch (error) {
+        if (!(error instanceof ConflictException)) {
+          throw error;
+        }
+        // The row changed since the read. Another owner moving the slot, or the scheduler taking the move off its slot,
+        // leaves it cancellable; only a move that is now frozen or finished is refused.
+        const fresh = await this.migrationRepository.getById(migration.id);
+        if (
+          1 <= attempt ||
+          !fresh ||
+          !canTransition(fresh.status as OrgAgentMigrationStatus, OrgAgentMigrationStatus.CANCELLED)
+        ) {
+          throw new BadRequestException(ResponseMessages.agent.error.migrationCancelNotAllowed);
+        }
+        current = fresh;
       }
-      throw error;
     }
     try {
       await this.migrationRepository.recordEvent(migration.id, {

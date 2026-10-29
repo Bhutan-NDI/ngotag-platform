@@ -1,5 +1,9 @@
 /* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type, prefer-destructuring */
-import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
+import {
+  KeyExportAlertKind,
+  MigrationNoticeKind,
+  OrgAgentMigrationAlertService
+} from './org-agent-migration.alert.service';
 
 const ORG_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 const USER_ID = 'a1b2c3d4-5717-4562-b3fc-2c963f66afa6';
@@ -199,5 +203,33 @@ describe('OrgAgentMigrationAlertService', () => {
     await service.alertKeyExport(migration, KeyExportAlertKind.REHEARSAL_EXPORT, USER_ID);
 
     expect(sendEmail.mock.calls[0][0].emailText).toContain(ORG_ID);
+  });
+
+  describe('notify', () => {
+    it('tells the same people about something the platform did on its own, without naming a user', async () => {
+      const { service, sendEmail } = build();
+
+      const result = await service.notify(migration, MigrationNoticeKind.WEBHOOK_DEFERRED);
+
+      expect(result).toEqual({ recipients: 2, sent: 2 });
+      expect(sendEmail.mock.calls.map(([email]) => email.emailTo)).toEqual(['owner@x.org', 'admin@x.org']);
+      expect(sendEmail.mock.calls[0][0].emailSubject).toContain('waiting for the new agent');
+      expect(sendEmail.mock.calls[0][0].emailText).toContain('Acme Ltd');
+      expect(sendEmail.mock.calls[0][0].emailText).not.toContain('NOPE');
+    });
+
+    it('says nothing was sent when there is nobody to tell or no sender address', async () => {
+      const nobody = build({ recipients: [] });
+      await expect(nobody.service.notify(migration, MigrationNoticeKind.PURGE_FAILING)).resolves.toEqual({
+        recipients: 0,
+        sent: 0
+      });
+
+      const noSender = build({ emailFrom: null });
+      await expect(noSender.service.notify(migration, MigrationNoticeKind.PURGE_FAILING)).resolves.toEqual({
+        recipients: 2,
+        sent: 0
+      });
+    });
   });
 });

@@ -325,7 +325,12 @@ export class OrgAgentMigrationExecutor {
             storageVersion: exported.storageVersion,
             dryRun: false
           })
-    );
+    ).catch((error) => {
+      // An upload cut off by the budget has no answer to read, so it would be recorded as the agent being unreachable.
+      throw push && error instanceof MoveFailure && Date.now() >= ctx.deadlineAt
+        ? new MoveFailure('FREEZE_BUDGET_EXCEEDED')
+        : error;
+    });
     await this.migrationRepository.update(migration.id, { importJobId: job.jobId });
 
     const imported = await this.wait('IMPORT', ctx, () =>
