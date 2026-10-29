@@ -13,11 +13,13 @@ import { org_agent_migrations } from '@prisma/client';
 import { AgentServiceRepository } from '../repositories/agent-service.repository';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import { MigrationAgentAccess } from './migration-agent-access';
-import { MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
+import { envMs } from './migration-job-poller';
+import { MigrationAgentClient, MigrationAgentError, RESTORE_TIMEOUT_MS } from './migration-agent.client';
 import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
 
 const MINUTE_MS = 60 * 1000;
-const LEASE_MS = 5 * MINUTE_MS;
+// At least as long as the restore call it guards, so the lease covers the whole restore.
+const leaseMs = (): number => envMs('ORG_MIGRATION_RESTORE_TIMEOUT_MS', RESTORE_TIMEOUT_MS) + MINUTE_MS;
 
 interface ISourceSnapshot {
   agentEndPoint?: string;
@@ -63,7 +65,7 @@ export class OrgAgentMigrationRestoreService {
     }
 
     // The scheduler skips a migration while it is leased, so the window cannot end underneath the restore.
-    if (!(await this.migrationRepository.tryAcquireLease(migration.id, LEASE_MS))) {
+    if (!(await this.migrationRepository.tryAcquireLease(migration.id, leaseMs()))) {
       throw new ConflictException(ResponseMessages.agent.error.migrationRestoreBusy);
     }
 
@@ -98,16 +100,27 @@ export class OrgAgentMigrationRestoreService {
       return await this.agentClient.restoreRelay(shared.endpoint, shared.token, migration.tenantId);
     } catch (error) {
       if (error instanceof MigrationAgentError) {
-        // No relay left: an earlier attempt already took it off.
+        // No relay left: an earlier attempt already took it off. Confirmed, since an agent without the restore route also
+        // answers 404 while its relay still forwards.
         if ('NOT_FOUND' === error.kind) {
-          return undefined;
+          const stillThere = await this.agentClient
+            .getRelay(shared.endpoint, shared.token, migration.tenantId)
+            .then(() => true)
+            .catch((lookup) => !(lookup instanceof MigrationAgentError && 'NOT_FOUND' === lookup.kind));
+          if (!stillThere) {
+            return undefined;
+          }
         }
         // The shared copy is gone, so there is nothing to give the org back to.
         if ('CONFLICT' === error.kind && 'TENANT_PURGED' === error.agentCode) {
           throw new BadRequestException(ResponseMessages.agent.error.migrationRestoreNotAllowed);
         }
-        // An earlier call is still handing the queued messages back; a second drain would lose some of them.
-        if ('CONFLICT' === error.kind && 'RELAY_BUSY' === error.agentCode) {
+        // An earlier call is still handing the queued messages back (a second drain would lose some of them), or a
+        // message arrived just as the drain finished: a retry completes it.
+        if (
+          'CONFLICT' === error.kind &&
+          ('RELAY_BUSY' === error.agentCode || 'RELAY_BUFFER_NOT_EMPTY' === error.agentCode)
+        ) {
           throw new ConflictException(ResponseMessages.agent.error.migrationRestoreBusy);
         }
       }

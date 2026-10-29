@@ -15,6 +15,13 @@ export enum KeyExportAlertKind {
   DISASTER_RESTORE = 'DISASTER_RESTORE'
 }
 
+/** Things the platform does or finds on its own during a move, which the same people should hear about once. */
+export enum MigrationNoticeKind {
+  PURGE_FAILING = 'PURGE_FAILING',
+  WEBHOOK_DEFERRED = 'WEBHOOK_DEFERRED',
+  WEBHOOK_GOING_AHEAD = 'WEBHOOK_GOING_AHEAD'
+}
+
 export interface IKeyExportAlertResult {
   recipients: number;
   sent: number;
@@ -45,6 +52,21 @@ const DESCRIPTIONS: Record<KeyExportAlertKind, IAlertDescription> = {
     who: 'A platform admin',
     what: 'rolled the organisation’s move back to the shared agent after its new agent was lost; what the new agent did since the switch is lost',
     targetLabel: 'The agent that was lost'
+  }
+};
+
+const NOTICES: Record<MigrationNoticeKind, { subject: string; what: string }> = {
+  [MigrationNoticeKind.PURGE_FAILING]: {
+    subject: 'A wallet move cannot finish removing the old wallet',
+    what: 'The shared agent keeps failing to remove the organisation’s old wallet after its move, so the move cannot finish. The platform keeps retrying, more slowly.'
+  },
+  [MigrationNoticeKind.WEBHOOK_DEFERRED]: {
+    subject: 'A wallet move is waiting for the new agent’s webhook',
+    what: 'The new agent’s webhook does not reach the platform, so the old wallet is being kept for now. The switch-over waits a limited time for it to be fixed.'
+  },
+  [MigrationNoticeKind.WEBHOOK_GOING_AHEAD]: {
+    subject: 'A wallet move went ahead with its webhook unconfirmed',
+    what: 'The waiting time ran out with the new agent’s webhook still unconfirmed, so the old wallet was removed and the move went ahead.'
   }
 };
 
@@ -89,24 +111,65 @@ export class OrgAgentMigrationAlertService {
     }
 
     const description = DESCRIPTIONS[kind];
-    const { subject } = description;
+    return this.send(
+      recipients,
+      platformConfig.emailFrom,
+      `[Security] ${description.subject}`,
+      {
+        text: this.text(description, orgName, actorEmail, migration),
+        html: this.html(description, orgName, actorEmail, migration)
+      },
+      migration.id
+    );
+  }
+
+  /** Tells the same people about something the platform did or found on its own, with no user involved. */
+  async notify(migration: org_agent_migrations, kind: MigrationNoticeKind): Promise<IKeyExportAlertResult> {
+    const [recipients, orgName, platformConfig] = await Promise.all([
+      this.migrationRepository.getExportAlertRecipients(migration.orgId, CommonConstants.PLATFORM_ADMIN_ORG),
+      this.migrationRepository.getOrgName(migration.orgId),
+      this.agentServiceRepository.getPlatformConfigDetails()
+    ]);
+    if (0 === recipients.length || !platformConfig?.emailFrom) {
+      return { recipients: recipients.length, sent: 0 };
+    }
+
+    const { subject, what } = NOTICES[kind];
+    const name = orgName ?? migration.orgId;
+    return this.send(
+      recipients,
+      platformConfig.emailFrom,
+      `[Wallet move] ${subject}`,
+      {
+        text: `${what}\n\nOrganisation: ${name}\nTime: ${new Date().toISOString()}`,
+        html: `<p>${escapeHtml(what)}</p><table><tr><td><strong>Organisation</strong></td><td>${escapeHtml(name)}</td></tr></table>`
+      },
+      migration.id
+    );
+  }
+
+  private async send(
+    recipients: string[],
+    emailFrom: string,
+    subject: string,
+    body: { text: string; html: string },
+    migrationId: string
+  ): Promise<IKeyExportAlertResult> {
     const results = await Promise.allSettled(
       recipients.map((recipient) => {
         const email = new EmailDto();
-        email.emailFrom = platformConfig.emailFrom;
+        email.emailFrom = emailFrom;
         email.emailTo = recipient;
-        email.emailSubject = `[Security] ${subject}`;
-        email.emailText = this.text(description, orgName, actorEmail, migration);
-        email.emailHtml = this.html(description, orgName, actorEmail, migration);
+        email.emailSubject = subject;
+        email.emailText = body.text;
+        email.emailHtml = body.html;
         return this.emailService.sendEmail(email);
       })
     );
 
     const sent = results.filter((result) => 'fulfilled' === result.status && result.value).length;
     if (sent < recipients.length) {
-      this.logger.error(
-        `[alertKeyExport] ${migration.id}: ${recipients.length - sent} of ${recipients.length} alerts failed`
-      );
+      this.logger.error(`[alert] ${migrationId}: ${recipients.length - sent} of ${recipients.length} alerts failed`);
     }
     return { recipients: recipients.length, sent };
   }
