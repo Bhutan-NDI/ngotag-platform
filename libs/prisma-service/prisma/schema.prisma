@@ -304,7 +304,7 @@ model org_agent_migrations {
   events                 org_agent_migration_events[]
 
   // At most one non-terminal migration per org: a partial unique index on (orgId) WHERE status NOT IN
-  // ('COMPLETED','FAILED','DISASTER_RESTORED'), created in the raw migration; Prisma's DSL can't express it.
+  // ('COMPLETED','FAILED','CANCELLED','DISASTER_RESTORED'), created in the raw migration; Prisma's DSL can't express it.
   @@index([orgId])
   @@index([status])
 }

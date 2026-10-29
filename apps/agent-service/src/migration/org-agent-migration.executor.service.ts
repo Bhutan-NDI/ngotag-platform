@@ -253,7 +253,7 @@ export class OrgAgentMigrationExecutor {
         migration.targetDidcommEndpoint
       )
     );
-    this.expect('RELAY_PROBE', probe.reachable);
+    this.expect('RELAY_PROBE', this.targetHealthy(probe));
   }
 
   private async exportWallet(ctx: IMoveContext): Promise<void> {
@@ -446,10 +446,27 @@ export class OrgAgentMigrationExecutor {
     throw last;
   }
 
+  // The probe counts any HTTP answer as reachable, but a 5xx means nothing healthy is behind the address (a healthy
+  // inbound answers the probe's GET with a 404).
+  private targetHealthy(probe: { reachable: boolean; status?: number }): boolean {
+    return probe.reachable && 500 > (probe.status ?? 0);
+  }
+
   private async forwardRelay(ctx: IMoveContext): Promise<void> {
     const { shared, migration } = ctx;
     if (!shared) {
       throw new MoveFailure('AGENT_UNAVAILABLE');
+    }
+    // Held messages are delivered to the target as soon as it forwards, so the target is checked again right before:
+    // holding is safe (24 hours) and this step is retried and resumed.
+    const probe = await this.agentClient.probeRelayTarget(
+      shared.endpoint,
+      shared.token,
+      migration.tenantId,
+      migration.targetDidcommEndpoint
+    );
+    if (!this.targetHealthy(probe)) {
+      throw new MoveFailure('TARGET_UNHEALTHY');
     }
     await this.agentClient.putRelay(shared.endpoint, shared.token, migration.tenantId, {
       mode: 'FORWARD',
