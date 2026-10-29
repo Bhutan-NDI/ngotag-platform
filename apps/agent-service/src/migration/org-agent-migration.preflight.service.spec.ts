@@ -354,6 +354,31 @@ describe('OrgAgentMigrationPreflightService', () => {
       });
     });
 
+    it.each([502, 503])(
+      'fails when the DIDComm address answers %s, since nothing healthy is behind it',
+      async (status) => {
+        const { service, agentClient } = build();
+        agentClient.probeRelayTarget.mockResolvedValue({ reachable: true, status });
+
+        const { report } = await service.run(MIGRATION_ID, input);
+
+        expect(checkOf(report, Check.DIDCOMM_REACHABLE)).toMatchObject({
+          status: 'FAIL',
+          code: 'DIDCOMM_UNREACHABLE',
+          detail: { reason: `HTTP_${status}` }
+        });
+      }
+    );
+
+    it.each([200, 404, 403])('passes when the DIDComm address answers %s', async (status) => {
+      const { service, agentClient } = build();
+      agentClient.probeRelayTarget.mockResolvedValue({ reachable: true, status });
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.DIDCOMM_REACHABLE)).toMatchObject({ status: 'PASS' });
+    });
+
     it.each([
       ['redis is not ready', () => Promise.resolve({ enabled: true, redisReady: false })],
       ['the relay is switched off', () => Promise.reject(new MigrationAgentError('CONFLICT', 409, 'RELAY_DISABLED'))]
@@ -385,6 +410,22 @@ describe('OrgAgentMigrationPreflightService', () => {
         status: 'FAIL',
         code: 'RELAY_WS_UNSUPPORTED',
         detail: { schemes: ['wss'] }
+      });
+    });
+
+    it('passes the websocket check but says how many DIDs it could not read', async () => {
+      const { service, agentClient } = build();
+      agentClient.getEndpointSchemes.mockResolvedValue({
+        didsScanned: 4,
+        unresolvedDids: 2,
+        schemes: [{ scheme: 'https', count: 2 }]
+      });
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.NO_WEBSOCKET_ENDPOINTS)).toMatchObject({
+        status: 'PASS',
+        detail: { unresolvedDids: 2 }
       });
     });
 

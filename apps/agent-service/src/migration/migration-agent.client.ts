@@ -39,6 +39,7 @@ export interface IImportSession {
 
 export interface IEndpointSchemes {
   didsScanned: number;
+  unresolvedDids?: number;
   schemes: { scheme: string; count: number; exampleDids: string[] }[];
 }
 
