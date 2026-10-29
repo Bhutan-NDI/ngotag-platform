@@ -443,17 +443,13 @@ export class OrgAgentMigrationRepository {
   }
 
   /**
-   * Moves that hold an org frozen right now, across every replica, and moves a replica has leased and is about to
-   * freeze (in their final checks), so overlapping ticks do not each start up to the cap.
+   * Moves that hold an org frozen right now, across every replica. A scheduled move whose final checks are running is
+   * not counted: one that keeps failing its checks keeps its retry lease, and would fill the cap and keep a move that
+   * is ready from starting.
    */
-  async countInFlight(now: Date = new Date()): Promise<number> {
+  async countInFlight(): Promise<number> {
     return this.prisma.org_agent_migrations.count({
-      where: {
-        OR: [
-          { status: { in: [...ORG_AGENT_MIGRATION_FROZEN_STATUSES] } },
-          { status: OrgAgentMigrationStatus.SCHEDULED, leaseUntil: { gt: now } }
-        ]
-      }
+      where: { status: { in: [...ORG_AGENT_MIGRATION_FROZEN_STATUSES] } }
     });
   }
 
@@ -674,6 +670,16 @@ export class OrgAgentMigrationRepository {
         ...(entry.detail === undefined ? {} : { detail: entry.detail })
       }
     });
+  }
+
+  /** The detail of the latest audit entry of an action for a migration, if there is one. */
+  async getEventDetail(migrationId: string, action: string): Promise<Record<string, unknown> | null> {
+    const event = await this.prisma.org_agent_migration_events.findFirst({
+      where: { migrationId, action },
+      orderBy: { createDateTime: 'desc' },
+      select: { detail: true }
+    });
+    return (event?.detail as Record<string, unknown> | null | undefined) ?? null;
   }
 
   /** How many times an audit action has been recorded for a migration. */
