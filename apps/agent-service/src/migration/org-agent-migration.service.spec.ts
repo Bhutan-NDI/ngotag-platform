@@ -303,6 +303,21 @@ describe('OrgAgentMigrationService', () => {
       expect(migrationRepository.transition).toHaveBeenCalledWith(expect.objectContaining({ from: Status.REHEARSED }));
     });
 
+    it('cancels on a retry when the conflict was only the slot being moved, not the move starting', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.REHEARSED },
+        active: { id: MIGRATION_ID, status: Status.SCHEDULED }
+      });
+      migrationRepository.transition.mockRejectedValueOnce(new ConflictException('changed'));
+
+      await expect(service.cancel(ORG_ID, USER_ID)).resolves.toEqual({ id: MIGRATION_ID });
+
+      expect(migrationRepository.transition).toHaveBeenCalledTimes(2);
+      expect(migrationRepository.transition).toHaveBeenLastCalledWith(
+        expect.objectContaining({ from: Status.REHEARSED, to: Status.CANCELLED })
+      );
+    });
+
     it('still answers success when only the audit entry could not be written', async () => {
       const { service, migrationRepository } = buildService();
       migrationRepository.recordEvent.mockRejectedValue(new Error('db blip'));
