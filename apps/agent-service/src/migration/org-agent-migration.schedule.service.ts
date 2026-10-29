@@ -88,6 +88,8 @@ export class OrgAgentMigrationScheduleService {
       userId,
       { scheduledFor: slot, error: null },
       {
+        // Two owners rescheduling at once, or a move the scheduler took in between, must not both go through.
+        expectedFrom: migration.status as OrgAgentMigrationStatus,
         event: {
           action: 'MOVE_CONFIRMED',
           detail: { scheduledFor: slot.toISOString(), immediate: undefined === payload.scheduledFor }

@@ -367,6 +367,14 @@ export class OrgAgentMigrationRepository {
     return 1 === count;
   }
 
+  /** Shows a running rehearsal is still alive, so only one that stopped is taken for dead. */
+  async touchRehearsal(id: string): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({
+      where: { id, rehearsalStatus: REHEARSAL_RUNNING },
+      data: { rehearsalStartedAt: new Date() }
+    });
+  }
+
   /** True while the org has a bulk issuance that has started or been restarted and not yet finished. */
   async hasActiveBulkIssuance(orgId: string): Promise<boolean> {
     const active = await this.prisma.file_upload.findFirst({
