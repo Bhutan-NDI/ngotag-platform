@@ -49,7 +49,10 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
       Status.SCHEDULED,
       USER_ID,
       { scheduledFor: slot, error: null },
-      { event: { action: 'MOVE_CONFIRMED', detail: { scheduledFor: slot.toISOString(), immediate: false } } }
+      {
+        expectedFrom: Status.REHEARSED,
+        event: { action: 'MOVE_CONFIRMED', detail: { scheduledFor: slot.toISOString(), immediate: false } }
+      }
     );
     expect(migrationRepository.recordEvent).not.toHaveBeenCalled();
   });
