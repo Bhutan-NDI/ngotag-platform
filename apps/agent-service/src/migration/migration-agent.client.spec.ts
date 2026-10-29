@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { HttpService } from '@nestjs/axios';
-import { of } from 'rxjs';
 import * as http from 'http';
 import { AddressInfo } from 'net';
 import { of } from 'rxjs';
