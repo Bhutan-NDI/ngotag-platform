@@ -55,7 +55,12 @@ export class OrgAgentMigrationPreflightService {
     if (!migration) {
       throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
     }
-    if (![OrgAgentMigrationStatus.CREATED, OrgAgentMigrationStatus.REHEARSED].includes(migration.status as never)) {
+    const checkable = [
+      OrgAgentMigrationStatus.CREATED,
+      OrgAgentMigrationStatus.REHEARSED,
+      OrgAgentMigrationStatus.SCHEDULED
+    ];
+    if (!checkable.includes(migration.status as never)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
 

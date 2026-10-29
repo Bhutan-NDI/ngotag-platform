@@ -11,7 +11,7 @@ import { OrgAgentMigrationService } from './org-agent-migration.service';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 60 * 1000;
 const DEFAULT_MAX_LEAD_DAYS = 14;
-const DEFAULT_REHEARSAL_MAX_AGE_DAYS = 7;
+const DEFAULT_REHEARSAL_MAX_AGE_DAYS = 14;
 
 const maxLeadMs = (): number => envMs('ORG_MIGRATION_MAX_LEAD_DAYS', DEFAULT_MAX_LEAD_DAYS) * DAY_MS;
 
