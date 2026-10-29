@@ -45,6 +45,7 @@ const build = (options: { migration?: object | null } = {}) => {
     getActiveByOrgId: jest.fn().mockResolvedValue(migration),
     getById: jest.fn().mockResolvedValue(migration && { ...migration, rehearsalStatus: 'RUNNING' }),
     tryStartRehearsal: jest.fn().mockResolvedValue(true),
+    touchRehearsal: jest.fn().mockResolvedValue(undefined),
     update: jest.fn().mockResolvedValue({}),
     recordEvent: jest.fn().mockResolvedValue(undefined)
   };
@@ -119,14 +120,15 @@ describe('OrgAgentMigrationRehearsalService.start', () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: MIGRATION_ID }), USER_ID);
   });
 
-  it('treats a rehearsal that started over three hours ago as dead', async () => {
+  it('treats a rehearsal that has not shown a sign of life for three minutes as dead', async () => {
     const { service, migrationRepository } = build();
     jest.spyOn(service as any, 'execute').mockResolvedValue(undefined);
 
     await service.start(ORG_ID, USER_ID);
 
     const [, staleBefore] = migrationRepository.tryStartRehearsal.mock.calls[0];
-    expect(Date.now() - staleBefore.getTime()).toBeGreaterThanOrEqual(3 * 60 * MINUTE - 1000);
+    expect(Date.now() - staleBefore.getTime()).toBeGreaterThanOrEqual(3 * MINUTE - 1000);
+    expect(Date.now() - staleBefore.getTime()).toBeLessThan(4 * MINUTE);
   });
 
   it('can be run again on a rehearsed migration', async () => {
@@ -268,6 +270,41 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
 
     expect(migrationService.advance).toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalled();
+  });
+});
+
+describe('OrgAgentMigrationRehearsalService heartbeat', () => {
+  afterEach(() => {
+    delete process.env.ORG_MIGRATION_REHEARSAL_HEARTBEAT_MS;
+  });
+
+  it('shows the rehearsal alive while it runs, and stops once it is over', async () => {
+    process.env.ORG_MIGRATION_REHEARSAL_HEARTBEAT_MS = '10';
+    const { execute, migrationRepository, agentClient } = build();
+    agentClient.startSealedExport.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      return { jobId: 'export-1', status: 'pending' };
+    });
+
+    await execute();
+    const during = migrationRepository.touchRehearsal.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(during).toBeGreaterThanOrEqual(3);
+    expect(migrationRepository.touchRehearsal).toHaveBeenCalledTimes(during);
+    expect(migrationRepository.touchRehearsal).toHaveBeenCalledWith(MIGRATION_ID);
+  });
+
+  it('stops the heartbeat when the rehearsal fails', async () => {
+    process.env.ORG_MIGRATION_REHEARSAL_HEARTBEAT_MS = '10';
+    const { execute, migrationRepository, agentClient } = build();
+    agentClient.createImportSession.mockRejectedValue(new Error('down'));
+
+    await execute();
+    const afterFailure = migrationRepository.touchRehearsal.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(migrationRepository.touchRehearsal).toHaveBeenCalledTimes(afterFailure);
   });
 });
 

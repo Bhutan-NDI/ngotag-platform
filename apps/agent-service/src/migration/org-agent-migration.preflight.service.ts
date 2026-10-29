@@ -309,7 +309,13 @@ export class OrgAgentMigrationPreflightService {
       );
       record(
         PreflightCheckId.DIDCOMM_REACHABLE,
-        probe.reachable ? pass() : fail('DIDCOMM_UNREACHABLE', { reason: probe.reason ?? 'UNREACHABLE' })
+        // Any HTTP answer counts as reachable to the probe, but a 5xx means no healthy target behind the address, and the
+        // relay would forward held messages into it.
+        probe.reachable && 500 > (probe.status ?? 0)
+          ? pass()
+          : fail('DIDCOMM_UNREACHABLE', {
+              reason: probe.reason ?? (probe.status ? `HTTP_${probe.status}` : 'UNREACHABLE')
+            })
       );
     } catch {
       record(PreflightCheckId.DIDCOMM_REACHABLE, fail('SHARED_AGENT_UNAVAILABLE'));
@@ -351,11 +357,18 @@ export class OrgAgentMigrationPreflightService {
       return;
     }
     try {
-      const { schemes } = await this.agentClient.getEndpointSchemes(shared.endpoint, shared.token, migration.tenantId);
+      const { schemes, unresolvedDids = 0 } = await this.agentClient.getEndpointSchemes(
+        shared.endpoint,
+        shared.token,
+        migration.tenantId
+      );
       const websocket = schemes.filter(({ scheme }) => ['ws', 'wss'].includes(scheme)).map(({ scheme }) => scheme);
+      // A DID whose document could not be read has no endpoints in the scan, so the check did not cover it.
       record(
         PreflightCheckId.NO_WEBSOCKET_ENDPOINTS,
-        0 === websocket.length ? pass() : fail('RELAY_WS_UNSUPPORTED', { schemes: websocket })
+        0 === websocket.length
+          ? pass(0 < unresolvedDids ? { unresolvedDids } : undefined)
+          : fail('RELAY_WS_UNSUPPORTED', { schemes: websocket })
       );
     } catch {
       record(PreflightCheckId.NO_WEBSOCKET_ENDPOINTS, fail('SHARED_AGENT_UNAVAILABLE'));
