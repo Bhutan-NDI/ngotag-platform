@@ -1,4 +1,5 @@
 /* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type, no-mixed-operators */
+import { ConflictException } from '@nestjs/common';
 import { OrgAgentMigrationStatus as Status } from '@credebl/enum/enum';
 import { OrgAgentMigrationScheduler } from './org-agent-migration.scheduler';
 
@@ -80,6 +81,22 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
     await scheduler.tick();
 
     expect(executor.run).toHaveBeenCalledWith('m1', USER_ID);
+  });
+
+  it('leaves a move alone when the owner moved its slot while the final checks ran, instead of failing it', async () => {
+    process.env.ORG_MIGRATION_START_WINDOW_MS = String(MINUTE);
+    const { scheduler, executor, migrationService, migrationRepository, logger } = build();
+    migrationService.abort.mockRejectedValue(new ConflictException('changed'));
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: new Date(Date.now() - 2 * MINUTE) })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null, expect.any(Date));
+    expect(migrationRepository.recordEvent).not.toHaveBeenCalled();
+    expect(executor.run).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
   it('leaves a move alone when another replica holds it', async () => {
@@ -202,7 +219,7 @@ describe('OrgAgentMigrationScheduler: a missed slot', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null);
+    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null, expect.any(Date));
     expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
       action: 'MOVE_CANCELLED',
       actor: null,
@@ -233,7 +250,7 @@ describe('OrgAgentMigrationScheduler: a missed slot', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null);
+    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'SLOT_MISSED', null, expect.any(Date));
     expect(executor.run).not.toHaveBeenCalled();
   });
 });
@@ -277,7 +294,7 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:NO_BULK_JOB', null);
+    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:NO_BULK_JOB', null, expect.any(Date));
     expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
       action: 'MOVE_CANCELLED',
       actor: null,
@@ -296,7 +313,12 @@ describe('OrgAgentMigrationScheduler: the final checks', () => {
 
     await scheduler.tick();
 
-    expect(migrationService.abort).toHaveBeenCalledWith('m1', 'PREFLIGHT_FAILED:DIDCOMM_REACHABLE', null);
+    expect(migrationService.abort).toHaveBeenCalledWith(
+      'm1',
+      'PREFLIGHT_FAILED:DIDCOMM_REACHABLE',
+      null,
+      expect.any(Date)
+    );
   });
 
   it('treats checks that could not run as a failed check, and does not freeze', async () => {

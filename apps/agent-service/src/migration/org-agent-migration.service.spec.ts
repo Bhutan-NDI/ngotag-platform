@@ -247,6 +247,19 @@ describe('OrgAgentMigrationService', () => {
       }
     );
 
+    it('matches the slot the caller read, so a slot the owner moved in the meantime is not failed', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.SCHEDULED }
+      });
+      const readSlot = new Date('2026-11-01T10:00:00Z');
+
+      await service.abort(MIGRATION_ID, 'SLOT_MISSED', null, readSlot);
+
+      expect(migrationRepository.transition).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { scheduledFor: readSlot } })
+      );
+    });
+
     it.each([
       Status.CREATED,
       Status.REHEARSED,

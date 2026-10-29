@@ -5,7 +5,8 @@ const build = (updateCount = 1) => {
   const prisma = {
     org_agent_migrations: {
       updateMany: jest.fn().mockResolvedValue({ count: updateCount }),
-      findMany: jest.fn().mockResolvedValue([{ id: 'm1' }])
+      findMany: jest.fn().mockResolvedValue([{ id: 'm1' }]),
+      count: jest.fn().mockResolvedValue(2)
     },
     org_agent_migration_events: { findFirst: jest.fn() }
   };
@@ -49,6 +50,24 @@ describe('OrgAgentMigrationRepository scheduling queries', () => {
         },
         orderBy: { scheduledFor: 'asc' },
         take: 2
+      });
+    });
+  });
+
+  describe('countInFlight', () => {
+    it('counts moves holding an org frozen and scheduled moves a replica has leased for their final checks', async () => {
+      const { repository, prisma } = build();
+      const now = new Date();
+
+      await expect(repository.countInFlight(now)).resolves.toBe(2);
+
+      expect(prisma.org_agent_migrations.count).toHaveBeenCalledWith({
+        where: {
+          OR: [
+            { status: { in: ['FROZEN', 'EXPORTING', 'IMPORTING', 'VERIFYING', 'CUTOVER'] } },
+            { status: 'SCHEDULED', leaseUntil: { gt: now } }
+          ]
+        }
       });
     });
   });
