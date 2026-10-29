@@ -106,23 +106,31 @@ export class OrgAgentMigrationService {
    * Moves a migration to its next state. Throws when the state machine does not allow it from the
    * migration's current state, or when another actor moved it first.
    * @param actor user id, or null for a system step such as a timer
+   * @param options.expectedFrom the status the caller read: when the migration is no longer in it, a stale caller is
+   * refused instead of moving the row from whatever state it is in now
    */
   async advance(
     migrationId: string,
     to: OrgAgentMigrationStatus,
     actor: string | null,
     patch?: OrgAgentMigrationPatch,
-    options?: Pick<Parameters<OrgAgentMigrationRepository['transition']>[0], 'where' | 'event'>
+    options: Pick<Parameters<OrgAgentMigrationRepository['transition']>[0], 'where' | 'event'> & {
+      expectedFrom?: OrgAgentMigrationStatus;
+    } = {}
   ): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
       throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
     }
+    const { expectedFrom, ...transitionOptions } = options;
     const from = migration.status as OrgAgentMigrationStatus;
+    if (expectedFrom && expectedFrom !== from) {
+      throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
+    }
     if (!canTransition(from, to)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
-    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch, ...options });
+    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch, ...transitionOptions });
   }
 
   /**
