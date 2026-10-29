@@ -206,6 +206,18 @@ describe('OrgAgentMigrationPreflightService', () => {
       expect(migrationRepository.update.mock.calls[0][1]).not.toHaveProperty('downloadMethod');
     });
 
+    it('reports the method the migration already has, not PULL, when an unlocked run cannot ask the agent', async () => {
+      const { service, agentClient } = build({ migration: migrationRow({ downloadMethod: 'PUSH' }) });
+      agentClient.getExportBucket.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+        status: 'PASS',
+        detail: { method: 'PUSH', reason: 'PROBE_UNAVAILABLE' }
+      });
+    });
+
     it.each(['PULL', 'PUSH'] as const)(
       'keeps the rehearsed %s when the final check cannot ask the agent, and still passes',
       async (method) => {

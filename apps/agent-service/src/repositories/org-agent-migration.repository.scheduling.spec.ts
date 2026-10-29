@@ -55,19 +55,13 @@ describe('OrgAgentMigrationRepository scheduling queries', () => {
   });
 
   describe('countInFlight', () => {
-    it('counts moves holding an org frozen and scheduled moves a replica has leased for their final checks', async () => {
+    it('counts the moves holding an org frozen, and not scheduled ones whose checks are running or keep failing', async () => {
       const { repository, prisma } = build();
-      const now = new Date();
 
-      await expect(repository.countInFlight(now)).resolves.toBe(2);
+      await expect(repository.countInFlight()).resolves.toBe(2);
 
       expect(prisma.org_agent_migrations.count).toHaveBeenCalledWith({
-        where: {
-          OR: [
-            { status: { in: ['FROZEN', 'EXPORTING', 'IMPORTING', 'VERIFYING', 'CUTOVER'] } },
-            { status: 'SCHEDULED', leaseUntil: { gt: now } }
-          ]
-        }
+        where: { status: { in: ['FROZEN', 'EXPORTING', 'IMPORTING', 'VERIFYING', 'CUTOVER'] } }
       });
     });
   });
