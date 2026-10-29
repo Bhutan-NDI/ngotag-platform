@@ -36,7 +36,10 @@ const buildRepository = (overrides: { updateCount?: number } = {}) => {
       findMany: jest.fn().mockResolvedValue([])
     }
   };
-  (prisma as Record<string, unknown>).org_agent_migration_events = { count: jest.fn().mockResolvedValue(3) };
+  (prisma as Record<string, unknown>).org_agent_migration_events = {
+    count: jest.fn().mockResolvedValue(3),
+    findFirst: jest.fn().mockResolvedValue({ detail: { reason: 'WEBHOOK_UNREACHABLE' } })
+  };
   const repository = new OrgAgentMigrationRepository(prisma as never, { error: jest.fn() } as never);
   return { repository, prisma, tx, migrationCreate, migrationUpdateMany, eventCreate, findFirst };
 };
@@ -255,6 +258,26 @@ describe('OrgAgentMigrationRepository', () => {
         where: { id: ID, rehearsalStatus: 'RUNNING' },
         data: { rehearsalStartedAt: expect.any(Date) }
       });
+    });
+  });
+
+  describe('getEventDetail', () => {
+    it('returns the detail of the latest entry of an action, or null when there is none', async () => {
+      const { repository, prisma } = buildRepository();
+      const events = (prisma as unknown as { org_agent_migration_events: { findFirst: jest.Mock } })
+        .org_agent_migration_events;
+
+      await expect(repository.getEventDetail(ID, 'SWITCHOVER_WEBHOOK_UNCONFIRMED')).resolves.toEqual({
+        reason: 'WEBHOOK_UNREACHABLE'
+      });
+      expect(events.findFirst).toHaveBeenCalledWith({
+        where: { migrationId: ID, action: 'SWITCHOVER_WEBHOOK_UNCONFIRMED' },
+        orderBy: { createDateTime: 'desc' },
+        select: { detail: true }
+      });
+
+      events.findFirst.mockResolvedValue(null);
+      await expect(repository.getEventDetail(ID, 'X')).resolves.toBeNull();
     });
   });
 

@@ -75,7 +75,11 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       world.events.push({ action: entry.action, detail: entry.detail });
     }),
     countEvents: jest.fn(async (_id: string, action: string) => world.events.filter((e) => e.action === action).length),
-    holdLease: jest.fn<Promise<void>, [string, number]>(async () => undefined)
+    holdLease: jest.fn<Promise<void>, [string, number]>(async () => undefined),
+    getEventDetail: jest.fn(async (_id: string, action: string) => {
+      const found = [...world.events].reverse().find((e) => e.action === action);
+      return (found?.detail as Record<string, unknown> | undefined) ?? null;
+    })
   };
   const alertService = { notify: jest.fn(async () => ({ recipients: 2, sent: 2 })) };
   const migrationService = {
@@ -412,6 +416,33 @@ describe('a webhook that stays broken', () => {
 
     await world.service.advanceRotation(MIGRATION_ID);
     expect(world.world.row.error).toBe('WEBHOOK_UNREACHABLE');
+    world.world.rotationStatus = rotation('completed');
+    await world.service.advanceRotation(MIGRATION_ID);
+
+    expect(world.world.row).toMatchObject({ status: Status.COMPLETED, error: 'WEBHOOK_UNREACHABLE' });
+  });
+
+  it('does not use up the one-time email on a check that is only busy', async () => {
+    const world = buildWorld(endedAgo(HOUR));
+    world.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_CHECK_BUSY' });
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('DEFERRED');
+    expect(world.alertService.notify).not.toHaveBeenCalled();
+
+    world.webhookService.check.mockResolvedValue(broken);
+    await world.service.beginSwitchOver(MIGRATION_ID);
+    expect(world.alertService.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the webhook code even when a later issue replaces it on the row, and puts it back once that clears', async () => {
+    const world = buildWorld(endedAgo(25 * HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+    await world.service.beginSwitchOver(MIGRATION_ID);
+    world.agentClient.purgeProfile.mockRejectedValueOnce(new MigrationAgentError('UNREACHABLE'));
+
+    await world.service.advanceRotation(MIGRATION_ID);
+    expect(world.world.row.error).toBe('PURGE_FAILED');
+    await world.service.advanceRotation(MIGRATION_ID);
     world.world.rotationStatus = rotation('completed');
     await world.service.advanceRotation(MIGRATION_ID);
 
