@@ -1,5 +1,5 @@
 /* eslint-disable camelcase */
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OrgAgentMigrationStatus, OrgAgentType } from '@credebl/enum/enum';
 import { RpcException } from '@nestjs/microservices';
 import { org_agent_migrations } from '@prisma/client';
@@ -106,18 +106,24 @@ export class OrgAgentMigrationService {
    * Moves a migration to its next state. Throws when the state machine does not allow it from the
    * migration's current state, or when another actor moved it first.
    * @param actor user id, or null for a system step such as a timer
+   * @param options.expectedFrom the status the caller read: when the migration is no longer in it, a stale caller is
+   * refused instead of moving the row from whatever state it is in now
    */
   async advance(
     migrationId: string,
     to: OrgAgentMigrationStatus,
     actor: string | null,
-    patch?: OrgAgentMigrationPatch
+    patch?: OrgAgentMigrationPatch,
+    options: { expectedFrom?: OrgAgentMigrationStatus } = {}
   ): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
       throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
     }
     const from = migration.status as OrgAgentMigrationStatus;
+    if (options.expectedFrom && options.expectedFrom !== from) {
+      throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
+    }
     if (!canTransition(from, to)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
