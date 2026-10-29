@@ -51,6 +51,7 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
       { scheduledFor: slot, error: null },
       {
         expectedFrom: Status.REHEARSED,
+        where: { rehearsalStatus: 'DONE' },
         event: { action: 'MOVE_CONFIRMED', detail: { scheduledFor: slot.toISOString(), immediate: false } }
       }
     );
