@@ -99,7 +99,7 @@ export class MigrationAgentError extends Error {
 
 const REQUEST_TIMEOUT_MS = 15000;
 const REINJECT_TIMEOUT_MS = 10 * 60 * 1000;
-const RESTORE_TIMEOUT_MS = 10 * 60 * 1000;
+export const RESTORE_TIMEOUT_MS = 10 * 60 * 1000;
 
 const trimSlash = (url: string): string => url.replace(/\/+$/, '');
 

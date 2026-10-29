@@ -73,8 +73,11 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
     }),
     recordEvent: jest.fn(async (_id: string, entry: { action: string; detail?: unknown }) => {
       world.events.push({ action: entry.action, detail: entry.detail });
-    })
+    }),
+    countEvents: jest.fn(async (_id: string, action: string) => world.events.filter((e) => e.action === action).length),
+    holdLease: jest.fn<Promise<void>, [string, number]>(async () => undefined)
   };
+  const alertService = { notify: jest.fn(async () => ({ recipients: 2, sent: 2 })) };
   const migrationService = {
     advance: jest.fn(async (_id: string, to: Status, _actor: string | null, patch: Record<string, unknown> = {}) => {
       if (!canTransition(world.row.status as Status, to)) {
@@ -111,10 +114,27 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
     migrationService as never,
     access as never,
     agentClient as never,
+    alertService as never,
     webhookService as never,
     logger as never
   );
-  return { world, service, migrationRepository, migrationService, access, agentClient, webhookService, logger };
+  return {
+    world,
+    service,
+    migrationRepository,
+    migrationService,
+    access,
+    agentClient,
+    alertService,
+    webhookService,
+    logger
+  };
+};
+
+const times = async (count: number, run: () => Promise<unknown>): Promise<void> => {
+  for (let left = count; 0 < left; left -= 1) {
+    await run();
+  }
 };
 
 const actions = (world: ReturnType<typeof buildWorld>['world']) => world.events.map((event) => event.action);
@@ -343,6 +363,100 @@ describe('the webhook gate', () => {
   });
 });
 
+describe('a webhook that stays broken', () => {
+  const HOUR = 60 * MINUTE;
+  const broken = { confirmed: false, code: 'WEBHOOK_UNREACHABLE' };
+  const endedAgo = (ms: number) => ({ stabilisationEndsAt: new Date(Date.now() - ms) });
+
+  afterEach(() => {
+    delete process.env.ORG_MIGRATION_WEBHOOK_DEFER_CAP_MS;
+  });
+
+  it('defers the switch-over inside the cap, and tells the people who would notice once, not on every retry', async () => {
+    const world = buildWorld(endedAgo(HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+
+    await times(3, async () => expect(await world.service.beginSwitchOver(MIGRATION_ID)).toBe('DEFERRED'));
+
+    expect(world.world.row.status).toBe(Status.STABILISING);
+    expect(world.alertService.notify).toHaveBeenCalledTimes(1);
+    expect(world.alertService.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MIGRATION_ID }),
+      'WEBHOOK_DEFERRED'
+    );
+    expect(world.agentClient.purgeProfile).not.toHaveBeenCalled();
+  });
+
+  it('goes ahead once 24 hours have passed since the window ended, keeps the webhook code, audits it and says so once', async () => {
+    const world = buildWorld(endedAgo(25 * HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+
+    expect(world.world.row).toMatchObject({ status: Status.ROTATING, error: 'WEBHOOK_UNREACHABLE' });
+    expect(actions(world.world)).toContain('SWITCHOVER_WEBHOOK_UNCONFIRMED');
+    expect(world.world.events.find((e) => 'SWITCHOVER_WEBHOOK_UNCONFIRMED' === e.action)?.detail).toEqual({
+      reason: 'WEBHOOK_UNREACHABLE'
+    });
+    expect(world.alertService.notify).toHaveBeenCalledTimes(1);
+    expect(world.alertService.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MIGRATION_ID }),
+      'WEBHOOK_GOING_AHEAD'
+    );
+  });
+
+  it('keeps the webhook code on the migration while the purge, the rotation and the completion clear everything else', async () => {
+    const world = buildWorld(endedAgo(25 * HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+    await world.service.beginSwitchOver(MIGRATION_ID);
+
+    await world.service.advanceRotation(MIGRATION_ID);
+    expect(world.world.row.error).toBe('WEBHOOK_UNREACHABLE');
+    world.world.rotationStatus = rotation('completed');
+    await world.service.advanceRotation(MIGRATION_ID);
+
+    expect(world.world.row).toMatchObject({ status: Status.COMPLETED, error: 'WEBHOOK_UNREACHABLE' });
+  });
+
+  it('reads the cap from the environment', async () => {
+    process.env.ORG_MIGRATION_WEBHOOK_DEFER_CAP_MS = String(MINUTE);
+    const world = buildWorld(endedAgo(2 * MINUTE));
+    world.webhookService.check.mockResolvedValue(broken);
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+  });
+
+  it.each([
+    ['the relay is not forwarding', (w: ReturnType<typeof buildWorld>) => (w.world.relay = { mode: 'HOLD' })],
+    [
+      'the dedicated agent cannot be reached',
+      (w: ReturnType<typeof buildWorld>) =>
+        w.agentClient.getAgentInfo.mockRejectedValue(new MigrationAgentError('UNREACHABLE'))
+    ],
+    [
+      'the dedicated agent is not ready',
+      (w: ReturnType<typeof buildWorld>) =>
+        w.agentClient.getAgentInfo.mockResolvedValue({ isInitialized: false, endpoints: [] })
+    ],
+    [
+      'the probe could not run at all',
+      (w: ReturnType<typeof buildWorld>) =>
+        w.webhookService.check.mockResolvedValue({ confirmed: false, code: 'AGENT_UNAVAILABLE' })
+    ]
+  ])(
+    'keeps blocking past the cap when %s, since purging then would leave the org with no working wallet',
+    async (_name, arrange) => {
+      const world = buildWorld(endedAgo(30 * HOUR));
+      arrange(world);
+
+      await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('DEFERRED');
+
+      expect(world.world.row.status).toBe(Status.STABILISING);
+      expect(world.alertService.notify).not.toHaveBeenCalledWith(expect.anything(), 'WEBHOOK_GOING_AHEAD');
+    }
+  );
+});
+
 describe('checking webhooks while the window is open', () => {
   const open = () => buildWorld({ stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE) });
 
@@ -419,6 +533,20 @@ describe('checking webhooks while the window is open', () => {
     expect(world.webhookService.check).not.toHaveBeenCalled();
   });
 
+  it('does not probe a move whose preflight predates the webhook check, so it is not told it has a webhook problem', async () => {
+    const world = buildWorld({
+      stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE),
+      preflight: { checks: [{ id: 'RELEASE_MATCHES', status: 'PASS' }] }
+    });
+    world.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_PROBE_UNSUPPORTED' });
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
+    expect(world.world.row.error).toBeNull();
+    expect(actions(world.world)).toEqual([]);
+  });
+
   it('does nothing without a dedicated agent to ask', async () => {
     const world = open();
     world.access.dedicatedOfOrg.mockResolvedValue(undefined);
@@ -484,6 +612,59 @@ describe('after the window: purge, rotate, complete', () => {
     expect(world.row.status).toBe(Status.ROTATING);
     expect(world.row.rotation).toMatchObject({ counts: { waiting: 4, updated: 6 } });
     expect(migrationService.advance).not.toHaveBeenCalled();
+  });
+
+  describe('a rotation whose waiting count does not move', () => {
+    afterEach(() => {
+      delete process.env.ORG_MIGRATION_ROTATION_STALL_MS;
+    });
+
+    const watching = (waitingBefore: number, polledAgo: number, extra = {}) =>
+      rotating({
+        purgedAt: new Date(),
+        rotationJobId: 'rotate-all:x',
+        rotation: {
+          job: { status: 'completed' },
+          counts: { waiting: waitingBefore },
+          polledAt: new Date(Date.now() - polledAgo).toISOString(),
+          ...extra
+        }
+      });
+
+    it('is flagged once it has not moved for the stall time, and said once in the audit trail', async () => {
+      process.env.ORG_MIGRATION_ROTATION_STALL_MS = String(MINUTE);
+      const { service, world } = watching(4, 2 * MINUTE);
+      world.rotationStatus = rotation('completed', { waiting: 4, updated: 6 });
+
+      await service.advanceRotation(MIGRATION_ID);
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(world.row.error).toBe('ROTATION_STALLED');
+      expect(world.row.rotation).toMatchObject({ stalledSince: expect.any(String) });
+      expect(world.events.filter((e) => 'ROTATION_STALLED' === e.action)).toHaveLength(1);
+    });
+
+    it('is not flagged while the number is still dropping, and the mark is cleared', async () => {
+      process.env.ORG_MIGRATION_ROTATION_STALL_MS = String(MINUTE);
+      const { service, world } = watching(5, 10 * MINUTE, {
+        stalledSince: new Date(Date.now() - 9 * MINUTE).toISOString()
+      });
+      world.rotationStatus = rotation('completed', { waiting: 4, updated: 6 });
+
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(world.row.error).toBeNull();
+      expect(world.row.rotation).not.toHaveProperty('stalledSince');
+    });
+
+    it('is not flagged inside the stall time', async () => {
+      const { service, world } = watching(4, MINUTE);
+      world.rotationStatus = rotation('completed', { waiting: 4, updated: 6 });
+
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(world.row.error).toBeNull();
+    });
   });
 
   it('completes the migration once everyone has answered, been refused or gone stale', async () => {
@@ -608,9 +789,67 @@ describe('after the window: purge, rotate, complete', () => {
 
       await service.advanceRotation(MIGRATION_ID);
 
-      expect(world.row.error).toBe('PURGE_REFUSED');
+      expect(world.row.error).toBe('PURGE_REFUSED:RELAY_NOT_FORWARDING');
       expect(world.row.purgedAt).toBeNull();
       expect(agentClient.startRotation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['RELAY_DISABLED', 'PURGE_REFUSED:RELAY_DISABLED'],
+      ["Tenant 'tenant-1' still has open sessions; try again shortly", 'PURGE_REFUSED']
+    ])('keeps the agent reason %j without leaking a tenant id into the code', async (agentCode, expected) => {
+      const { service, world, agentClient } = rotating();
+      agentClient.purgeProfile.mockRejectedValue(new MigrationAgentError('CONFLICT', 409, agentCode));
+
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(world.row.error).toBe(expected);
+    });
+
+    describe('when the purge keeps failing', () => {
+      afterEach(() => {
+        delete process.env.ORG_MIGRATION_SWITCHOVER_RETRY_MS;
+        delete process.env.ORG_MIGRATION_PURGE_BACKOFF_MAX_MS;
+        delete process.env.ORG_MIGRATION_PURGE_ALERT_AFTER;
+      });
+
+      it('holds off the next try for twice as long each time, up to a ceiling', async () => {
+        process.env.ORG_MIGRATION_SWITCHOVER_RETRY_MS = '1000';
+        process.env.ORG_MIGRATION_PURGE_BACKOFF_MAX_MS = '5000';
+        const { service, migrationRepository, agentClient } = rotating();
+        agentClient.purgeProfile.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+        await times(5, () => service.advanceRotation(MIGRATION_ID));
+
+        expect(migrationRepository.holdLease.mock.calls.map(([, ms]) => ms)).toEqual([1000, 2000, 4000, 5000, 5000]);
+      });
+
+      it('records every failed attempt with its number', async () => {
+        const { service, world, agentClient } = rotating();
+        agentClient.purgeProfile.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+        await service.advanceRotation(MIGRATION_ID);
+        await service.advanceRotation(MIGRATION_ID);
+
+        expect(world.events.filter((e) => 'PURGE_ATTEMPT_FAILED' === e.action).map((e) => e.detail)).toEqual([
+          { attempt: 1, reason: 'PURGE_FAILED' },
+          { attempt: 2, reason: 'PURGE_FAILED' }
+        ]);
+      });
+
+      it('tells the people who would notice once, at the Nth failure, and not on every retry', async () => {
+        process.env.ORG_MIGRATION_PURGE_ALERT_AFTER = '3';
+        const { service, alertService, agentClient } = rotating();
+        agentClient.purgeProfile.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+        await times(6, () => service.advanceRotation(MIGRATION_ID));
+
+        expect(alertService.notify).toHaveBeenCalledTimes(1);
+        expect(alertService.notify).toHaveBeenCalledWith(
+          expect.objectContaining({ id: MIGRATION_ID }),
+          'PURGE_FAILING'
+        );
+      });
     });
 
     it('says the purge failed when the shared agent is down, and tries again next time', async () => {
@@ -681,7 +920,7 @@ describe('after the window: purge, rotate, complete', () => {
       await service.advanceRotation(MIGRATION_ID);
       await service.advanceRotation(MIGRATION_ID);
 
-      expect(actions(world)).toEqual(['SWITCHOVER_WAITING']);
+      expect(actions(world).filter((action) => 'SWITCHOVER_WAITING' === action)).toEqual(['SWITCHOVER_WAITING']);
     });
 
     it('does not complete when the migration changed under it', async () => {

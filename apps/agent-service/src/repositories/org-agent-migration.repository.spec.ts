@@ -36,6 +36,7 @@ const buildRepository = (overrides: { updateCount?: number } = {}) => {
       findMany: jest.fn().mockResolvedValue([])
     }
   };
+  (prisma as Record<string, unknown>).org_agent_migration_events = { count: jest.fn().mockResolvedValue(3) };
   const repository = new OrgAgentMigrationRepository(prisma as never, { error: jest.fn() } as never);
   return { repository, prisma, tx, migrationCreate, migrationUpdateMany, eventCreate, findFirst };
 };
@@ -192,6 +193,48 @@ describe('OrgAgentMigrationRepository', () => {
     });
   });
 
+  describe('update', () => {
+    it('writes by id alone when no status is given', async () => {
+      const { repository, prisma } = buildRepository();
+      (prisma.org_agent_migrations as unknown as Record<string, jest.Mock>).update = jest
+        .fn()
+        .mockResolvedValue({ id: ID });
+
+      await repository.update(ID, { error: null });
+
+      expect((prisma.org_agent_migrations as unknown as Record<string, jest.Mock>).update).toHaveBeenCalledWith({
+        where: { id: ID },
+        data: { error: null, lastChangedDateTime: expect.any(Date) }
+      });
+    });
+
+    it('writes only while the migration is in one of the given statuses, and refuses once it has moved on', async () => {
+      const { repository, migrationUpdateMany, prisma } = buildRepository();
+      (prisma.org_agent_migrations as unknown as Record<string, jest.Mock>).findUniqueOrThrow = jest
+        .fn()
+        .mockResolvedValue({ id: ID });
+
+      await repository.update(ID, { error: null }, [Status.CREATED, Status.SCHEDULED]);
+      expect(migrationUpdateMany).toHaveBeenCalledWith({
+        where: { id: ID, status: { in: [Status.CREATED, Status.SCHEDULED] } },
+        data: { error: null, lastChangedDateTime: expect.any(Date) }
+      });
+
+      migrationUpdateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(repository.update(ID, { error: null }, [Status.CREATED])).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('tryStartRehearsal', () => {
+    it('only starts on a migration that is not booked or moving', async () => {
+      const { repository, migrationUpdateMany } = buildRepository();
+
+      await repository.tryStartRehearsal(ID, new Date(0));
+
+      expect(migrationUpdateMany.mock.calls[0][0].where.status).toEqual({ in: [Status.CREATED, Status.REHEARSED] });
+    });
+  });
+
   describe('touchRehearsal', () => {
     it('freshens the start time of a rehearsal that is running, and of no other', async () => {
       const { repository, migrationUpdateMany } = buildRepository();
@@ -202,6 +245,18 @@ describe('OrgAgentMigrationRepository', () => {
         where: { id: ID, rehearsalStatus: 'RUNNING' },
         data: { rehearsalStartedAt: expect.any(Date) }
       });
+    });
+  });
+
+  describe('countEvents', () => {
+    it('counts the times an audit action was recorded for the migration', async () => {
+      const { repository, prisma } = buildRepository();
+
+      await expect(repository.countEvents(ID, 'PURGE_FAILED')).resolves.toBe(3);
+
+      expect(
+        (prisma as unknown as { org_agent_migration_events: { count: jest.Mock } }).org_agent_migration_events.count
+      ).toHaveBeenCalledWith({ where: { migrationId: ID, action: 'PURGE_FAILED' } });
     });
   });
 
