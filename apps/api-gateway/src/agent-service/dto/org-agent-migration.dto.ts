@@ -20,6 +20,8 @@ import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 const HTTPS_ONLY = {
   // eslint-disable-next-line camelcase
   require_protocol: true,
+  // eslint-disable-next-line camelcase
+  disallow_auth: true,
   protocols: ['https']
 };
 
