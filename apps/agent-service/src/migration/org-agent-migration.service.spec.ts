@@ -221,7 +221,7 @@ describe('OrgAgentMigrationService', () => {
           from: status,
           to: Status.FAILED,
           actor: null,
-          patch: { error: 'VERIFICATION_FAILED' }
+          patch: { error: 'VERIFICATION_FAILED', targetTokenEncrypted: null }
         });
       }
     );

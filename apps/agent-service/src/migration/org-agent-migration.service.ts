@@ -127,7 +127,8 @@ export class OrgAgentMigrationService {
 
   /**
    * Fails a scheduled or started migration that has not reached the switch: the org stays exactly as it was. `errorCode` is a
-   * stable, sanitised code (for example VERIFICATION_FAILED), never raw error text.
+   * stable, sanitised code (for example VERIFICATION_FAILED), never raw error text. The stored token for the
+   * dedicated agent is dropped: a finished migration has no use for a credential.
    */
   async abort(migrationId: string, errorCode: string, actor: string | null): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
@@ -142,7 +143,7 @@ export class OrgAgentMigrationService {
       from: migration.status as OrgAgentMigrationStatus,
       to: OrgAgentMigrationStatus.FAILED,
       actor,
-      patch: { error: errorCode }
+      patch: { error: errorCode, targetTokenEncrypted: null }
     });
   }
 }
