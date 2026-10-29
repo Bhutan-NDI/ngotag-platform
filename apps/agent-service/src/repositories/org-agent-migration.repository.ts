@@ -234,6 +234,11 @@ export class OrgAgentMigrationRepository {
     });
   }
 
+  /** How many times an audit action has been recorded for a migration. */
+  async countEvents(migrationId: string, action: string): Promise<number> {
+    return this.prisma.org_agent_migration_events.count({ where: { migrationId, action } });
+  }
+
   async isOrgOwner(orgId: string, userId: string): Promise<boolean> {
     const owner = await this.prisma.user_org_roles.findFirst({
       where: { orgId, userId, orgRole: { name: OrgRoles.OWNER } },
