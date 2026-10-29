@@ -272,6 +272,14 @@ export class OrgAgentMigrationRepository {
     return 1 === count;
   }
 
+  /** Keeps other ticks and replicas away from a migration for `leaseMs`, which is how a failing step backs off. */
+  async holdLease(id: string, leaseMs: number): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({
+      where: { id },
+      data: { leaseUntil: new Date(Date.now() + leaseMs) }
+    });
+  }
+
   /** Scheduled moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
   async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
     return this.prisma.org_agent_migrations.findMany({
