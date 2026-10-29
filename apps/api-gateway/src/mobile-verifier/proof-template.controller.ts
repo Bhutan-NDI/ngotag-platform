@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -21,6 +22,7 @@ import { ProofTemplateDto } from './dto/proof-template.dto';
 import { UpdateProofTemplateDto } from './dto/update-proof-template.dto';
 import { ProofTemplateQueryDto } from './dto/proof-template-query.dto';
 import { resolveNgotagOrgId } from './functions';
+import { MobileVerifierServiceClientGuard } from './mobile-verifier-service-client.guard';
 
 @ApiBearerAuth()
 @ApiTags('Proof Template')
@@ -77,6 +79,30 @@ export class ProofTemplateController {
     const loginOrgId = resolveNgotagOrgId(req.user as Record<string, unknown>, orgId);
     const data: IResponse = await this.proofTemplateService.getRoleProofTemplates(proofTemplateQueryDto, loginOrgId);
     return res.status(data.statusCode ?? HttpStatus.OK).json(data);
+  }
+
+  // Read-only lookup for the mobile-verifier core backend, authenticated as a Keycloak service
+  // client rather than a user, so there is no org membership to check -- the guard instead pins
+  // the caller to a single configured client id.
+  @UseGuards(AuthGuard('jwt'), MobileVerifierServiceClientGuard)
+  @Get('service')
+  @ApiOperation({ summary: 'Lists proof templates of any organization for the mobile-verifier backend service client' })
+  @ApiQuery({ name: 'orgId', required: true })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'pageSize', required: false })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'templateId', required: false })
+  @ApiQuery({ name: 'id', required: false })
+  async getProofTemplatesAsService(
+    @Query() data: { id?: string; templateId?: string; search?: string; page?: number; pageSize?: number },
+    @Query('orgId') orgId: string,
+    @Res() res: Response
+  ): Promise<Response> {
+    if (!orgId) {
+      throw new BadRequestException('orgId is required');
+    }
+    const result = await this.proofTemplateService.getProofTemplates(data, orgId);
+    return res.status(result.statusCode ?? HttpStatus.OK).json(result);
   }
 
   @UseGuards(AuthGuard('jwt'))
