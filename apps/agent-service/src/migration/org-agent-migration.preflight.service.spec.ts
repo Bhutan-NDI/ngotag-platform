@@ -1,5 +1,5 @@
 /* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type, prefer-destructuring */
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import * as jwt from 'jsonwebtoken';
 import { MigrationAgentError } from './migration-agent.client';
 import { PreflightCheckId as Check } from './org-agent-migration.interface';
@@ -535,6 +535,21 @@ describe('OrgAgentMigrationPreflightService', () => {
     await scheduler.tick();
 
     expect(executor.run).toHaveBeenCalledWith(MIGRATION_ID, 'owner-1');
+  });
+
+  it('writes its result only while the move is still open, so a cancel that overlapped it keeps the token off the row', async () => {
+    const { service, migrationRepository } = build();
+
+    await service.run(MIGRATION_ID, input);
+
+    expect(migrationRepository.update.mock.calls[0][2]).toEqual(['CREATED', 'REHEARSED', 'SCHEDULED']);
+  });
+
+  it('gives up when the move was finished while the checks ran', async () => {
+    const { service, migrationRepository } = build();
+    migrationRepository.update.mockRejectedValue(new ConflictException('state changed'));
+
+    await expect(service.run(MIGRATION_ID, input)).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('runs again on a rehearsed migration', async () => {

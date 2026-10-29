@@ -95,6 +95,8 @@ export interface IRotationProgress {
   job: { status: string; startedAt?: string; completedAt?: string };
   counts: Record<string, number>;
   polledAt: string;
+  // Since when the number of connections still waiting for an answer has not changed.
+  stalledSince?: string;
 }
 
 // What an owner or platform admin may read. Everything else on the row (the shared agent's snapshot, tenant and job
