@@ -1,6 +1,8 @@
 import type { PrismaClient } from '@prisma/client';
 import { ORG_AGENT_MIGRATION_POST_CUTOVER_STATUSES } from '@credebl/enum/enum';
 
+// Credo-based holders only check the first invitation DID against their existing connections, so the legacy DID listed
+// second does not let them reuse a connection made before the move: they make one new connection, then reuse that.
 export interface ReuseInvitationDids {
   invitationDid?: string;
   // Only set for an org that has moved to a dedicated agent: the invitation DID it used before the move, listed
@@ -32,10 +34,18 @@ export async function findReuseInvitationDids(
   });
 
   if (migration?.newInvitationDid) {
-    return {
-      invitationDid: migration.newInvitationDid,
-      additionalInvitationDids: migration.legacyInvitationDid ? [migration.legacyInvitationDid] : undefined
-    };
+    // The migration row outlives the wallet: one that was deleted and re-created since the move took its invitations
+    // with it, and the new agent would refuse both DIDs.
+    const current = await prisma.agent_invitations.findFirst({
+      where: { orgId, invitationDid: migration.newInvitationDid },
+      select: { id: true }
+    });
+    if (current) {
+      return {
+        invitationDid: migration.newInvitationDid,
+        additionalInvitationDids: migration.legacyInvitationDid ? [migration.legacyInvitationDid] : undefined
+      };
+    }
   }
 
   const oldest = await prisma.agent_invitations.findFirst({

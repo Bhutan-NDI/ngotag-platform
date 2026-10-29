@@ -8,9 +8,18 @@ import { additionalInvitationDidsField, findReuseInvitationDids } from './invita
 
 const ORG_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 
-const build = (options: { migration?: object | null; oldest?: object | null } = {}) => {
+const build = (options: { migration?: object | null; oldest?: object | null; current?: object | null } = {}) => {
   const migrationFindFirst = jest.fn().mockResolvedValue(options.migration ?? null);
-  const invitationFindFirst = jest.fn().mockResolvedValue(options.oldest ?? null);
+  // One lookup checks the migration's invitation still belongs to this org's wallet, the other finds the oldest.
+  const invitationFindFirst = jest
+    .fn()
+    .mockImplementation(async ({ where }: { where: { invitationDid?: unknown } }) =>
+      'string' === typeof where.invitationDid
+        ? 'current' in options
+          ? options.current
+          : { id: 'inv-1' }
+        : (options.oldest ?? null)
+    );
   const prisma = {
     org_agent_migrations: { findFirst: migrationFindFirst },
     agent_invitations: { findFirst: invitationFindFirst }
@@ -28,7 +37,24 @@ describe('findReuseInvitationDids', () => {
       invitationDid: 'did:peer:new',
       additionalInvitationDids: ['did:peer:old']
     });
-    expect(invitationFindFirst).not.toHaveBeenCalled();
+    expect(invitationFindFirst).toHaveBeenCalledTimes(1);
+    expect(invitationFindFirst).toHaveBeenCalledWith({
+      where: { orgId: ORG_ID, invitationDid: 'did:peer:new' },
+      select: { id: true }
+    });
+  });
+
+  it('falls back to the oldest invitation when the wallet was deleted and re-created since the move', async () => {
+    const { prisma } = build({
+      migration: { newInvitationDid: 'did:peer:gone', legacyInvitationDid: 'did:peer:old' },
+      current: null,
+      oldest: { invitationDid: 'did:peer:fresh' }
+    });
+
+    const result = await findReuseInvitationDids(prisma, ORG_ID);
+
+    expect(result).toEqual({ invitationDid: 'did:peer:fresh' });
+    expect(result).not.toHaveProperty('additionalInvitationDids');
   });
 
   it('omits the second DID when the migration recorded no legacy one', async () => {
