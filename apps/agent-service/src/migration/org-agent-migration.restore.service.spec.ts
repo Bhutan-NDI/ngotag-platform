@@ -83,6 +83,12 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
   };
   const access = { shared: jest.fn(async () => SHARED) };
   const agentClient = {
+    getRelay: jest.fn(async () => {
+      if ('none' === world.relay) {
+        throw new MigrationAgentError('NOT_FOUND', 404);
+      }
+      return { mode: world.relay };
+    }),
     restoreRelay: jest.fn(async () => {
       world.order.push('relay');
       if ('none' === world.relay) {
@@ -313,6 +319,36 @@ describe('OrgAgentMigrationRestoreService', () => {
 
       expect(world.migrationRepository.releaseLease).toHaveBeenCalledTimes(1);
       expect(world.world.orgAgent.orgAgentTypeId).toBe('dedicated-type');
+    });
+
+    it('answers busy for a buffer that was not empty when the drain finished, since a retry completes the restore', async () => {
+      const world = buildWorld();
+      world.agentClient.restoreRelay.mockRejectedValue(
+        new MigrationAgentError('CONFLICT', 409, 'RELAY_BUFFER_NOT_EMPTY')
+      );
+
+      await expect(world.service.restore(ORG_ID, ADMIN_ID)).rejects.toBeInstanceOf(ConflictException);
+
+      expect(world.migrationRepository.releaseLease).toHaveBeenCalledTimes(1);
+      expect(world.migrationRepository.restoreOrgAgent).not.toHaveBeenCalled();
+    });
+
+    it('does not take a 404 from the restore route as proof the relay is off while the relay still forwards', async () => {
+      const world = buildWorld();
+      world.agentClient.restoreRelay.mockRejectedValue(new MigrationAgentError('NOT_FOUND', 404));
+
+      await expect(world.service.restore(ORG_ID, ADMIN_ID)).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+      expect(world.agentClient.getRelay).toHaveBeenCalled();
+      expect(world.migrationRepository.restoreOrgAgent).not.toHaveBeenCalled();
+    });
+
+    it('holds the lease for longer than the restore call it guards', async () => {
+      const world = buildWorld();
+
+      await world.service.restore(ORG_ID, ADMIN_ID);
+
+      expect(world.migrationRepository.tryAcquireLease.mock.calls[0][1]).toBeGreaterThan(10 * 60 * 1000);
     });
 
     it('refuses without changing the org when the shared copy is already purged', async () => {

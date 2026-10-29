@@ -1,5 +1,5 @@
 /* eslint-disable camelcase */
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { org_agent_migrations } from '@prisma/client';
@@ -170,7 +170,16 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
     errorCode: string,
     detail: Record<string, string>
   ): Promise<void> {
-    await this.migrationService.abort(migration.id, errorCode, null);
+    try {
+      // Only the slot this tick read: an owner who moved it meanwhile keeps the move.
+      await this.migrationService.abort(migration.id, errorCode, null, migration.scheduledFor);
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        this.logger.warn(`[migration-scheduler] ${migration.id}: the slot was changed meanwhile; left as it is`);
+        return;
+      }
+      throw error;
+    }
     await this.migrationRepository.recordEvent(migration.id, { action: 'MOVE_CANCELLED', actor: null, detail });
   }
 
