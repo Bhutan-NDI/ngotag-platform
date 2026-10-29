@@ -65,8 +65,8 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
   describe('the age of the rehearsal', () => {
     it.each([
       ['a day old', DAY, true],
-      ['six days old', 6 * DAY, true],
-      ['eight days old', 8 * DAY, false]
+      ['thirteen days old', 13 * DAY, true],
+      ['fifteen days old', 15 * DAY, false]
     ])('is %s: allowed is %s', async (_name, age, allowed) => {
       const { service, migrationService } = build({
         migration: row({ rehearsal: { finishedAt: new Date(Date.now() - age).toISOString() } })
@@ -89,20 +89,32 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
       await expect(schedule(service)).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('refuses a slot the rehearsal will be too old for, even though the rehearsal is fresh now', async () => {
-      const { service, migrationService } = build();
+    it('lets a fresh rehearsal book any day of the 14-day picker', async () => {
+      const { service } = build();
 
       await expect(
-        schedule(service, { scheduledFor: new Date(Date.now() + 8 * DAY).toISOString() })
+        schedule(service, { scheduledFor: new Date(Date.now() + 10 * DAY).toISOString() })
+      ).resolves.toBeDefined();
+    });
+
+    it('refuses a slot the rehearsal will be too old for, even though it is not too old now', async () => {
+      const { service, migrationService } = build({
+        migration: row({ rehearsal: { finishedAt: new Date(Date.now() - 10 * DAY).toISOString() } })
+      });
+
+      await expect(
+        schedule(service, { scheduledFor: new Date(Date.now() + 5 * DAY).toISOString() })
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(migrationService.advance).not.toHaveBeenCalled();
     });
 
     it('accepts a slot still inside the rehearsal limit', async () => {
-      const { service } = build();
+      const { service } = build({
+        migration: row({ rehearsal: { finishedAt: new Date(Date.now() - 10 * DAY).toISOString() } })
+      });
 
       await expect(
-        schedule(service, { scheduledFor: new Date(Date.now() + 5 * DAY).toISOString() })
+        schedule(service, { scheduledFor: new Date(Date.now() + 3 * DAY).toISOString() })
       ).resolves.toBeDefined();
     });
 
@@ -196,8 +208,7 @@ describe('OrgAgentMigrationScheduleService.schedule', () => {
     });
 
     it('accepts the far edge of the window', async () => {
-      process.env.ORG_MIGRATION_REHEARSAL_MAX_AGE_DAYS = '30';
-      const { service } = build();
+      const { service } = build({ migration: row({ rehearsal: { finishedAt: new Date().toISOString() } }) });
 
       await expect(schedule(service, { scheduledFor: new Date(Date.now() + 14 * DAY - 1000) })).resolves.toBeDefined();
     });

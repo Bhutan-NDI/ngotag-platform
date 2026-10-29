@@ -277,7 +277,7 @@ describe('OrgAgentMigrationScheduler: a slot the owner changed, and a stale rehe
 
   it('does not start a move on a rehearsal that has gone stale, and takes it off its slot', async () => {
     const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
-    const old = new Date(Date.now() - 8 * 24 * 60 * MINUTE).toISOString();
+    const old = new Date(Date.now() - 15 * 24 * 60 * MINUTE).toISOString();
     migrationRepository.findDueForStart.mockResolvedValue([due('m1', { rehearsal: { finishedAt: old } })]);
 
     await scheduler.tick();
