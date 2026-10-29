@@ -145,12 +145,31 @@ export class OrgAgentMigrationRepository {
     }
   }
 
-  /** Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). */
-  async update(id: string, patch: OrgAgentMigrationPatch): Promise<MigrationRow> {
-    return this.prisma.org_agent_migrations.update({
-      where: { id },
+  /**
+   * Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). With
+   * `onlyWhileIn`, it writes only while the migration is still in one of those statuses, so a step that overlapped a
+   * cancel or an abort cannot write onto the finished row.
+   * @throws ConflictException when `onlyWhileIn` is given and the migration has moved on
+   */
+  async update(
+    id: string,
+    patch: OrgAgentMigrationPatch,
+    onlyWhileIn?: OrgAgentMigrationStatus[]
+  ): Promise<MigrationRow> {
+    if (!onlyWhileIn) {
+      return this.prisma.org_agent_migrations.update({
+        where: { id },
+        data: { ...patch, lastChangedDateTime: new Date() }
+      });
+    }
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, status: { in: onlyWhileIn } },
       data: { ...patch, lastChangedDateTime: new Date() }
     });
+    if (1 !== count) {
+      throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
+    }
+    return this.prisma.org_agent_migrations.findUniqueOrThrow({ where: { id } });
   }
 
   /**
@@ -162,6 +181,8 @@ export class OrgAgentMigrationRepository {
     const { count } = await this.prisma.org_agent_migrations.updateMany({
       where: {
         id,
+        // A rehearsal started alongside a booking would leave a SCHEDULED row whose rehearsal is not DONE.
+        status: { in: [OrgAgentMigrationStatus.CREATED, OrgAgentMigrationStatus.REHEARSED] },
         OR: [
           { rehearsalStatus: null },
           { rehearsalStatus: { not: REHEARSAL_RUNNING } },
