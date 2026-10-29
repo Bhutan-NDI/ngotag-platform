@@ -659,6 +659,11 @@ describe('move day: aborting before the switch', () => {
       (w) => w.agentClient.probeRelayTarget.mockResolvedValue({ reachable: false, reason: 'TLS' })
     ],
     [
+      'the DIDComm address answers 503, so nothing healthy is behind it',
+      'VERIFICATION_FAILED:RELAY_PROBE',
+      (w) => w.agentClient.probeRelayTarget.mockResolvedValue({ reachable: true, status: 503 })
+    ],
+    [
       'the org row changed since the move was prepared',
       'CUTOVER_FAILED',
       (w) => w.migrationRepository.cutover.mockRejectedValue(new ConflictException('agent row changed'))
@@ -728,7 +733,7 @@ describe('move day: aborting before the switch', () => {
 
   it('exports nothing and imports nothing when the freeze budget has already run out', async () => {
     process.env.ORG_MIGRATION_DRAIN_MS = '30';
-    const world = buildWorld({ predictedFreezeMs: 5 });
+    const world = buildWorld({ predictedFreezeMs: 0 });
 
     await world.executor.run(MIGRATION_ID, USER_ID);
 
@@ -963,6 +968,33 @@ describe('move day: after the switch', () => {
     expect(world.world.row.status).toBe(Status.CUTOVER);
     expect(world.world.orgAgent.orgAgentTypeId).toBe('dedicated-type');
     expect(world.world.events.map((event) => event.action)).toContain('COMPLETION_STEP_FAILED');
+  });
+
+  it('keeps holding the messages, and does not forward, while the DIDComm address answers 5xx', async () => {
+    const world = buildWorld();
+    // Healthy while the move is checked, unhealthy once it comes to forwarding.
+    world.agentClient.probeRelayTarget
+      .mockResolvedValueOnce({ reachable: true, status: 404 })
+      .mockResolvedValue({ reachable: true, status: 502 });
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.calls).not.toContain('putRelay:FORWARD');
+    expect(world.world.row.status).toBe(Status.CUTOVER);
+    expect(world.world.events.map((event) => event.action)).toContain('COMPLETION_STEP_FAILED');
+    expect(world.migrationService.abort).not.toHaveBeenCalled();
+  });
+
+  it('forwards once the DIDComm address is healthy again', async () => {
+    const world = buildWorld();
+    world.agentClient.probeRelayTarget
+      .mockResolvedValueOnce({ reachable: true, status: 404 })
+      .mockResolvedValueOnce({ reachable: true, status: 503 })
+      .mockResolvedValue({ reachable: true, status: 404 });
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.calls).toContain('putRelay:FORWARD');
   });
 
   it('retries a failing step a few times before giving up', async () => {
