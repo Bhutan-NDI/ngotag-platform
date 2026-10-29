@@ -333,7 +333,7 @@ export class OrgAgentMigrationRehearsalService {
       await this.agentClient.deleteExport(shared.endpoint, shared.token, tenantId, jobId);
       return 'DELETED';
     } catch (error) {
-      // The agent keeps job records for a day only: a job it no longer knows is already gone.
+      // The agent keeps job records for a day only; the artifact itself then relies on the bucket's lifecycle rule.
       if (error instanceof MigrationAgentError && 'NOT_FOUND' === error.kind) {
         return 'DELETED';
       }
