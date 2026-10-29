@@ -120,16 +120,21 @@ export class OrgAgentMigrationPreflightService {
     ]);
 
     const report = this.buildReport(checks);
-    const updated = await this.migrationRepository.update(migration.id, {
-      preflight: report as never,
-      backupsConfirmedAt,
-      ...(freshToken && 'PASS' === checks.get(PreflightCheckId.TOKEN_IS_ROOT)?.status
-        ? { targetTokenEncrypted: this.access.encryptToken(freshToken) }
-        : {}),
-      ...(dedicatedInfo
-        ? { releaseVersion: dedicatedInfo.releaseVersion, storageVersion: dedicatedInfo.storageVersion }
-        : {})
-    });
+    // Only while the move is still open: a cancel or an abort that overlapped this run must not get the token back.
+    const updated = await this.migrationRepository.update(
+      migration.id,
+      {
+        preflight: report as never,
+        backupsConfirmedAt,
+        ...(freshToken && 'PASS' === checks.get(PreflightCheckId.TOKEN_IS_ROOT)?.status
+          ? { targetTokenEncrypted: this.access.encryptToken(freshToken) }
+          : {}),
+        ...(dedicatedInfo
+          ? { releaseVersion: dedicatedInfo.releaseVersion, storageVersion: dedicatedInfo.storageVersion }
+          : {})
+      },
+      [OrgAgentMigrationStatus.CREATED, OrgAgentMigrationStatus.REHEARSED, OrgAgentMigrationStatus.SCHEDULED]
+    );
     await this.auditRun(migration.id, actor, report);
     return { migration: updated, report };
   }
