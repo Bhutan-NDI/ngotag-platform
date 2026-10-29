@@ -128,6 +128,14 @@ describe('wallet move routes', () => {
     it.each([
       ['an http admin address', { targetAdminEndpoint: 'http://admin.agent.example.org' }],
       ['an http DIDComm address', { targetDidcommEndpoint: 'http://didcomm.agent.example.org' }],
+      [
+        'an admin address that carries credentials',
+        { targetAdminEndpoint: 'https://user:pass@admin.agent.example.org' }
+      ],
+      [
+        'a DIDComm address that carries credentials',
+        { targetDidcommEndpoint: 'https://user:pass@didcomm.agent.example.org' }
+      ],
       ['a missing admin address', { targetAdminEndpoint: undefined }],
       ['a missing API key', { apiKey: undefined }],
       ['an empty API key', { apiKey: '' }],
