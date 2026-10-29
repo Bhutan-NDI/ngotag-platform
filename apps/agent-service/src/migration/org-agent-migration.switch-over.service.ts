@@ -4,10 +4,14 @@ import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { org_agent_migrations } from '@prisma/client';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
+import { envMs } from './migration-job-poller';
 import { IRotationStatus, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
+import { MigrationNoticeKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
 import { IRotationProgress } from './org-agent-migration.interface';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 import { OrgAgentMigrationWebhookService } from './org-agent-migration.webhook.service';
+
+const MINUTE_MS = 60 * 1000;
 
 export type SwitchOverOutcome = 'STARTED' | 'DEFERRED' | 'SKIPPED';
 
@@ -41,6 +45,7 @@ export class OrgAgentMigrationSwitchOverService {
     private readonly migrationService: OrgAgentMigrationService,
     private readonly access: MigrationAgentAccess,
     private readonly agentClient: MigrationAgentClient,
+    private readonly alertService: OrgAgentMigrationAlertService,
     private readonly webhookService: OrgAgentMigrationWebhookService,
     private readonly logger: Logger
   ) {}
@@ -202,10 +207,37 @@ export class OrgAgentMigrationSwitchOverService {
       await this.audit(migration.id, 'PROFILE_PURGED', { profileRemoved });
       return purged;
     } catch (error) {
-      // The agent refuses a purge while the relay is not forwarding; that is a different problem from it being down.
+      // The agent refuses a purge while the relay is not forwarding; that is a different problem from it being down. Its
+      // own reason is kept, except for the open-sessions message, which names the tenant.
       const refused = error instanceof MigrationAgentError && 'CONFLICT' === error.kind;
-      await this.noteIssue(migration, refused ? 'PURGE_REFUSED' : 'PURGE_FAILED');
+      const reason = refused ? (error as MigrationAgentError).agentCode : undefined;
+      const code = !refused
+        ? 'PURGE_FAILED'
+        : ['RELAY_NOT_FORWARDING', 'RELAY_DISABLED'].includes(reason ?? '')
+          ? `PURGE_REFUSED:${reason}`
+          : 'PURGE_REFUSED';
+      await this.noteIssue(migration, code);
+      await this.backOffPurge(migration, code);
       return migration;
+    }
+  }
+
+  // A purge that keeps failing is retried more and more slowly (each failure leaves a session slot behind on the shared
+  // agent when its profile removal throws), and the people who would notice are told once.
+  private async backOffPurge(migration: org_agent_migrations, code: string): Promise<void> {
+    try {
+      const attempt = (await this.migrationRepository.countEvents(migration.id, 'PURGE_ATTEMPT_FAILED')) + 1;
+      await this.audit(migration.id, 'PURGE_ATTEMPT_FAILED', { attempt, reason: code });
+      const base = envMs('ORG_MIGRATION_SWITCHOVER_RETRY_MS', 2 * MINUTE_MS);
+      const growth = 2 ** Math.min(attempt - 1, 20);
+      const delay = Math.min(base * growth, envMs('ORG_MIGRATION_PURGE_BACKOFF_MAX_MS', 60 * MINUTE_MS));
+      await this.migrationRepository.holdLease(migration.id, delay);
+      if (attempt === envMs('ORG_MIGRATION_PURGE_ALERT_AFTER', 5)) {
+        await this.alertService.notify(migration, MigrationNoticeKind.PURGE_FAILING);
+        await this.audit(migration.id, 'PURGE_FAILING_ALERTED', { attempts: attempt });
+      }
+    } catch (error) {
+      this.logger.error(`[switch-over] ${migration.id}: could not back off the purge: ${this.describe(error)}`);
     }
   }
 
@@ -250,8 +282,25 @@ export class OrgAgentMigrationSwitchOverService {
     }
 
     const progress = toProgress(status);
+    // Connections waiting for an answer that does not come for days (a rotation cut off by a redeploy, a holder that never
+    // opens its wallet) hold the move in ROTATING, so it is flagged once the number has not moved for a while.
+    const previous = migration.rotation as unknown as IRotationProgress | null;
+    const waiting = status.counts.waiting ?? 0;
+    if (previous && 0 < waiting && (previous.counts?.waiting ?? 0) === waiting) {
+      progress.stalledSince = previous.stalledSince ?? previous.polledAt;
+    }
+    const stalled =
+      undefined !== progress.stalledSince &&
+      Date.now() - new Date(progress.stalledSince).getTime() >
+        envMs('ORG_MIGRATION_ROTATION_STALL_MS', 3 * 24 * 60 * MINUTE_MS);
     if (!rotationSettled(status)) {
-      await this.migrationRepository.update(migration.id, { rotation: progress as never, error: null });
+      await this.migrationRepository.update(migration.id, {
+        rotation: progress as never,
+        error: stalled ? 'ROTATION_STALLED' : null
+      });
+      if (stalled && 'ROTATION_STALLED' !== migration.error) {
+        await this.audit(migration.id, 'ROTATION_STALLED', { waiting });
+      }
       return;
     }
 
