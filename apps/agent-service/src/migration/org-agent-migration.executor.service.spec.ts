@@ -948,6 +948,27 @@ describe('move day: how the agent gets the export', () => {
     expect(budget).toBeLessThanOrEqual(15 * MINUTE);
   });
 
+  it('records a push cut off by the freeze budget as FREEZE_BUDGET_EXCEEDED, not as the agent being unreachable', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH', predictedFreezeMs: 5000 });
+    agentClient.pushImport.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5100));
+      throw new MigrationAgentError('UNREACHABLE');
+    });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row).toMatchObject({ status: Status.FAILED, error: 'FREEZE_BUDGET_EXCEEDED' });
+  }, 20000);
+
+  it('still records a failed push inside the budget as the agent being unreachable', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH', predictedFreezeMs: 15 * MINUTE });
+    agentClient.pushImport.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row).toMatchObject({ status: Status.FAILED, error: 'AGENT_UNREACHABLE' });
+  });
+
   it('aborts losslessly with DOWNLOAD_FAILED when the platform cannot fetch the export', async () => {
     const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH' });
     agentClient.pushImport.mockRejectedValue(new MigrationAgentError('FAILED', undefined, 'DOWNLOAD_FAILED'));

@@ -287,8 +287,10 @@ export class OrgAgentMigrationPreflightService {
       record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: 'PUSH', reason }));
       return 'PUSH';
     } catch {
-      // Not answering is another check's finding; the method stays what it was.
-      return undefined;
+      // The probe not answering (an agent without it, a timeout, a 5xx) is not a failed check, but it is not a skipped one
+      // either: the method is the rehearsed one, or PULL as before push mode existed, and the report says why.
+      record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: rehearsed ?? 'PULL', reason: 'PROBE_UNAVAILABLE' }));
+      return rehearsed ?? undefined;
     }
   }
 

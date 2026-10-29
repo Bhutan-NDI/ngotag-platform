@@ -193,9 +193,32 @@ describe('OrgAgentMigrationPreflightService', () => {
 
       const { report } = await service.run(MIGRATION_ID, input);
 
-      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({ status: 'SKIPPED' });
+      expect(report.passed).toBe(true);
+      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+        status: 'PASS',
+        detail: { method: 'PULL', reason: 'PROBE_UNAVAILABLE' }
+      });
       expect(migrationRepository.update.mock.calls[0][1]).not.toHaveProperty('downloadMethod');
     });
+
+    it.each(['PULL', 'PUSH'] as const)(
+      'keeps the rehearsed %s when the final check cannot ask the agent, and still passes',
+      async (method) => {
+        const { service, migrationRepository, agentClient } = build({
+          migration: migrationRow({ downloadMethod: method, rehearsal: { downloadMethod: method } })
+        });
+        agentClient.getExportBucket.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+        const { report } = await service.run(MIGRATION_ID, { ...input, keepDownloadMethod: true });
+
+        expect(report.passed).toBe(true);
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+          status: 'PASS',
+          detail: { method, reason: 'PROBE_UNAVAILABLE' }
+        });
+        expect(migrationRepository.update.mock.calls[0][1].downloadMethod).toBe(method);
+      }
+    );
 
     it('is skipped when the agent could not be reached at all', async () => {
       const { service, agentClient } = build();
