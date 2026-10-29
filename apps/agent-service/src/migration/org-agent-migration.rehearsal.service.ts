@@ -84,7 +84,8 @@ export class OrgAgentMigrationRehearsalService {
       throw new BadRequestException(ResponseMessages.agent.error.migrationPreflightNotPassed);
     }
 
-    const staleBefore = new Date(Date.now() - envMs('ORG_MIGRATION_REHEARSAL_MAX_MS', 3 * 60 * MINUTE_MS));
+    // A live rehearsal keeps its start time fresh (see startHeartbeat), so a short window frees the lock after a restart.
+    const staleBefore = new Date(Date.now() - envMs('ORG_MIGRATION_REHEARSAL_STALE_MS', 3 * MINUTE_MS));
     if (!(await this.migrationRepository.tryStartRehearsal(migration.id, staleBefore))) {
       throw new ConflictException(ResponseMessages.agent.error.migrationRehearsalRunning);
     }
@@ -114,7 +115,27 @@ export class OrgAgentMigrationRehearsalService {
     return this.migrationRepository.getById(migration.id) as Promise<org_agent_migrations>;
   }
 
+  private startHeartbeat(migrationId: string): () => void {
+    const timer = setInterval(
+      () => {
+        this.migrationRepository.touchRehearsal(migrationId).catch(() => undefined);
+      },
+      envMs('ORG_MIGRATION_REHEARSAL_HEARTBEAT_MS', 30 * 1000)
+    );
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+
   private async execute(migration: org_agent_migrations, actor: string): Promise<void> {
+    const stopHeartbeat = this.startHeartbeat(migration.id);
+    try {
+      await this.runRehearsal(migration, actor);
+    } finally {
+      stopHeartbeat();
+    }
+  }
+
+  private async runRehearsal(migration: org_agent_migrations, actor: string): Promise<void> {
     let shared: IAgentAccess | undefined;
     let dedicated: IAgentAccess | undefined;
     try {
