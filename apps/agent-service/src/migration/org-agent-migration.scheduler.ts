@@ -118,7 +118,8 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
       return;
     }
     // The freeze budget comes from the rehearsal, so a move on a rehearsal that has gone stale is not started either.
-    if (isRehearsalStale(migration)) {
+    // Measured at the slot, as booking does, so a tick delay or a retry inside the window does not turn it stale.
+    if (isRehearsalStale(migration, migration.scheduledFor?.getTime())) {
       await this.unschedule(migration, 'REHEARSAL_STALE', { reason: 'REHEARSAL_STALE' });
       return;
     }
