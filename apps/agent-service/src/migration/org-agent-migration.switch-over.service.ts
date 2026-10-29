@@ -66,19 +66,35 @@ export class OrgAgentMigrationSwitchOverService {
       return 'SKIPPED';
     }
 
+    // A webhook that stays broken holds the switch-over for a limited time only (ADR-WM-011): the shared copy and the
+    // org's keys in two places must not last for ever. Nothing else is capped, since purging with no working wallet on
+    // the new agent would leave the org with none.
     const blocker = await this.blocker(migration);
+    let unconfirmed: string | undefined;
     if (blocker) {
-      await this.noteIssue(migration, `SWITCHOVER_DEFERRED:${blocker}`);
-      return 'DEFERRED';
+      if (!blocker.startsWith('WEBHOOK_') || !this.webhookCapReached(migration)) {
+        await this.noteIssue(migration, `SWITCHOVER_DEFERRED:${blocker}`);
+        if (blocker.startsWith('WEBHOOK_')) {
+          await this.tellOnce(migration, 'WEBHOOK_DEFER_ALERTED', MigrationNoticeKind.WEBHOOK_DEFERRED);
+        }
+        return 'DEFERRED';
+      }
+      unconfirmed = blocker;
     }
 
     try {
-      await this.migrationService.advance(migrationId, OrgAgentMigrationStatus.ROTATING, null, { error: null });
+      await this.migrationService.advance(migrationId, OrgAgentMigrationStatus.ROTATING, null, {
+        error: unconfirmed ?? null
+      });
     } catch (error) {
       this.logger.warn(`[switch-over] ${migrationId}: not started, ${this.describe(error)}`);
       return 'SKIPPED';
     }
     await this.audit(migrationId, 'SWITCHOVER_STARTED', {});
+    if (unconfirmed) {
+      await this.audit(migrationId, 'SWITCHOVER_WEBHOOK_UNCONFIRMED', { reason: unconfirmed });
+      await this.tellOnce(migration, 'WEBHOOK_PROCEEDED_ALERTED', MigrationNoticeKind.WEBHOOK_GOING_AHEAD);
+    }
     return 'STARTED';
   }
 
@@ -116,6 +132,29 @@ export class OrgAgentMigrationSwitchOverService {
       }
     }
     await this.watchRotation(migration, dedicated);
+  }
+
+  private webhookCapReached(migration: org_agent_migrations): boolean {
+    const cap = envMs('ORG_MIGRATION_WEBHOOK_DEFER_CAP_MS', 24 * 60 * MINUTE_MS);
+    return Date.now() >= (migration.stabilisationEndsAt?.getTime() ?? Date.now()) + cap;
+  }
+
+  // The people who would notice are told about each of these once, not on every retry.
+  private async tellOnce(migration: org_agent_migrations, action: string, kind: MigrationNoticeKind): Promise<void> {
+    try {
+      if (0 < (await this.migrationRepository.countEvents(migration.id, action))) {
+        return;
+      }
+      await this.alertService.notify(migration, kind);
+      await this.audit(migration.id, action, {});
+    } catch (error) {
+      this.logger.error(`[switch-over] ${migration.id}: could not send ${action}: ${this.describe(error)}`);
+    }
+  }
+
+  // A webhook problem the switch-over went ahead with stays on the migration, whatever else is cleared as it goes on.
+  private keptError(migration: org_agent_migrations): string | null {
+    return migration.error?.startsWith('WEBHOOK_') ? migration.error : null;
   }
 
   // Every condition that must hold before the shared copy is deleted. Returns the first that does not, or nothing.
@@ -167,6 +206,11 @@ export class OrgAgentMigrationSwitchOverService {
     if (!migration || OrgAgentMigrationStatus.STABILISING !== migration.status || migration.webhookConfirmedAt) {
       return;
     }
+    // A move preflighted before the webhook check existed is not held to it at the end of the window, so it is not told
+    // it has a webhook problem during it either.
+    if (!this.preflightIncludedWebhookCheck(migration)) {
+      return;
+    }
     const dedicated = await this.dedicatedOf(migration);
     if (!dedicated) {
       return;
@@ -203,7 +247,10 @@ export class OrgAgentMigrationSwitchOverService {
   private async purge(migration: org_agent_migrations, shared: IAgentAccess): Promise<org_agent_migrations> {
     try {
       const { profileRemoved } = await this.agentClient.purgeProfile(shared.endpoint, shared.token, migration.tenantId);
-      const purged = await this.migrationRepository.update(migration.id, { purgedAt: new Date(), error: null });
+      const purged = await this.migrationRepository.update(migration.id, {
+        purgedAt: new Date(),
+        error: this.keptError(migration)
+      });
       await this.audit(migration.id, 'PROFILE_PURGED', { profileRemoved });
       return purged;
     } catch (error) {
@@ -248,7 +295,7 @@ export class OrgAgentMigrationSwitchOverService {
         // The agent keeps one rotation job; when it started names it.
         rotationJobId: `rotate-all:${status.job.startedAt ?? new Date().toISOString()}`,
         rotation: toProgress(status) as never,
-        error: null
+        error: this.keptError(migration)
       });
       await this.audit(migration.id, 'ROTATION_STARTED', { connections: status.counts.total });
       return started;
@@ -296,7 +343,7 @@ export class OrgAgentMigrationSwitchOverService {
     if (!rotationSettled(status)) {
       await this.migrationRepository.update(migration.id, {
         rotation: progress as never,
-        error: stalled ? 'ROTATION_STALLED' : null
+        error: stalled ? 'ROTATION_STALLED' : this.keptError(migration)
       });
       if (stalled && 'ROTATION_STALLED' !== migration.error) {
         await this.audit(migration.id, 'ROTATION_STALLED', { waiting });
@@ -307,7 +354,7 @@ export class OrgAgentMigrationSwitchOverService {
     try {
       await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.COMPLETED, null, {
         rotation: progress as never,
-        error: null
+        error: this.keptError(migration)
       });
     } catch (error) {
       this.logger.warn(`[switch-over] ${migration.id}: not completed, ${this.describe(error)}`);

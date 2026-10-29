@@ -363,6 +363,100 @@ describe('the webhook gate', () => {
   });
 });
 
+describe('a webhook that stays broken', () => {
+  const HOUR = 60 * MINUTE;
+  const broken = { confirmed: false, code: 'WEBHOOK_UNREACHABLE' };
+  const endedAgo = (ms: number) => ({ stabilisationEndsAt: new Date(Date.now() - ms) });
+
+  afterEach(() => {
+    delete process.env.ORG_MIGRATION_WEBHOOK_DEFER_CAP_MS;
+  });
+
+  it('defers the switch-over inside the cap, and tells the people who would notice once, not on every retry', async () => {
+    const world = buildWorld(endedAgo(HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+
+    await times(3, async () => expect(await world.service.beginSwitchOver(MIGRATION_ID)).toBe('DEFERRED'));
+
+    expect(world.world.row.status).toBe(Status.STABILISING);
+    expect(world.alertService.notify).toHaveBeenCalledTimes(1);
+    expect(world.alertService.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MIGRATION_ID }),
+      'WEBHOOK_DEFERRED'
+    );
+    expect(world.agentClient.purgeProfile).not.toHaveBeenCalled();
+  });
+
+  it('goes ahead once 24 hours have passed since the window ended, keeps the webhook code, audits it and says so once', async () => {
+    const world = buildWorld(endedAgo(25 * HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+
+    expect(world.world.row).toMatchObject({ status: Status.ROTATING, error: 'WEBHOOK_UNREACHABLE' });
+    expect(actions(world.world)).toContain('SWITCHOVER_WEBHOOK_UNCONFIRMED');
+    expect(world.world.events.find((e) => 'SWITCHOVER_WEBHOOK_UNCONFIRMED' === e.action)?.detail).toEqual({
+      reason: 'WEBHOOK_UNREACHABLE'
+    });
+    expect(world.alertService.notify).toHaveBeenCalledTimes(1);
+    expect(world.alertService.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MIGRATION_ID }),
+      'WEBHOOK_GOING_AHEAD'
+    );
+  });
+
+  it('keeps the webhook code on the migration while the purge, the rotation and the completion clear everything else', async () => {
+    const world = buildWorld(endedAgo(25 * HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+    await world.service.beginSwitchOver(MIGRATION_ID);
+
+    await world.service.advanceRotation(MIGRATION_ID);
+    expect(world.world.row.error).toBe('WEBHOOK_UNREACHABLE');
+    world.world.rotationStatus = rotation('completed');
+    await world.service.advanceRotation(MIGRATION_ID);
+
+    expect(world.world.row).toMatchObject({ status: Status.COMPLETED, error: 'WEBHOOK_UNREACHABLE' });
+  });
+
+  it('reads the cap from the environment', async () => {
+    process.env.ORG_MIGRATION_WEBHOOK_DEFER_CAP_MS = String(MINUTE);
+    const world = buildWorld(endedAgo(2 * MINUTE));
+    world.webhookService.check.mockResolvedValue(broken);
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+  });
+
+  it.each([
+    ['the relay is not forwarding', (w: ReturnType<typeof buildWorld>) => (w.world.relay = { mode: 'HOLD' })],
+    [
+      'the dedicated agent cannot be reached',
+      (w: ReturnType<typeof buildWorld>) =>
+        w.agentClient.getAgentInfo.mockRejectedValue(new MigrationAgentError('UNREACHABLE'))
+    ],
+    [
+      'the dedicated agent is not ready',
+      (w: ReturnType<typeof buildWorld>) =>
+        w.agentClient.getAgentInfo.mockResolvedValue({ isInitialized: false, endpoints: [] })
+    ],
+    [
+      'the probe could not run at all',
+      (w: ReturnType<typeof buildWorld>) =>
+        w.webhookService.check.mockResolvedValue({ confirmed: false, code: 'AGENT_UNAVAILABLE' })
+    ]
+  ])(
+    'keeps blocking past the cap when %s, since purging then would leave the org with no working wallet',
+    async (_name, arrange) => {
+      const world = buildWorld(endedAgo(30 * HOUR));
+      arrange(world);
+
+      await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('DEFERRED');
+
+      expect(world.world.row.status).toBe(Status.STABILISING);
+      expect(world.alertService.notify).not.toHaveBeenCalledWith(expect.anything(), 'WEBHOOK_GOING_AHEAD');
+    }
+  );
+});
+
 describe('checking webhooks while the window is open', () => {
   const open = () => buildWorld({ stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE) });
 
@@ -437,6 +531,20 @@ describe('checking webhooks while the window is open', () => {
     await world.service.checkWebhook(MIGRATION_ID);
 
     expect(world.webhookService.check).not.toHaveBeenCalled();
+  });
+
+  it('does not probe a move whose preflight predates the webhook check, so it is not told it has a webhook problem', async () => {
+    const world = buildWorld({
+      stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE),
+      preflight: { checks: [{ id: 'RELEASE_MATCHES', status: 'PASS' }] }
+    });
+    world.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_PROBE_UNSUPPORTED' });
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
+    expect(world.world.row.error).toBeNull();
+    expect(actions(world.world)).toEqual([]);
   });
 
   it('does nothing without a dedicated agent to ask', async () => {
