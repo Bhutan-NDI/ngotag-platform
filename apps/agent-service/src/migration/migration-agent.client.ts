@@ -61,6 +61,7 @@ export interface IImportSession {
 
 export interface IEndpointSchemes {
   didsScanned: number;
+  unresolvedDids?: number;
   schemes: { scheme: string; count: number; exampleDids: string[] }[];
 }
 
@@ -113,6 +114,7 @@ export class MigrationAgentError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 15000;
+const REINJECT_TIMEOUT_MS = 10 * 60 * 1000;
 const RESTORE_TIMEOUT_MS = 10 * 60 * 1000;
 
 const DEFAULT_PUSH_TIMEOUT_MS = 30 * 60 * 1000;
@@ -352,6 +354,7 @@ export class MigrationAgentClient {
     return this.request('put', sharedEndpoint, `/multi-tenancy/relay/${encodeURIComponent(tenantId)}`, token, body);
   }
 
+  // The agent re-injects synchronously, and can wait up to ten seconds for each held message.
   reinjectRelay(
     sharedEndpoint: string,
     token: string,
@@ -362,7 +365,8 @@ export class MigrationAgentClient {
       sharedEndpoint,
       `/multi-tenancy/relay/${encodeURIComponent(tenantId)}/reinject`,
       token,
-      {}
+      {},
+      envMs('ORG_MIGRATION_REINJECT_TIMEOUT_MS', REINJECT_TIMEOUT_MS)
     );
   }
 

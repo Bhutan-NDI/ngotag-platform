@@ -30,6 +30,7 @@ const buildRepository = (overrides: { updateCount?: number } = {}) => {
     ),
     org_agent_migrations: {
       findFirst,
+      updateMany: migrationUpdateMany,
       findUnique: jest.fn(),
       count: jest.fn().mockResolvedValue(3),
       findMany: jest.fn().mockResolvedValue([])
@@ -198,6 +199,19 @@ describe('OrgAgentMigrationRepository', () => {
         repository.transition({ id: ID, from: Status.CREATED, to: Status.REHEARSED, actor: USER_ID })
       ).rejects.toThrow(ConflictException);
       expect(eventCreate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('touchRehearsal', () => {
+    it('freshens the start time of a rehearsal that is running, and of no other', async () => {
+      const { repository, migrationUpdateMany } = buildRepository();
+
+      await repository.touchRehearsal(ID);
+
+      expect(migrationUpdateMany).toHaveBeenCalledWith({
+        where: { id: ID, rehearsalStatus: 'RUNNING' },
+        data: { rehearsalStartedAt: expect.any(Date) }
+      });
     });
   });
 

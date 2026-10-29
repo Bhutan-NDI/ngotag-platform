@@ -208,6 +208,27 @@ describe('OrgAgentMigrationService', () => {
       });
     });
 
+    it('refuses a caller whose read of the status is stale, instead of moving the row from where it is now', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.SCHEDULED }
+      });
+
+      await expect(
+        service.advance(MIGRATION_ID, Status.SCHEDULED, USER_ID, undefined, { expectedFrom: Status.REHEARSED })
+      ).rejects.toThrow(ConflictException);
+      expect(migrationRepository.transition).not.toHaveBeenCalled();
+    });
+
+    it('goes ahead when the status is the one the caller read', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.SCHEDULED }
+      });
+
+      await service.advance(MIGRATION_ID, Status.SCHEDULED, USER_ID, undefined, { expectedFrom: Status.SCHEDULED });
+
+      expect(migrationRepository.transition).toHaveBeenCalledTimes(1);
+    });
+
     it.each([
       [Status.CREATED, Status.FROZEN],
       [Status.CUTOVER, Status.FAILED],
