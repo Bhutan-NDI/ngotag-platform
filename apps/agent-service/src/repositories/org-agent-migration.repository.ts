@@ -655,6 +655,16 @@ export class OrgAgentMigrationRepository {
     });
   }
 
+  /** The detail of the latest audit entry of an action for a migration, if there is one. */
+  async getEventDetail(migrationId: string, action: string): Promise<Record<string, unknown> | null> {
+    const event = await this.prisma.org_agent_migration_events.findFirst({
+      where: { migrationId, action },
+      orderBy: { createDateTime: 'desc' },
+      select: { detail: true }
+    });
+    return (event?.detail as Record<string, unknown> | null | undefined) ?? null;
+  }
+
   /** How many times an audit action has been recorded for a migration. */
   async countEvents(migrationId: string, action: string): Promise<number> {
     return this.prisma.org_agent_migration_events.count({ where: { migrationId, action } });
