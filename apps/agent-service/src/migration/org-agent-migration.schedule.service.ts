@@ -90,6 +90,8 @@ export class OrgAgentMigrationScheduleService {
       {
         // Two owners rescheduling at once, or a move the scheduler took in between, must not both go through.
         expectedFrom: migration.status as OrgAgentMigrationStatus,
+        // A rehearsal started in the same moment would leave a booked row that never becomes due.
+        where: { rehearsalStatus: REHEARSAL_DONE },
         event: {
           action: 'MOVE_CONFIRMED',
           detail: { scheduledFor: slot.toISOString(), immediate: undefined === payload.scheduledFor }

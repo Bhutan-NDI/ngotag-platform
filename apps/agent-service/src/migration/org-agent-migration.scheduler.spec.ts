@@ -275,6 +275,20 @@ describe('OrgAgentMigrationScheduler: a slot the owner changed, and a stale rehe
     expect(logger.error).not.toHaveBeenCalled();
   });
 
+  it('measures the rehearsal at the slot, so a move started a few minutes late is not called stale for it', async () => {
+    const { scheduler, executor, migrationService, migrationRepository } = build();
+    const slot = new Date(Date.now() - 2 * MINUTE);
+    const finishedAt = new Date(slot.getTime() - (14 * 24 * 60 * MINUTE - MINUTE)).toISOString();
+    migrationRepository.findDueForStart.mockResolvedValue([
+      due('m1', { scheduledFor: slot, rehearsal: { finishedAt } })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationService.unschedule).not.toHaveBeenCalled();
+    expect(executor.run).toHaveBeenCalledWith('m1', 'owner-1');
+  });
+
   it('does not start a move on a rehearsal that has gone stale, and takes it off its slot', async () => {
     const { scheduler, executor, migrationService, preflightService, migrationRepository } = build();
     const old = new Date(Date.now() - 15 * 24 * 60 * MINUTE).toISOString();

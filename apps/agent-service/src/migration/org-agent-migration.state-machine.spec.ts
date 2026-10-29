@@ -22,7 +22,6 @@ const ALLOWED: [Status, Status][] = [
   [Status.REHEARSED, Status.SCHEDULED],
   [Status.REHEARSED, Status.CANCELLED],
   [Status.SCHEDULED, Status.SCHEDULED],
-  [Status.SCHEDULED, Status.REHEARSED],
   [Status.SCHEDULED, Status.FROZEN],
   [Status.SCHEDULED, Status.CANCELLED],
   [Status.SCHEDULED, Status.FAILED],
@@ -71,6 +70,10 @@ describe('org agent migration state machine', () => {
       Status.COMPLETED
     ];
     path.slice(1).forEach((to, index) => expect(canTransition(path[index], to)).toBe(true));
+  });
+
+  it('does not let a booked move go back to REHEARSED through advance, which only unschedule may do', () => {
+    expect(canTransition(Status.SCHEDULED, Status.REHEARSED)).toBe(false);
   });
 
   it('cannot skip the rehearsal or the schedule', () => {
