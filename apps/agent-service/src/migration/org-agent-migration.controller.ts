@@ -7,6 +7,7 @@ import { OrgAgentMigrationPreflightService } from './org-agent-migration.preflig
 import { OrgAgentMigrationRehearsalService } from './org-agent-migration.rehearsal.service';
 import { OrgAgentMigrationAuthorizer } from './org-agent-migration.authorizer';
 import { OrgAgentMigrationScheduleService } from './org-agent-migration.schedule.service';
+import { OrgAgentMigrationRestoreService } from './org-agent-migration.restore.service';
 import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import {
@@ -17,6 +18,7 @@ import {
   IPreflightOrgAgentMigration,
   IPreflightReport,
   IRehearseOrgAgentMigration,
+  IRestoreOrgAgentMigration,
   IScheduleOrgAgentMigration,
   toPublicMigration
 } from './org-agent-migration.interface';
@@ -32,6 +34,7 @@ export class OrgAgentMigrationController {
     private readonly preflightService: OrgAgentMigrationPreflightService,
     private readonly rehearsalService: OrgAgentMigrationRehearsalService,
     private readonly scheduleService: OrgAgentMigrationScheduleService,
+    private readonly restoreService: OrgAgentMigrationRestoreService,
     private readonly authorizer: OrgAgentMigrationAuthorizer,
     private readonly alertService: OrgAgentMigrationAlertService,
     private readonly migrationRepository: OrgAgentMigrationRepository,
@@ -105,6 +108,17 @@ export class OrgAgentMigrationController {
     try {
       await this.authorizer.assertOwner(payload.orgId, payload.userId);
       return toPublicMigration(await this.migrationService.cancel(payload.orgId, payload.userId));
+    } catch (error) {
+      throw new RpcException(error.response ?? error);
+    }
+  }
+
+  // Rolls a move back to the shared agent after the new agent was lost. Platform admins only, and lossy.
+  @MessagePattern({ cmd: 'disaster-restore-org-agent-migration' })
+  async disasterRestore(payload: IRestoreOrgAgentMigration): Promise<IOrgAgentMigration> {
+    try {
+      await this.authorizer.assertPlatformAdmin(payload.orgId, payload.userId);
+      return toPublicMigration(await this.restoreService.restore(payload.orgId, payload.userId));
     } catch (error) {
       throw new RpcException(error.response ?? error);
     }

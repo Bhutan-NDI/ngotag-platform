@@ -8,6 +8,7 @@ const USER_ID = 'a1b2c3d4-5717-4562-b3fc-2c963f66afa6';
 const build = (options: { owner?: boolean; active?: object | null } = {}) => {
   const migrationRepository = {
     isOrgOwner: jest.fn().mockResolvedValue(options.owner ?? false),
+    isPlatformAdmin: jest.fn().mockResolvedValue(options.owner ?? false),
     getActiveByOrgId: jest.fn().mockResolvedValue('active' in options ? options.active : { id: 'm1' }),
     recordEvent: jest.fn().mockResolvedValue(undefined)
   };
@@ -69,5 +70,57 @@ describe('OrgAgentMigrationAuthorizer', () => {
     const error = await authorizer.assertOwner(ORG_ID, USER_ID).catch((e) => e);
 
     expect(error.message).toBe('Only an owner of the organization can move its wallet');
+  });
+});
+
+describe('OrgAgentMigrationAuthorizer.assertPlatformAdmin', () => {
+  it('lets a platform admin through and audits nothing', async () => {
+    const { authorizer, migrationRepository } = build({ owner: true });
+
+    await expect(authorizer.assertPlatformAdmin(ORG_ID, USER_ID)).resolves.toBeUndefined();
+
+    expect(migrationRepository.isPlatformAdmin).toHaveBeenCalledWith(USER_ID);
+    expect(migrationRepository.recordEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not count an organisation owner as a platform admin', async () => {
+    const { authorizer, migrationRepository } = build({ owner: false });
+    migrationRepository.isOrgOwner.mockResolvedValue(true);
+
+    await expect(authorizer.assertPlatformAdmin(ORG_ID, USER_ID)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses anyone else, and audits the refusal on the active migration', async () => {
+    const { authorizer, migrationRepository } = build({ owner: false });
+
+    await expect(authorizer.assertPlatformAdmin(ORG_ID, USER_ID)).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', { action: 'ACCESS_DENIED', actor: USER_ID });
+  });
+
+  it('refuses a call with no user without looking anything up', async () => {
+    const { authorizer, migrationRepository } = build({ owner: true });
+
+    await expect(authorizer.assertPlatformAdmin(ORG_ID, undefined as never)).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(migrationRepository.isPlatformAdmin).not.toHaveBeenCalled();
+  });
+
+  it('still refuses when there is no active migration, or the audit write fails', async () => {
+    const none = build({ active: null });
+    await expect(none.authorizer.assertPlatformAdmin(ORG_ID, USER_ID)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(none.migrationRepository.recordEvent).not.toHaveBeenCalled();
+
+    const failing = build();
+    failing.migrationRepository.recordEvent.mockRejectedValue(new Error('db down'));
+    await expect(failing.authorizer.assertPlatformAdmin(ORG_ID, USER_ID)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('says only that a platform admin is needed', async () => {
+    const { authorizer } = build();
+
+    const error = await authorizer.assertPlatformAdmin(ORG_ID, USER_ID).catch((e) => e);
+
+    expect(error.message).toBe('Only a platform admin can roll a move back');
   });
 });

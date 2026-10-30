@@ -30,6 +30,11 @@ export interface IRehearseOrgAgentMigration {
   userId: string;
 }
 
+export interface IRestoreOrgAgentMigration {
+  orgId: string;
+  userId: string;
+}
+
 export interface ICancelOrgAgentMigration {
   orgId: string;
   userId: string;
@@ -94,11 +99,38 @@ export interface IRotationProgress {
   stalledSince?: string;
 }
 
-export type IOrgAgentMigration = Omit<org_agent_migrations, 'targetTokenEncrypted'>;
+// What an owner or platform admin may read. Everything else on the row (the shared agent's snapshot, tenant and job
+// ids, the export checksum and key fingerprint, the lease, and the stored token) stays inside agent-service.
+export const PUBLIC_MIGRATION_FIELDS = [
+  'id',
+  'createDateTime',
+  'lastChangedDateTime',
+  'orgId',
+  'status',
+  'startedBy',
+  'targetAdminEndpoint',
+  'targetDidcommEndpoint',
+  'counts',
+  'releaseVersion',
+  'storageVersion',
+  'rehearsalDurationMs',
+  'predictedFreezeMs',
+  'scheduledFor',
+  'freezeDeadline',
+  'stabilisationEndsAt',
+  'purgedAt',
+  'error',
+  'backupsConfirmedAt',
+  'preflight',
+  'rehearsalStatus',
+  'rehearsalStartedAt',
+  'rehearsal',
+  'rotation'
+] as const;
 
-// The stored token is a credential and must never leave agent-service.
+export type IOrgAgentMigration = Pick<org_agent_migrations, (typeof PUBLIC_MIGRATION_FIELDS)[number]>;
+
 export const toPublicMigration = (migration: org_agent_migrations): IOrgAgentMigration => {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { targetTokenEncrypted, ...rest } = migration;
-  return rest;
+  const entries = PUBLIC_MIGRATION_FIELDS.map((field) => [field, migration[field]]);
+  return Object.fromEntries(entries) as IOrgAgentMigration;
 };

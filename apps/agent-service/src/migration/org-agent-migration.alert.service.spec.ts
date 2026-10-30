@@ -95,6 +95,30 @@ describe('OrgAgentMigrationAlertService', () => {
     expect(sendEmail.mock.calls[0][0].emailText).toContain('to move it to its own agent');
   });
 
+  it('words a disaster restore as done by a platform admin, about the agent that was lost', async () => {
+    const { service, sendEmail } = build();
+
+    await service.alertKeyExport(migration, KeyExportAlertKind.DISASTER_RESTORE, USER_ID);
+
+    const { emailSubject, emailText, emailHtml } = sendEmail.mock.calls[0][0];
+    expect(emailSubject).toBe('[Security] A wallet move was rolled back');
+    for (const body of [emailText, emailHtml]) {
+      expect(body).toContain('A platform admin');
+      expect(body).not.toContain('An organisation owner');
+      expect(body).toContain('The agent that was lost');
+      expect(body).not.toContain('Keys are going to');
+    }
+  });
+
+  it('keeps the owner wording and the key destination for the export alerts', async () => {
+    const { service, sendEmail } = build();
+
+    await service.alertKeyExport(migration, KeyExportAlertKind.MOVE_EXPORT, USER_ID);
+
+    expect(sendEmail.mock.calls[0][0].emailText).toContain('An organisation owner');
+    expect(sendEmail.mock.calls[0][0].emailText).toContain('Keys are going to');
+  });
+
   it('escapes anything the owner typed before it goes into the HTML body', async () => {
     const { service, sendEmail } = build({ orgName: '<script>alert(1)</script> & Co' });
 

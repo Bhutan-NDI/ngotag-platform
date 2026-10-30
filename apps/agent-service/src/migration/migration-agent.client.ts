@@ -93,6 +93,7 @@ export class MigrationAgentError extends Error {
 
 const REQUEST_TIMEOUT_MS = 15000;
 const REINJECT_TIMEOUT_MS = 10 * 60 * 1000;
+export const RESTORE_TIMEOUT_MS = 10 * 60 * 1000;
 
 const trimSlash = (url: string): string => url.replace(/\/+$/, '');
 
@@ -288,6 +289,19 @@ export class MigrationAgentClient {
     body: { multiUseInvitation: boolean; autoAcceptConnection: boolean; label: string; imageUrl?: string }
   ): Promise<ICreatedInvitation> {
     return this.request('post', adminEndpoint, '/didcomm/oob/create-invitation', token, body);
+  }
+
+  // Takes the relay off for good, even a forwarding one: queued messages go back to the tenant first.
+  // The agent hands every queued message back before it answers, and hours of traffic may be waiting.
+  restoreRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<{ injected: number; failed: number }> {
+    return this.request(
+      'post',
+      sharedEndpoint,
+      `/multi-tenancy/relay/${encodeURIComponent(tenantId)}/restore`,
+      token,
+      {},
+      envMs('ORG_MIGRATION_RESTORE_TIMEOUT_MS', RESTORE_TIMEOUT_MS)
+    );
   }
 
   getRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<IRelayEntry> {
