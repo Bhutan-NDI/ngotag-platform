@@ -18,6 +18,7 @@ const build = () => {
   const migrationService = {
     createMigration: jest.fn().mockResolvedValue(row()),
     getMigration: jest.fn().mockResolvedValue(row()),
+    cancel: jest.fn().mockResolvedValue(row({ status: 'CANCELLED' })),
     listMigrations: jest.fn().mockResolvedValue({ total: 1, migrations: [row()] })
   };
   const report = { ranAt: 'now', passed: true, checks: [] };
@@ -58,6 +59,7 @@ describe('OrgAgentMigrationController', () => {
     ['preflight', 'preflight-org-agent-migration'],
     ['rehearse', 'rehearse-org-agent-migration'],
     ['schedule', 'schedule-org-agent-migration'],
+    ['cancel', 'cancel-org-agent-migration'],
     ['getMigration', 'get-org-agent-migration'],
     ['listMigrations', 'list-org-agent-migrations']
   ];
@@ -270,6 +272,37 @@ describe('OrgAgentMigrationController', () => {
       scheduleService.schedule.mockRejectedValue(new Error('wrong name'));
 
       await expect(controller.schedule(payload)).rejects.toBeInstanceOf(RpcException);
+    });
+  });
+
+  describe('cancel-org-agent-migration', () => {
+    it('checks the caller owns the org, then cancels as that user and hides the token', async () => {
+      const { controller, authorizer, migrationService } = build();
+
+      const result = await controller.cancel({ orgId: ORG_ID, userId: USER_ID });
+
+      expect(authorizer.assertOwner).toHaveBeenCalledWith(ORG_ID, USER_ID);
+      expect(migrationService.cancel).toHaveBeenCalledWith(ORG_ID, USER_ID);
+      expect(result).toMatchObject({ status: 'CANCELLED' });
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+    });
+
+    it('cancels nothing for a non-owner', async () => {
+      const { controller, authorizer, migrationService } = build();
+      authorizer.assertOwner.mockRejectedValue(
+        new RpcException('Only an owner of the organization can move its wallet')
+      );
+
+      await expect(controller.cancel({ orgId: ORG_ID, userId: USER_ID })).rejects.toBeInstanceOf(RpcException);
+
+      expect(migrationService.cancel).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a refusal as an RPC error', async () => {
+      const { controller, migrationService } = build();
+      migrationService.cancel.mockRejectedValue(new Error('already started'));
+
+      await expect(controller.cancel({ orgId: ORG_ID, userId: USER_ID })).rejects.toBeInstanceOf(RpcException);
     });
   });
 

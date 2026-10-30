@@ -56,6 +56,10 @@ export class OrgAgentMigrationService extends BaseService {
     });
   }
 
+  cancel(orgId: string, userId: string): Promise<object> {
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'cancel-org-agent-migration', { orgId, userId });
+  }
+
   get(orgId: string): Promise<object> {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'get-org-agent-migration', { orgId });
   }

@@ -167,6 +167,30 @@ export class OrgAgentMigrationController {
     return res.status(HttpStatus.OK).json(finalResponse);
   }
 
+  @Post('/orgs/:orgId/agents/migrate/cancel')
+  @ApiOperation({
+    summary: 'Cancel the wallet move',
+    description:
+      'Calls the move off before it starts. The organisation stays exactly as it was. Once the move has started it can no longer be cancelled.'
+  })
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @Roles(OrgRoles.OWNER)
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async cancelMigration(
+    @Param('orgId', ...orgIdPipes) orgId: string,
+    @User() reqUser: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const data = await this.migrationService.cancel(orgId, reqUser.id);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.agent.success.migrationCancelled,
+      data
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
   @Get('/orgs/:orgId/agents/migrate')
   @ApiOperation({
     summary: 'Get the wallet move',
