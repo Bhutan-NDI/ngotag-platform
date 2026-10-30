@@ -181,17 +181,21 @@ export class ProofTemplateService {
     params: {
       id?: string;
       templateId?: string;
+      roleId?: string;
       search?: string;
       page?: number;
       pageSize?: number;
     },
     loginOrgId: string
   ): Promise<ResponseType> {
-    const { id, templateId, search } = params;
+    const { id, templateId, roleId, search } = params;
     // `page`/`pageSize` arrive as strings from @Query; keep the pagination math numeric
     const page = Number(params.page) || 1;
     const pageSize = Number(params.pageSize) || 10;
-    const orgAccessWhere: Prisma.mobile_verifier_proof_templateWhereInput = { orgId: loginOrgId };
+    const orgAccessWhere: Prisma.mobile_verifier_proof_templateWhereInput = {
+      orgId: loginOrgId,
+      ...(roleId && { verifierRoleToProofTemplates: { some: { verifierRoleId: roleId } } })
+    };
 
     if (id || templateId) {
       const where = id ? { id } : { templateId };

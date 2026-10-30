@@ -93,13 +93,19 @@ export class ProofTemplateController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'templateId', required: false })
   @ApiQuery({ name: 'id', required: false })
+  @ApiQuery({ name: 'roleId', required: true, description: 'Only templates mapped to this verifier role' })
   async getProofTemplatesAsService(
-    @Query() data: { id?: string; templateId?: string; search?: string; page?: number; pageSize?: number },
+    @Query()
+    data: { id?: string; templateId?: string; roleId?: string; search?: string; page?: number; pageSize?: number },
     @Query('orgId') orgId: string,
     @Res() res: Response
   ): Promise<Response> {
     if (!orgId) {
       throw new BadRequestException('orgId is required');
+    }
+    // typeof guards against a repeated ?roleId=a&roleId=b, which Express parses into an array
+    if (!data.roleId || 'string' !== typeof data.roleId) {
+      throw new BadRequestException('roleId is required');
     }
     const result = await this.proofTemplateService.getProofTemplates(data, orgId);
     return res.status(result.statusCode ?? HttpStatus.OK).json(result);
@@ -113,8 +119,10 @@ export class ProofTemplateController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'templateId', required: false })
   @ApiQuery({ name: 'id', required: false })
+  @ApiQuery({ name: 'roleId', required: false, description: 'Only templates mapped to this verifier role' })
   async getProofTemplates(
-    @Query() data: { id?: string; templateId?: string; search?: string; page?: number; pageSize?: number },
+    @Query()
+    data: { id?: string; templateId?: string; roleId?: string; search?: string; page?: number; pageSize?: number },
     @Query('orgId') orgId: string,
     @Req() req: Request,
     @Res() res: Response

@@ -47,7 +47,7 @@ export class ProofTemplateService {
   }
 
   async getProofTemplates(
-    data: { id?: string; templateId?: string; search?: string; page?: number; pageSize?: number },
+    data: { id?: string; templateId?: string; roleId?: string; search?: string; page?: number; pageSize?: number },
     loginOrgId: string
   ): Promise<IResponse> {
     return this.natsClient.sendNatsMessage(this.mobileVerifierProxy, 'get-proof-templates', { data, loginOrgId });
