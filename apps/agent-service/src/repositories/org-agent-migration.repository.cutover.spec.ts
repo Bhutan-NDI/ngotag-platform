@@ -40,7 +40,29 @@ describe('OrgAgentMigrationRepository.cutover', () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ status: Status.CUTOVER });
     expect(tx.org_agent_migration_events.create).toHaveBeenCalledWith({
-      data: { migrationId: 'm1', fromStatus: Status.VERIFYING, toStatus: Status.CUTOVER, actor: null }
+      data: { migrationId: 'm1', fromStatus: Status.VERIFYING, toStatus: Status.CUTOVER, actor: 'SYSTEM' }
+    });
+  });
+
+  it('names the person it is given as the actor, and carries the checksum and key fingerprint', async () => {
+    const { repository, tx } = build();
+    tx.org_agent_migrations.findUniqueOrThrow.mockResolvedValue({
+      id: 'm1',
+      status: Status.CUTOVER,
+      checksum: 'sha256-of-the-export',
+      importKeyFingerprint: 'fingerprint-of-the-key'
+    });
+
+    await repository.cutover({ ...params, actor: 'owner-1' });
+
+    expect(tx.org_agent_migration_events.create).toHaveBeenCalledWith({
+      data: {
+        migrationId: 'm1',
+        fromStatus: Status.VERIFYING,
+        toStatus: Status.CUTOVER,
+        actor: 'owner-1',
+        detail: { checksum: 'sha256-of-the-export', importKeyFingerprint: 'fingerprint-of-the-key' }
+      }
     });
   });
 

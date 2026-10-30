@@ -66,8 +66,14 @@ describe('OrgAgentMigrationRepository', () => {
         tenantId: 'tenant-1'
       });
       expect(eventCreate).toHaveBeenCalledWith({
-        data: { migrationId: ID, fromStatus: null, toStatus: Status.CREATED, actor: USER_ID }
+        data: {
+          migrationId: ID,
+          fromStatus: null,
+          toStatus: Status.CREATED,
+          actor: USER_ID
+        }
       });
+      expect(JSON.stringify(eventCreate.mock.calls[0][0])).not.toContain('example.com');
     });
 
     it('turns the partial unique index violation into a conflict', async () => {
@@ -148,12 +154,36 @@ describe('OrgAgentMigrationRepository', () => {
       });
     });
 
-    it('records a system step with no actor', async () => {
+    it('names SYSTEM as the actor of a step no person made', async () => {
       const { repository, eventCreate } = buildRepository();
 
       await repository.transition({ id: ID, from: Status.STABILISING, to: Status.ROTATING, actor: null });
 
-      expect(eventCreate.mock.calls[0][0].data.actor).toBeNull();
+      expect(eventCreate.mock.calls[0][0].data.actor).toBe('SYSTEM');
+    });
+
+    it('carries the checksum and the import-key fingerprint on a state change once the export exists', async () => {
+      const { repository, tx, eventCreate } = buildRepository();
+      tx.org_agent_migrations.findUniqueOrThrow.mockResolvedValue({
+        id: ID,
+        checksum: 'sha256-of-the-export',
+        importKeyFingerprint: 'fingerprint-of-the-key'
+      });
+
+      await repository.transition({ id: ID, from: Status.IMPORTING, to: Status.VERIFYING, actor: USER_ID });
+
+      expect(eventCreate.mock.calls[0][0].data.detail).toEqual({
+        checksum: 'sha256-of-the-export',
+        importKeyFingerprint: 'fingerprint-of-the-key'
+      });
+    });
+
+    it('leaves the detail out of a state change before there is anything to carry', async () => {
+      const { repository, eventCreate } = buildRepository();
+
+      await repository.transition({ id: ID, from: Status.CREATED, to: Status.REHEARSED, actor: USER_ID });
+
+      expect(eventCreate.mock.calls[0][0].data).not.toHaveProperty('detail');
     });
 
     it('refuses, and records nothing, when another actor already moved the migration', async () => {

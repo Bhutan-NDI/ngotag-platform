@@ -167,7 +167,6 @@ model organisation {
   marketplaceSubscriptions  marketplace_subscription[]
   marketplaceUsageEvents    marketplace_usage_event[]
   billingUsageEvents        billing_usage_event[]
-  org_agent_migrations      org_agent_migrations[]
 }
 
 model org_invitations {
@@ -300,7 +299,7 @@ model org_agent_migrations {
   webhookConfirmedAt     DateTime?                    @db.Timestamptz(6)
   // When the window's webhook check last ran, so tries are spaced without holding the migration's lease.
   webhookCheckedAt       DateTime?                    @db.Timestamptz(6)
-  organisation           organisation                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  // No relation to `organisation`: the audit trail is permanent and must outlive the organisation (SAD §5.2).
   events                 org_agent_migration_events[]
 
   // At most one non-terminal migration per org: a partial unique index on (orgId) WHERE status NOT IN
@@ -321,7 +320,7 @@ model org_agent_migration_events {
   action         String?              @db.VarChar(48)
   // Facts about the action. Never secrets, URLs or tokens.
   detail         Json?
-  migration      org_agent_migrations @relation(fields: [migrationId], references: [id], onDelete: Cascade)
+  migration      org_agent_migrations @relation(fields: [migrationId], references: [id], onDelete: Restrict)
 
   @@index([migrationId])
 }
