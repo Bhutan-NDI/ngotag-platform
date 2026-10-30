@@ -194,10 +194,10 @@ export class OrgAgentMigrationController {
     return res.status(HttpStatus.OK).json(finalResponse);
   }
 
-  @Get('/orgs/:orgId/agents/migrate')
+  @Get(['/orgs/:orgId/agents/migrate', '/orgs/:orgId/agents/migrate/status'])
   @ApiOperation({
     summary: 'Get the wallet move',
-    description: 'The active move for the organisation, or the latest finished one.'
+    description: 'The active move for the organisation, or the latest finished one. `/status` is the same route.'
   })
   @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
   @Roles(

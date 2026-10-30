@@ -338,6 +338,29 @@ describe('wallet move routes', () => {
       expect(service.get).toHaveBeenCalledWith(ORG_ID);
     });
 
+    it.each([`/orgs/${ORG_ID}/agents/migrate`, `/orgs/${ORG_ID}/agents/migrate/status`])(
+      'answers on %s, with the same move',
+      async (path) => {
+        service.get.mockResolvedValue({ migration: { id: 'm1' } });
+
+        const response = await request(app.getHttpServer()).get(path);
+
+        expect(response.status).toBe(200);
+        expect(response.body).toMatchObject({ data: { migration: { id: 'm1' } } });
+        expect(service.get).toHaveBeenCalledWith(ORG_ID);
+      }
+    );
+
+    it('keeps the same checks on the /status path: outside the org, and holders, are refused', async () => {
+      currentUser = userWith([membership(OTHER_ORG_ID, 'owner')]);
+      expect((await request(app.getHttpServer()).get(`/orgs/${ORG_ID}/agents/migrate/status`)).status).toBe(403);
+
+      currentUser = userWith([membership(ORG_ID, 'owner')], { userRole: 'holder' });
+      expect((await request(app.getHttpServer()).get(`/orgs/${ORG_ID}/agents/migrate/status`)).status).toBe(403);
+
+      expect(service.get).not.toHaveBeenCalled();
+    });
+
     it('does not show it to someone outside the org', async () => {
       currentUser = userWith([membership(OTHER_ORG_ID, 'owner')]);
 
