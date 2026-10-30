@@ -114,27 +114,38 @@ export class OrgAgentMigrationService {
     to: OrgAgentMigrationStatus,
     actor: string | null,
     patch?: OrgAgentMigrationPatch,
-    options: { expectedFrom?: OrgAgentMigrationStatus } = {}
+    options: Pick<Parameters<OrgAgentMigrationRepository['transition']>[0], 'where' | 'event'> & {
+      expectedFrom?: OrgAgentMigrationStatus;
+    } = {}
   ): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
       throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
     }
+    const { expectedFrom, ...transitionOptions } = options;
     const from = migration.status as OrgAgentMigrationStatus;
-    if (options.expectedFrom && options.expectedFrom !== from) {
+    if (expectedFrom && expectedFrom !== from) {
       throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
     }
     if (!canTransition(from, to)) {
       throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
     }
-    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch });
+    return this.migrationRepository.transition({ id: migrationId, from, to, actor, patch, ...transitionOptions });
   }
 
   /**
    * Fails a scheduled or started migration that has not reached the switch: the org stays exactly as it was. `errorCode` is a
-   * stable, sanitised code (for example VERIFICATION_FAILED), never raw error text.
+   * stable, sanitised code (for example VERIFICATION_FAILED), never raw error text. The stored token for the
+   * dedicated agent is dropped: a finished migration has no use for a credential.
+   * @param expectedScheduledFor the slot the caller read: when the owner has moved it since, nothing is aborted
+   * @throws ConflictException when the slot is no longer the one given
    */
-  async abort(migrationId: string, errorCode: string, actor: string | null): Promise<org_agent_migrations> {
+  async abort(
+    migrationId: string,
+    errorCode: string,
+    actor: string | null,
+    expectedScheduledFor?: Date | null
+  ): Promise<org_agent_migrations> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration) {
       throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
@@ -147,7 +158,8 @@ export class OrgAgentMigrationService {
       from: migration.status as OrgAgentMigrationStatus,
       to: OrgAgentMigrationStatus.FAILED,
       actor,
-      patch: { error: errorCode }
+      patch: { error: errorCode, targetTokenEncrypted: null },
+      ...(undefined === expectedScheduledFor ? {} : { where: { scheduledFor: expectedScheduledFor } })
     });
   }
 }

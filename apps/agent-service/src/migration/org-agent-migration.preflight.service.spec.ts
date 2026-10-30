@@ -4,6 +4,7 @@ import * as jwt from 'jsonwebtoken';
 import { MigrationAgentError } from './migration-agent.client';
 import { PreflightCheckId as Check } from './org-agent-migration.interface';
 import { configMismatches, OrgAgentMigrationPreflightService } from './org-agent-migration.preflight.service';
+import { OrgAgentMigrationScheduler } from './org-agent-migration.scheduler';
 
 const ORG_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 const MIGRATION_ID = '5b1b3b9e-6f56-4b69-9a54-0f2c2d6e1f10';
@@ -481,7 +482,7 @@ describe('OrgAgentMigrationPreflightService', () => {
     });
   });
 
-  it.each(['FROZEN', 'EXPORTING', 'CUTOVER', 'COMPLETED', 'FAILED'])(
+  it.each(['FROZEN', 'EXPORTING', 'CUTOVER', 'COMPLETED', 'FAILED', 'CANCELLED'])(
     'does not run on a migration in %s',
     async (status) => {
       const { service, migrationRepository } = build({ migration: migrationRow({ status }) });
@@ -490,6 +491,50 @@ describe('OrgAgentMigrationPreflightService', () => {
       expect(migrationRepository.update).not.toHaveBeenCalled();
     }
   );
+
+  it('runs on a scheduled migration, which is what the scheduler checks just before the move', async () => {
+    const { service } = build({ migration: migrationRow({ status: 'SCHEDULED' }) });
+
+    await expect(service.run(MIGRATION_ID, input)).resolves.toMatchObject({ report: { passed: true } });
+  });
+
+  it('lets the scheduler start a scheduled move, through the real status guard', async () => {
+    const { service, access } = build({
+      migration: migrationRow({ status: 'SCHEDULED', targetTokenEncrypted: 'stored', backupsConfirmedAt: new Date() })
+    });
+    access.dedicated.mockResolvedValue({ endpoint: 'https://admin.org.example.com', token: ROOT_TOKEN });
+    const dueMove = {
+      id: MIGRATION_ID,
+      status: 'SCHEDULED',
+      startedBy: 'owner-1',
+      scheduledFor: new Date(Date.now() - 1000)
+    };
+    const migrationRepository = {
+      findDueForStart: jest.fn().mockResolvedValue([dueMove]),
+      findStalled: jest.fn().mockResolvedValue([]),
+      countInFlight: jest.fn().mockResolvedValue(0),
+      tryAcquireLease: jest.fn().mockResolvedValue(true),
+      getConfirmingActor: jest.fn().mockResolvedValue('owner-1'),
+      recordEvent: jest.fn().mockResolvedValue(undefined)
+    };
+    const executor = {
+      run: jest.fn().mockResolvedValue(undefined),
+      abortInterrupted: jest.fn(),
+      resumeCutover: jest.fn()
+    };
+    const scheduler = new OrgAgentMigrationScheduler(
+      { addInterval: jest.fn(), deleteInterval: jest.fn() } as never,
+      migrationRepository as never,
+      { abort: jest.fn() } as never,
+      service,
+      executor as never,
+      { error: jest.fn(), warn: jest.fn(), log: jest.fn() } as never
+    );
+
+    await scheduler.tick();
+
+    expect(executor.run).toHaveBeenCalledWith(MIGRATION_ID, 'owner-1');
+  });
 
   it('writes its result only while the move is still open, so a cancel that overlapped it keeps the token off the row', async () => {
     const { service, migrationRepository } = build();

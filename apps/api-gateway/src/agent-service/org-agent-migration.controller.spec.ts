@@ -1,4 +1,4 @@
-/* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type */
+/* eslint-disable camelcase, @typescript-eslint/explicit-function-return-type, no-mixed-operators */
 /**
  * The wallet-move routes run behind the real OrgRolesGuard, StepUpAuthGuard, validation pipe and exception filter.
  * Only the JWT check (it just supplies the user) and the NATS-backed service are faked.
@@ -45,6 +45,7 @@ describe('wallet move routes', () => {
     create: jest.fn(),
     preflight: jest.fn(),
     rehearse: jest.fn(),
+    schedule: jest.fn(),
     get: jest.fn(),
     list: jest.fn()
   };
@@ -213,6 +214,74 @@ describe('wallet move routes', () => {
       const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/rehearse`).send();
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('POST /orgs/:orgId/agents/migrate/schedule', () => {
+    const slot = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+
+    it('lets an owner schedule the move with the typed name and a slot, as the user in the token', async () => {
+      const response = await request(app.getHttpServer())
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
+        .send({ confirmationName: 'Acme Ltd', scheduledFor: slot, userId: 'someone-else' });
+
+      expect(response.status).toBe(200);
+      expect(service.schedule).toHaveBeenCalledWith(ORG_ID, 'user-1', {
+        confirmationName: 'Acme Ltd',
+        scheduledFor: slot
+      });
+    });
+
+    it('lets an owner start at once by leaving the slot out', async () => {
+      const response = await request(app.getHttpServer())
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
+        .send({ confirmationName: 'Acme Ltd' });
+
+      expect(response.status).toBe(200);
+      expect(service.schedule).toHaveBeenCalledWith(ORG_ID, 'user-1', { confirmationName: 'Acme Ltd' });
+    });
+
+    it('does not ask for a fresh sign-in: the endpoints were fixed when the move was created', async () => {
+      currentUser = owner({ sessionCreatedAt: minutesAgo(180) });
+
+      const response = await request(app.getHttpServer())
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
+        .send({ confirmationName: 'Acme Ltd' });
+
+      expect(response.status).toBe(200);
+    });
+
+    it.each(['admin', 'super_admin', 'issuer', 'verifier', 'member'])('refuses a %s', async (role) => {
+      currentUser = userWith([membership(ORG_ID, role)]);
+
+      const response = await request(app.getHttpServer())
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
+        .send({ confirmationName: 'Acme Ltd' });
+
+      expect(response.status).toBe(403);
+      expect(service.schedule).not.toHaveBeenCalled();
+    });
+
+    it('refuses an owner of a different organisation', async () => {
+      currentUser = userWith([membership(OTHER_ORG_ID, 'owner')]);
+
+      const response = await request(app.getHttpServer())
+        .post(`/orgs/${ORG_ID}/agents/migrate/schedule`)
+        .send({ confirmationName: 'Acme Ltd' });
+
+      expect(response.status).toBe(403);
+    });
+
+    it.each([
+      ['no typed name', {}],
+      ['an empty typed name', { confirmationName: '' }],
+      ['a typed name that is not text', { confirmationName: 5 }],
+      ['a slot that is not a date', { confirmationName: 'Acme Ltd', scheduledFor: 'tomorrow-ish' }]
+    ])('rejects %s with 400', async (_name, body) => {
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/schedule`).send(body);
+
+      expect(response.status).toBe(400);
+      expect(service.schedule).not.toHaveBeenCalled();
     });
   });
 

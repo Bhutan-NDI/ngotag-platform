@@ -542,6 +542,16 @@ describe('move day: starting', () => {
     expect(migrationService.advance).not.toHaveBeenCalled();
   });
 
+  it('claims the move only while it is still due: confirmed, rehearsed and past its slot', async () => {
+    const world = buildWorld();
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    const [, to, , , options] = world.migrationService.advance.mock.calls[0];
+    expect(to).toBe(Status.FROZEN);
+    expect(options.where).toEqual({ rehearsalStatus: 'DONE', scheduledFor: { lte: expect.any(Date) } });
+  });
+
   it('lets only one of two simultaneous runs start the move', async () => {
     const { executor, agentClient } = buildWorld();
 

@@ -23,6 +23,7 @@ const build = () => {
   const report = { ranAt: 'now', passed: true, checks: [] };
   const preflightService = { run: jest.fn().mockResolvedValue({ migration: row({ id: 'm1' }), report }) };
   const rehearsalService = { start: jest.fn().mockResolvedValue(row({ rehearsalStatus: 'RUNNING' })) };
+  const scheduleService = { schedule: jest.fn().mockResolvedValue(row({ status: 'REHEARSED', scheduledFor: 'slot' })) };
   const authorizer = { assertOwner: jest.fn().mockResolvedValue(undefined) };
   const alertService = { alertKeyExport: jest.fn().mockResolvedValue({ recipients: 2, sent: 2 }) };
   const migrationRepository = { recordEvent: jest.fn().mockResolvedValue(undefined) };
@@ -31,6 +32,7 @@ const build = () => {
     migrationService as never,
     preflightService as never,
     rehearsalService as never,
+    scheduleService as never,
     authorizer as never,
     alertService as never,
     migrationRepository as never,
@@ -41,6 +43,7 @@ const build = () => {
     migrationService,
     preflightService,
     rehearsalService,
+    scheduleService,
     authorizer,
     alertService,
     migrationRepository,
@@ -54,6 +57,7 @@ describe('OrgAgentMigrationController', () => {
     ['createMigration', 'migrate-org-agent'],
     ['preflight', 'preflight-org-agent-migration'],
     ['rehearse', 'rehearse-org-agent-migration'],
+    ['schedule', 'schedule-org-agent-migration'],
     ['getMigration', 'get-org-agent-migration'],
     ['listMigrations', 'list-org-agent-migrations']
   ];
@@ -228,6 +232,44 @@ describe('OrgAgentMigrationController', () => {
 
       expect(result.migration).toMatchObject({ id: 'm1' });
       expect(preflightService.run).toHaveBeenCalled();
+    });
+  });
+
+  describe('schedule-org-agent-migration', () => {
+    const payload = {
+      orgId: ORG_ID,
+      userId: USER_ID,
+      confirmationName: 'Acme Ltd',
+      scheduledFor: '2026-10-25T01:00:00Z'
+    };
+
+    it('checks the caller owns the org, then schedules the move and hides the token', async () => {
+      const { controller, authorizer, scheduleService } = build();
+
+      const result = await controller.schedule(payload);
+
+      expect(authorizer.assertOwner).toHaveBeenCalledWith(ORG_ID, USER_ID);
+      expect(scheduleService.schedule).toHaveBeenCalledWith(payload);
+      expect(result).toMatchObject({ status: 'REHEARSED' });
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+    });
+
+    it('books nothing for a non-owner', async () => {
+      const { controller, authorizer, scheduleService } = build();
+      authorizer.assertOwner.mockRejectedValue(
+        new RpcException('Only an owner of the organization can move its wallet')
+      );
+
+      await expect(controller.schedule(payload)).rejects.toBeInstanceOf(RpcException);
+
+      expect(scheduleService.schedule).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a refusal as an RPC error', async () => {
+      const { controller, scheduleService } = build();
+      scheduleService.schedule.mockRejectedValue(new Error('wrong name'));
+
+      await expect(controller.schedule(payload)).rejects.toBeInstanceOf(RpcException);
     });
   });
 

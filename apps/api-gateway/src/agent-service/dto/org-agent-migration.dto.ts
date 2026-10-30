@@ -1,6 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString, IsUrl, IsUUID, Max, Min, IsInt } from 'class-validator';
+import {
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUrl,
+  IsUUID,
+  Max,
+  Min
+} from 'class-validator';
 import { trim } from '@credebl/common/cast.helper';
 import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 
@@ -60,6 +72,21 @@ export class PreflightOrgAgentMigrationDto {
   @IsOptional()
   @IsBoolean({ message: 'backupsConfirmed must be a boolean.' })
   backupsConfirmed?: boolean;
+}
+
+export class ScheduleOrgAgentMigrationDto {
+  @ApiProperty({ description: 'The name of the organisation, typed by the owner to confirm the move.' })
+  @IsString({ message: 'confirmationName must be in string format.' })
+  @IsNotEmpty({ message: 'confirmationName is required.' })
+  confirmationName: string;
+
+  @ApiPropertyOptional({
+    example: '2026-10-25T01:00:00.000Z',
+    description: 'When to start, within the next 14 days. Leave out to start at once.'
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'scheduledFor must be an ISO 8601 date.' })
+  scheduledFor?: string;
 }
 
 export class ListOrgAgentMigrationsDto {

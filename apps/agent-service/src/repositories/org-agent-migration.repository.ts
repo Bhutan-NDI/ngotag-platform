@@ -1,7 +1,7 @@
 /* eslint-disable camelcase */
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { Prisma, org_agent_migrations } from '@prisma/client';
-import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
+import { ORG_AGENT_MIGRATION_FROZEN_STATUSES, OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { PrismaService } from '@credebl/prisma-service';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { FileUploadStatus } from 'apps/api-gateway/src/enum';
@@ -18,6 +18,7 @@ export type OrgAgentMigrationPatch = Omit<
 
 const UNIQUE_VIOLATION = 'P2002';
 export const REHEARSAL_RUNNING = 'RUNNING';
+export const REHEARSAL_DONE = 'DONE';
 
 @Injectable()
 export class OrgAgentMigrationRepository {
@@ -118,12 +119,16 @@ export class OrgAgentMigrationRepository {
     to: OrgAgentMigrationStatus;
     actor: string | null;
     patch?: OrgAgentMigrationPatch;
+    // Conditions the row must still meet, beyond being in `from`.
+    where?: Prisma.org_agent_migrationsWhereInput;
+    // Written as the transition's own audit entry, so it cannot be lost on its own.
+    event?: { action: string; detail?: Prisma.InputJsonValue };
   }): Promise<MigrationRow> {
-    const { id, from, to, actor, patch } = params;
+    const { id, from, to, actor, patch, where, event } = params;
     try {
       return await this.prisma.$transaction(async (tx) => {
         const { count } = await tx.org_agent_migrations.updateMany({
-          where: { id, status: from },
+          where: { id, status: from, ...where },
           data: {
             ...patch,
             status: to,
@@ -134,7 +139,13 @@ export class OrgAgentMigrationRepository {
           throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
         }
         await tx.org_agent_migration_events.create({
-          data: { migrationId: id, fromStatus: from, toStatus: to, actor }
+          data: {
+            migrationId: id,
+            fromStatus: from,
+            toStatus: to,
+            actor,
+            ...(event ? { action: event.action, ...(undefined === event.detail ? {} : { detail: event.detail }) } : {})
+          }
         });
         return tx.org_agent_migrations.findUniqueOrThrow({ where: { id } });
       });
@@ -245,6 +256,86 @@ export class OrgAgentMigrationRepository {
         }
       });
     });
+  }
+
+  /**
+   * Takes the lease on a migration unless another replica holds it. The lease expires on its own, so a replica that
+   * dies holding it does not block the migration for long.
+   * @returns false when someone else holds a live lease
+   */
+  async tryAcquireLease(id: string, leaseMs: number): Promise<boolean> {
+    const now = new Date();
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] },
+      data: { leaseUntil: new Date(now.getTime() + leaseMs) }
+    });
+    return 1 === count;
+  }
+
+  /** Scheduled moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
+  async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.SCHEDULED,
+        rehearsalStatus: REHEARSAL_DONE,
+        scheduledFor: { lte: now },
+        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+      },
+      orderBy: { scheduledFor: 'asc' },
+      take
+    });
+  }
+
+  /**
+   * Moves that nobody seems to be running any more: frozen past their deadline, or switched over without finishing.
+   * `graceMs` leaves room for a live run that is about to give up or finish on its own.
+   */
+  async findStalled(now: Date, graceMs: number): Promise<MigrationRow[]> {
+    const cutoff = new Date(now.getTime() - graceMs);
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        AND: [
+          { OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] },
+          {
+            OR: [
+              {
+                status: {
+                  in: [
+                    OrgAgentMigrationStatus.FROZEN,
+                    OrgAgentMigrationStatus.EXPORTING,
+                    OrgAgentMigrationStatus.IMPORTING,
+                    OrgAgentMigrationStatus.VERIFYING
+                  ]
+                },
+                freezeDeadline: { lt: cutoff }
+              },
+              { status: OrgAgentMigrationStatus.CUTOVER, lastChangedDateTime: { lt: cutoff } }
+            ]
+          }
+        ]
+      }
+    });
+  }
+
+  /**
+   * Moves that hold an org frozen right now, across every replica. A scheduled move whose final checks are running is
+   * not counted: one that keeps failing its checks keeps its retry lease, and would fill the cap and keep a move that
+   * is ready from starting.
+   */
+  async countInFlight(): Promise<number> {
+    return this.prisma.org_agent_migrations.count({
+      where: { status: { in: [...ORG_AGENT_MIGRATION_FROZEN_STATUSES] } }
+    });
+  }
+
+  /** Who confirmed the move most recently: the owner the export alert should name. */
+  async getConfirmingActor(migrationId: string): Promise<string | null> {
+    const event = await this.prisma.org_agent_migration_events.findFirst({
+      where: { migrationId, action: 'MOVE_CONFIRMED' },
+      orderBy: { createDateTime: 'desc' },
+      select: { actor: true }
+    });
+    return event?.actor ?? null;
   }
 
   /**
