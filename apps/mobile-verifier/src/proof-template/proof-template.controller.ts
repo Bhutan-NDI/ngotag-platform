@@ -48,7 +48,7 @@ export class ProofTemplateController {
 
   @MessagePattern({ cmd: 'get-proof-templates' })
   async getProofTemplates(payload: {
-    data: { id?: string; templateId?: string; search?: string; page?: number; pageSize?: number };
+    data: { id?: string; templateId?: string; roleId?: string; search?: string; page?: number; pageSize?: number };
     loginOrgId: string;
   }): Promise<ResponseType> {
     return this.proofTemplateService.getProofTemplates(payload.data, payload.loginOrgId);
