@@ -12,7 +12,6 @@ import {
 } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import {
-  IGetAllProofPresentations,
   IProofRequestSearchCriteria,
   IGetProofPresentationById,
   IProofPresentation,
@@ -28,6 +27,7 @@ import {
 } from './interfaces/verification.interface';
 import { VerificationRepository } from './repositories/verification.repository';
 import { ATTRIBUTE_NAME_REGEX, CommonConstants } from '@credebl/common/common.constant';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import { RecordType, agent_invitations, org_agents, organisation, presentations, user } from '@prisma/client';
 import { AutoAccept, VerificationProcessState } from '@credebl/enum/enum';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -195,22 +195,6 @@ export class VerificationService {
         `[getVerificationRecords ] [NATS call]- error in get verification records count : ${JSON.stringify(error)}`
       );
       throw new RpcException(error.response ? error.response : error);
-    }
-  }
-
-  /**
-   * Consume agent API for get all proof presentations
-   * @param payload
-   * @returns Get all proof presentation
-   */
-  async _getProofPresentations(payload: IGetAllProofPresentations): Promise<object> {
-    try {
-      const pattern = { cmd: 'agent-get-proof-presentations' };
-      const result = await this.natsClient.send<object>(this.verificationServiceProxy, pattern, payload);
-      return result;
-    } catch (error) {
-      this.logger.error(`[_getProofPresentations] - error in get proof presentations : ${JSON.stringify(error)}`);
-      throw error;
     }
   }
 
@@ -1131,12 +1115,13 @@ export class VerificationService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }

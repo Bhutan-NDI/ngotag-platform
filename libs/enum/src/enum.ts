@@ -104,6 +104,38 @@ export enum OrgAgentType {
   SHARED = 'SHARED'
 }
 
+export enum OrgAgentMigrationStatus {
+  CREATED = 'CREATED',
+  REHEARSED = 'REHEARSED',
+  SCHEDULED = 'SCHEDULED',
+  FROZEN = 'FROZEN',
+  EXPORTING = 'EXPORTING',
+  IMPORTING = 'IMPORTING',
+  VERIFYING = 'VERIFYING',
+  CUTOVER = 'CUTOVER',
+  STABILISING = 'STABILISING',
+  ROTATING = 'ROTATING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+  CANCELLED = 'CANCELLED',
+  DISASTER_RESTORED = 'DISASTER_RESTORED'
+}
+
+export const ORG_AGENT_MIGRATION_TERMINAL_STATUSES: readonly OrgAgentMigrationStatus[] = [
+  OrgAgentMigrationStatus.COMPLETED,
+  OrgAgentMigrationStatus.FAILED,
+  OrgAgentMigrationStatus.CANCELLED,
+  OrgAgentMigrationStatus.DISASTER_RESTORED
+];
+
+export const ORG_AGENT_MIGRATION_FROZEN_STATUSES: readonly OrgAgentMigrationStatus[] = [
+  OrgAgentMigrationStatus.FROZEN,
+  OrgAgentMigrationStatus.EXPORTING,
+  OrgAgentMigrationStatus.IMPORTING,
+  OrgAgentMigrationStatus.VERIFYING,
+  OrgAgentMigrationStatus.CUTOVER
+];
+
 export enum AgentSpinUpStatus {
   PENDING = 0,
   WALLET_CREATED = 1,
