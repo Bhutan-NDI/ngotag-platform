@@ -28,7 +28,8 @@ import {
 import { VerificationRepository } from './repositories/verification.repository';
 import { ATTRIBUTE_NAME_REGEX, CommonConstants } from '@credebl/common/common.constant';
 import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
-import { RecordType, agent_invitations, org_agents, organisation, presentations, user } from '@prisma/client';
+import { RecordType, org_agents, organisation, presentations, user } from '@prisma/client';
+import { additionalInvitationDidsField, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import { AutoAccept, VerificationProcessState } from '@credebl/enum/enum';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import * as QRCode from 'qrcode';
@@ -506,11 +507,11 @@ export class VerificationService {
         expiresInSeconds: requestedExpiresInSeconds,
         ...updateOutOfBandRequestProof
       } = outOfBandRequestProof;
-      let invitationDid: string | undefined;
+      let reuseDids: ReuseInvitationDids = {};
       if (true === reuseConnection) {
-        const invitation: agent_invitations = await this.verificationRepository.getInvitationDidByOrgId(user.orgId);
-        invitationDid = invitation?.invitationDid ?? undefined;
+        reuseDids = await this.verificationRepository.getReuseInvitationDids(user.orgId);
       }
+      const { invitationDid } = reuseDids;
       outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
       const expiresInSeconds = toAgentExpiresInSeconds(requestedExpiresInSeconds);
 
@@ -519,6 +520,7 @@ export class VerificationService {
       if (ProofRequestType.INDY === type) {
         updateOutOfBandRequestProof.protocolVersion = updateOutOfBandRequestProof.protocolVersion || 'v1';
         updateOutOfBandRequestProof.invitationDid = invitationDid || undefined;
+        Object.assign(updateOutOfBandRequestProof, additionalInvitationDidsField(reuseDids));
         updateOutOfBandRequestProof.imageUrl = getOrganization?.logoUrl || undefined;
         payload = {
           orgId: user.orgId,
@@ -552,6 +554,7 @@ export class VerificationService {
             },
             autoAcceptProof: outOfBandRequestProof.autoAcceptProof,
             invitationDid: invitationDid || undefined,
+            ...additionalInvitationDidsField(reuseDids),
             expiresInSeconds
           }
         };

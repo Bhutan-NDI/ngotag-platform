@@ -169,6 +169,7 @@ export interface ISendProofRequestPayload {
   reuseConnection?: boolean;
   recipientKey?: string;
   invitationDid?: string;
+  additionalInvitationDids?: string[];
   redirectUri?: string;
   expiresInSeconds?: number | null;
 }

@@ -64,6 +64,8 @@ export interface IOutOfBandCredentialOffer {
   parentThreadId?: string;
   willConfirm?: boolean;
   label?: string;
+  invitationDid?: string;
+  additionalInvitationDids?: string[];
 }
 
 export interface ITenantDto {
@@ -335,6 +337,8 @@ export interface ISendProofRequestPayload {
   parentThreadId?: string;
   willConfirm?: boolean;
   protocolVersion?: string;
+  invitationDid?: string;
+  additionalInvitationDids?: string[];
   expiresInSeconds?: number;
 }
 
@@ -594,6 +598,8 @@ export interface ICreateConnectionInvitation {
   routing?: object;
   appendedAttachments?: object[];
   orgId?: string;
+  invitationDid?: string;
+  additionalInvitationDids?: string[];
 }
 
 export interface AgentHealthData {

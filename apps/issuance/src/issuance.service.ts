@@ -80,7 +80,8 @@ import {
   ISchemaObject
 } from '@credebl/common/interfaces/issuance.interface';
 import { OOBIssueCredentialDto } from 'apps/api-gateway/src/issuance/dtos/issuance.dto';
-import { RecordType, agent_invitations, organisation, user } from '@prisma/client';
+import { RecordType, organisation, user } from '@prisma/client';
+import { additionalInvitationDidsField, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import {
   createOobJsonldIssuancePayload,
   validateAndUpdateIssuanceDates,
@@ -438,11 +439,11 @@ export class IssuanceService {
       }
 
       const agentDetails = await this.issuanceRepository.getAgentEndPoint(orgId);
-      let invitationDid: string | undefined;
+      let reuseDids: ReuseInvitationDids = {};
       if (true === reuseConnection) {
-        const invitation: agent_invitations = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
-        invitationDid = invitation?.invitationDid ?? undefined;
+        reuseDids = await this.issuanceRepository.getReuseInvitationDids(orgId);
       }
+      const { invitationDid } = reuseDids;
       const { agentEndPoint, organisation } = agentDetails;
 
       if (!agentDetails) {
@@ -469,7 +470,8 @@ export class IssuanceService {
           imageUrl: organisation?.logoUrl || payload?.imageUrl || undefined,
           label: organisation?.name,
           comment: comment || '',
-          invitationDid: invitationDid || undefined
+          invitationDid: invitationDid || undefined,
+          ...additionalInvitationDidsField(reuseDids)
         };
       }
 
@@ -497,7 +499,8 @@ export class IssuanceService {
           imageUrl: organisation?.logoUrl || payload?.imageUrl || undefined,
           label: organisation?.name,
           comment: comment || '',
-          invitationDid: invitationDid || undefined
+          invitationDid: invitationDid || undefined,
+          ...additionalInvitationDidsField(reuseDids)
         };
         const payloadAttributes = issueData?.credentialFormats?.jsonld?.credential?.credentialSubject;
 
@@ -1001,12 +1004,12 @@ export class IssuanceService {
     } = sendEmailCredentialOffer;
     const iterationNo = index + 1;
     try {
-      let invitationDid: string | undefined;
+      let reuseDids: ReuseInvitationDids = {};
       if (true === isReuseConnection) {
         this.logger.debug('This is a reuse connection, fetching invitation did');
-        const invitation: agent_invitations = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
-        invitationDid = invitation?.invitationDid ?? undefined;
+        reuseDids = await this.issuanceRepository.getReuseInvitationDids(orgId);
       }
+      const { invitationDid } = reuseDids;
 
       let outOfBandIssuancePayload;
       this.logger.debug('This is an email issuance of type', credentialType);
@@ -1027,7 +1030,8 @@ export class IssuanceService {
           willConfirm: outOfBandCredential.willConfirm || undefined,
           label: organisation?.name,
           imageUrl: organisation?.logoUrl || outOfBandCredential?.imageUrl,
-          invitationDid: invitationDid || undefined
+          invitationDid: invitationDid || undefined,
+          ...additionalInvitationDidsField(reuseDids)
         };
       }
 
@@ -1048,7 +1052,8 @@ export class IssuanceService {
           willConfirm: outOfBandCredential.willConfirm || undefined,
           label: organisation?.name,
           imageUrl: organisation?.logoUrl || outOfBandCredential?.imageUrl,
-          invitationDid: invitationDid || undefined
+          invitationDid: invitationDid || undefined,
+          ...additionalInvitationDidsField(reuseDids)
         };
 
         const payloadAttributes = outOfBandIssuancePayload?.credentialFormats?.jsonld?.credential?.credentialSubject;
