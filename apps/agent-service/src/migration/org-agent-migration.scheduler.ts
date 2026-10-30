@@ -7,6 +7,7 @@ import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration
 import { envMs } from './migration-job-poller';
 import { OrgAgentMigrationExecutor } from './org-agent-migration.executor.service';
 import { OrgAgentMigrationPreflightService } from './org-agent-migration.preflight.service';
+import { isRehearsalStale } from './org-agent-migration.schedule.service';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 import { OrgAgentMigrationSwitchOverService } from './org-agent-migration.switch-over.service';
 
@@ -119,14 +120,20 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
       return;
     }
 
-    // A move that missed its slot is cancelled before any check, which would otherwise touch the dedicated agent.
+    // A move that missed its slot is taken off it before any check, which would otherwise touch the dedicated agent.
     if (this.waited(migration) > this.startWindowMs()) {
-      await this.cancel(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
+      await this.unschedule(migration, 'SLOT_MISSED', { reason: 'SLOT_MISSED' });
+      return;
+    }
+    // The freeze budget comes from the rehearsal, so a move on a rehearsal that has gone stale is not started either.
+    // Measured at the slot, as booking does, so a tick delay or a retry inside the window does not turn it stale.
+    if (isRehearsalStale(migration, migration.scheduledFor?.getTime())) {
+      await this.unschedule(migration, 'REHEARSAL_STALE', { reason: 'REHEARSAL_STALE' });
       return;
     }
     const failedCheck = await this.failedCheck(migration);
     if (failedCheck) {
-      await this.deferOrCancel(migration, failedCheck);
+      await this.deferOrUnschedule(migration, failedCheck);
       return;
     }
 
@@ -152,35 +159,35 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
     }
   }
 
-  // A failed check is retried until the start window closes, then the move cancels itself and nothing changes.
-  private async deferOrCancel(migration: org_agent_migrations, failedCheck: string): Promise<void> {
+  // A failed check is retried until the start window closes, then the move is taken off its slot and nothing changes.
+  private async deferOrUnschedule(migration: org_agent_migrations, failedCheck: string): Promise<void> {
     if (this.waited(migration) <= this.startWindowMs()) {
       this.logger.warn(`[migration-scheduler] ${migration.id}: final check ${failedCheck} failed; trying again later`);
       return;
     }
-    await this.cancel(migration, `PREFLIGHT_FAILED:${failedCheck}`, {
+    await this.unschedule(migration, `PREFLIGHT_FAILED:${failedCheck}`, {
       reason: 'FINAL_CHECK_FAILED',
       check: failedCheck
     });
   }
 
   // The slot was chosen to keep citizens undisturbed, so a move that missed it is not started at some other time.
-  private async cancel(
+  // Nothing has run, so it goes back to waiting for a new slot instead of ending.
+  private async unschedule(
     migration: org_agent_migrations,
-    errorCode: string,
+    reason: string,
     detail: Record<string, string>
   ): Promise<void> {
     try {
-      // Only the slot this tick read: an owner who moved it meanwhile keeps the move.
-      await this.migrationService.abort(migration.id, errorCode, null, migration.scheduledFor);
+      await this.migrationService.unschedule(migration.id, reason, migration.scheduledFor);
     } catch (error) {
+      // The owner moved the slot while the checks ran: their new slot stands.
       if (error instanceof ConflictException) {
-        this.logger.warn(`[migration-scheduler] ${migration.id}: the slot was changed meanwhile; left as it is`);
         return;
       }
       throw error;
     }
-    await this.migrationRepository.recordEvent(migration.id, { action: 'MOVE_CANCELLED', actor: null, detail });
+    await this.migrationRepository.recordEvent(migration.id, { action: 'MOVE_UNSCHEDULED', actor: null, detail });
   }
 
   private waited(migration: org_agent_migrations): number {

@@ -11,8 +11,19 @@ import { OrgAgentMigrationService } from './org-agent-migration.service';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CLOCK_SKEW_MS = 60 * 1000;
 const DEFAULT_MAX_LEAD_DAYS = 14;
+const DEFAULT_REHEARSAL_MAX_AGE_DAYS = 14;
 
 const maxLeadMs = (): number => envMs('ORG_MIGRATION_MAX_LEAD_DAYS', DEFAULT_MAX_LEAD_DAYS) * DAY_MS;
+
+const rehearsalMaxAgeMs = (): number => {
+  const days = Number(process.env.ORG_MIGRATION_REHEARSAL_MAX_AGE_DAYS);
+  return (Number.isFinite(days) && 0 < days ? days : DEFAULT_REHEARSAL_MAX_AGE_DAYS) * DAY_MS;
+};
+
+export const isRehearsalStale = (migration: { rehearsal: unknown }, at: number = Date.now()): boolean => {
+  const rehearsedAt = (migration.rehearsal as { finishedAt?: string } | null)?.finishedAt;
+  return !rehearsedAt || at - new Date(rehearsedAt).getTime() > rehearsalMaxAgeMs();
+};
 
 /**
  * The owner's commitment to move: after a finished rehearsal they type the organisation's name and pick a slot (or
@@ -52,11 +63,16 @@ export class OrgAgentMigrationScheduleService {
     const now = Date.now();
     const slot = this.slotFrom(payload.scheduledFor, now);
 
+    // The freeze budget comes from the rehearsal, and a wallet grows, so it must still predict it when the slot arrives.
+    if (isRehearsalStale(migration, slot.getTime())) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationRehearsalStale);
+    }
+
     return this.migrationService.advance(
       migration.id,
       OrgAgentMigrationStatus.SCHEDULED,
       userId,
-      { scheduledFor: slot },
+      { scheduledFor: slot, error: null },
       {
         // Two owners rescheduling at once, or a move the scheduler took in between, must not both go through.
         expectedFrom: migration.status as OrgAgentMigrationStatus,

@@ -72,6 +72,10 @@ describe('org agent migration state machine', () => {
     path.slice(1).forEach((to, index) => expect(canTransition(path[index], to)).toBe(true));
   });
 
+  it('does not let a booked move go back to REHEARSED through advance, which only unschedule may do', () => {
+    expect(canTransition(Status.SCHEDULED, Status.REHEARSED)).toBe(false);
+  });
+
   it('cannot skip the rehearsal or the schedule', () => {
     expect(canTransition(Status.CREATED, Status.FROZEN)).toBe(false);
     expect(canTransition(Status.REHEARSED, Status.FROZEN)).toBe(false);

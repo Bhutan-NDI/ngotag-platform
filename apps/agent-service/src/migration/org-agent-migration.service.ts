@@ -143,6 +143,34 @@ export class OrgAgentMigrationService {
   }
 
   /**
+   * Takes a move that has been scheduled but not started back to REHEARSED with no slot, naming why. Nothing has
+   * changed on either agent, so the rehearsal still stands: the owner picks a new slot and schedules again.
+   * @throws when there is no such migration, or it is not waiting for its slot
+   */
+  async unschedule(
+    migrationId: string,
+    reason: string,
+    // The slot the caller read: a slot the owner has booked since is left alone.
+    expectedScheduledFor?: Date | null
+  ): Promise<org_agent_migrations> {
+    const migration = await this.migrationRepository.getById(migrationId);
+    if (!migration) {
+      throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
+    }
+    if (OrgAgentMigrationStatus.SCHEDULED !== migration.status) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
+    }
+    return this.migrationRepository.transition({
+      id: migrationId,
+      from: OrgAgentMigrationStatus.SCHEDULED,
+      to: OrgAgentMigrationStatus.REHEARSED,
+      actor: null,
+      patch: { scheduledFor: null, error: reason },
+      ...(undefined === expectedScheduledFor ? {} : { where: { scheduledFor: expectedScheduledFor } })
+    });
+  }
+
+  /**
    * Fails a scheduled or started migration that has not reached the switch: the org stays exactly as it was. `errorCode`
    * is a stable, sanitised code (for example VERIFICATION_FAILED), never raw error text. The stored token for the
    * dedicated agent is dropped: a finished migration has no use for a credential.

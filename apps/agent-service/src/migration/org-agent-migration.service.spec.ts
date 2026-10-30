@@ -403,4 +403,51 @@ describe('OrgAgentMigrationService', () => {
       expect(migrationRepository.transition).not.toHaveBeenCalled();
     });
   });
+
+  describe('unschedule', () => {
+    it('takes a scheduled move off its slot and puts it back to rehearsed, naming why', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.SCHEDULED, scheduledFor: new Date() }
+      });
+
+      await service.unschedule(MIGRATION_ID, 'SLOT_MISSED');
+
+      expect(migrationRepository.transition).toHaveBeenCalledWith({
+        id: MIGRATION_ID,
+        from: Status.SCHEDULED,
+        to: Status.REHEARSED,
+        actor: null,
+        patch: { scheduledFor: null, error: 'SLOT_MISSED' }
+      });
+    });
+
+    it('matches the slot the caller read, so a slot the owner booked in the meantime is not wiped', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.SCHEDULED, scheduledFor: new Date('2026-11-01T10:00:00Z') }
+      });
+      const readSlot = new Date('2026-11-01T10:00:00Z');
+
+      await service.unschedule(MIGRATION_ID, 'PREFLIGHT_FAILED:NO_BULK_JOB', readSlot);
+
+      expect(migrationRepository.transition).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { scheduledFor: readSlot } })
+      );
+    });
+
+    it.each([Status.CREATED, Status.REHEARSED, Status.FROZEN, Status.STABILISING, Status.FAILED])(
+      'refuses a migration in %s, which is not waiting for its slot',
+      async (status) => {
+        const { service, migrationRepository } = buildService({ migration: { id: MIGRATION_ID, status } });
+
+        await expect(service.unschedule(MIGRATION_ID, 'SLOT_MISSED')).rejects.toThrow(BadRequestException);
+        expect(migrationRepository.transition).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses a migration that does not exist', async () => {
+      const { service } = buildService({ migration: null });
+
+      await expect(service.unschedule(MIGRATION_ID, 'SLOT_MISSED')).rejects.toThrow(NotFoundException);
+    });
+  });
 });

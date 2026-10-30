@@ -727,7 +727,8 @@ describe('OrgAgentMigrationPreflightService', () => {
       id: MIGRATION_ID,
       status: 'SCHEDULED',
       startedBy: 'owner-1',
-      scheduledFor: new Date(Date.now() - 1000)
+      scheduledFor: new Date(Date.now() - 1000),
+      rehearsal: { finishedAt: new Date().toISOString() }
     };
     const migrationRepository = {
       findDueForStart: jest.fn().mockResolvedValue([dueMove]),
