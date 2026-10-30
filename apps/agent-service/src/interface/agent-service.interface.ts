@@ -339,6 +339,7 @@ export interface ISendProofRequestPayload {
   protocolVersion?: string;
   invitationDid?: string;
   additionalInvitationDids?: string[];
+  expiresInSeconds?: number;
 }
 
 export interface IAgentStatus {

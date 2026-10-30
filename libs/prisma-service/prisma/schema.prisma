@@ -167,7 +167,6 @@ model organisation {
   marketplaceSubscriptions  marketplace_subscription[]
   marketplaceUsageEvents    marketplace_usage_event[]
   billingUsageEvents        billing_usage_event[]
-  org_agent_migrations      org_agent_migrations[]
 }
 
 model org_invitations {
@@ -277,11 +276,34 @@ model org_agent_migrations {
   storageVersion         String?                      @db.VarChar
   rehearsalDurationMs    Int?
   predictedFreezeMs      Int?
+  scheduledFor           DateTime?                    @db.Timestamptz(6)
   freezeDeadline         DateTime?                    @db.Timestamptz(6)
   stabilisationEndsAt    DateTime?                    @db.Timestamptz(6)
   purgedAt               DateTime?                    @db.Timestamptz(6)
   error                  String?                      @db.VarChar
-  organisation           organisation                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  // The dedicated agent's root token (AES-encrypted), kept from preflight until cutover writes it to org_agents.
+  // Never returned to callers.
+  targetTokenEncrypted   String?                      @db.VarChar
+  backupsConfirmedAt     DateTime?                    @db.Timestamptz(6)
+  preflight              Json?
+  rehearsalStatus        String?                      @db.VarChar(16)
+  rehearsalStartedAt     DateTime?                    @db.Timestamptz(6)
+  rehearsal              Json?
+  // Held by whichever agent-service replica is starting or recovering this migration, so two do not do it at once.
+  leaseUntil             DateTime?                    @db.Timestamptz(6)
+  // Progress of the connection rotation after the switch: the agent's job and its counts, as last polled.
+  rotation               Json?
+  // A one-time check that the dedicated agent's webhook URL reaches the platform: only the hash of the probe id is kept.
+  webhookProbeHash       String?                      @db.VarChar
+  webhookProbeExpiresAt  DateTime?                    @db.Timestamptz(6)
+  webhookConfirmedAt     DateTime?                    @db.Timestamptz(6)
+  // When the window's webhook check last ran, so tries are spaced without holding the migration's lease.
+  webhookCheckedAt       DateTime?                    @db.Timestamptz(6)
+  // PULL or PUSH, set by preflight: whether the dedicated agent can reach S3 for the export.
+  downloadMethod         String?                      @db.VarChar(8)
+  // When the move reached COMPLETED.
+  completedAt            DateTime?                    @db.Timestamptz(6)
+  // No relation to `organisation`: the audit trail is permanent and must outlive the organisation (SAD §5.2).
   events                 org_agent_migration_events[]
 
   // At most one non-terminal migration per org: a partial unique index on (orgId) WHERE status NOT IN
@@ -297,7 +319,12 @@ model org_agent_migration_events {
   fromStatus     String?              @db.VarChar(32)
   toStatus       String               @db.VarChar(32)
   actor          String?              @db.VarChar
-  migration      org_agent_migrations @relation(fields: [migrationId], references: [id], onDelete: Cascade)
+  // Null on a state change. On any other audited action (a preflight run, a rehearsal, a refused attempt) it names
+  // the action and fromStatus equals toStatus.
+  action         String?              @db.VarChar(48)
+  // Facts about the action. Never secrets, URLs or tokens.
+  detail         Json?
+  migration      org_agent_migrations @relation(fields: [migrationId], references: [id], onDelete: Restrict)
 
   @@index([migrationId])
 }

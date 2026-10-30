@@ -139,6 +139,7 @@ export interface ISendPresentationExchangeProofRequestPayload {
   proofFormats: IPresentationExchangeProofFormats;
   autoAcceptProof: string;
   label?: string;
+  expiresInSeconds?: number;
 }
 export interface IPresentationExchangeProofRequestPayload {
   url: string;
@@ -170,6 +171,7 @@ export interface ISendProofRequestPayload {
   invitationDid?: string;
   additionalInvitationDids?: string[];
   redirectUri?: string;
+  expiresInSeconds?: number | null;
 }
 
 export interface IWSendProofRequestPayload {
@@ -263,6 +265,7 @@ export interface IProofRequestData {
   presentationDefinition?: IProofRequestPresentationDefinition;
   comment: string;
   autoAcceptProof: AutoAccept;
+  expiresInSeconds?: number | null;
 }
 export interface IProofFormat {
   indy: Indy;

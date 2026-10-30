@@ -68,6 +68,12 @@ import {
 } from './response-code/redirect-uri.util';
 import { IProofCallbackResult, ResponseCodeStatus } from './response-code/response-code.interface';
 
+/**
+ * The agent-controller value for `expiresInSeconds`: null or absent becomes undefined, so the field is
+ * left out of the request and agent-controller applies its deployment default (DIDCOMM_PROOF_REQUEST_EXPIRY).
+ */
+const toAgentExpiresInSeconds = (value: number | null | undefined): number | undefined => value ?? undefined;
+
 @Injectable()
 export class VerificationService {
   private readonly logger = new Logger('VerificationService');
@@ -289,7 +295,8 @@ export class VerificationService {
           autoAcceptProof: requestProof.autoAcceptProof || AutoAccept.Never,
           goalCode: requestProof.goalCode || undefined,
           parentThreadId: requestProof.parentThreadId || undefined,
-          willConfirm: requestProof.willConfirm || undefined
+          willConfirm: requestProof.willConfirm || undefined,
+          expiresInSeconds: toAgentExpiresInSeconds(requestProof.expiresInSeconds)
         };
 
         const payload: IProofRequestPayload = {
@@ -491,14 +498,22 @@ export class VerificationService {
       const url = getAgentUrl(getAgentDetails?.agentEndPoint, CommonConstants.CREATE_OUT_OF_BAND_PROOF_PRESENTATION);
 
       // Destructuring 'outOfBandRequestProof' to remove emailId, as it is not used while agent operation
-      const { isShortenUrl, emailId, type, reuseConnection, redirectUri, ...updateOutOfBandRequestProof } =
-        outOfBandRequestProof;
+      const {
+        isShortenUrl,
+        emailId,
+        type,
+        reuseConnection,
+        redirectUri,
+        expiresInSeconds: requestedExpiresInSeconds,
+        ...updateOutOfBandRequestProof
+      } = outOfBandRequestProof;
       let reuseDids: ReuseInvitationDids = {};
       if (true === reuseConnection) {
         reuseDids = await this.verificationRepository.getReuseInvitationDids(user.orgId);
       }
       const { invitationDid } = reuseDids;
       outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
+      const expiresInSeconds = toAgentExpiresInSeconds(requestedExpiresInSeconds);
 
       let payload: IProofRequestPayload;
 
@@ -510,7 +525,7 @@ export class VerificationService {
         payload = {
           orgId: user.orgId,
           url,
-          proofRequestPayload: updateOutOfBandRequestProof
+          proofRequestPayload: { ...updateOutOfBandRequestProof, expiresInSeconds }
         };
       }
 
@@ -539,7 +554,8 @@ export class VerificationService {
             },
             autoAcceptProof: outOfBandRequestProof.autoAcceptProof,
             invitationDid: invitationDid || undefined,
-            ...additionalInvitationDidsField(reuseDids)
+            ...additionalInvitationDidsField(reuseDids),
+            expiresInSeconds
           }
         };
       }
