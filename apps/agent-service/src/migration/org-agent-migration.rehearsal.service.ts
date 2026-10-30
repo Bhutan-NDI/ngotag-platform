@@ -1,0 +1,292 @@
+/* eslint-disable camelcase */
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
+import { ResponseMessages } from '@credebl/common/response-messages';
+import { org_agent_migrations } from '@prisma/client';
+import { createHash } from 'crypto';
+import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
+import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
+import { IPortabilityJob, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
+import { IPreflightReport, IRehearsalRecord } from './org-agent-migration.interface';
+import { OrgAgentMigrationService } from './org-agent-migration.service';
+
+const MINUTE_MS = 60 * 1000;
+const FREEZE_FACTOR = 1.5;
+const FREEZE_FLOOR_MS = 15 * MINUTE_MS;
+const FREEZE_CAP_MS = 120 * MINUTE_MS;
+const MAX_CONSECUTIVE_POLL_FAILURES = 3;
+
+/** The pause to promise the owner, and the budget the move gets: 1.5 x the rehearsal, between 15 and 120 minutes. */
+export const predictFreezeMs = (rehearsalDurationMs: number): number =>
+  Math.min(FREEZE_CAP_MS, Math.max(FREEZE_FLOOR_MS, Math.round(rehearsalDurationMs * FREEZE_FACTOR)));
+
+const envMs = (name: string, fallback: number): number => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && 0 < value ? value : fallback;
+};
+
+// Stable codes the studio maps to a message; never raw error text.
+class RehearsalFailure extends Error {
+  constructor(
+    readonly step: 'EXPORT' | 'IMPORT',
+    readonly code: string
+  ) {
+    super(code);
+  }
+}
+
+/**
+ * The dry run of a move (SAD E.2): export the tenant sealed to the dedicated agent, merge it there with the merge
+ * rolled back, time both, and remove the export from S3. Nothing on either agent changes and the org is never
+ * frozen. It runs in the background because a large wallet takes minutes; the owner polls the migration.
+ *
+ * The rehearsal is a real export of the org's keys, so the controls that guard every export apply to it too.
+ */
+@Injectable()
+export class OrgAgentMigrationRehearsalService {
+  constructor(
+    private readonly migrationRepository: OrgAgentMigrationRepository,
+    private readonly migrationService: OrgAgentMigrationService,
+    private readonly access: MigrationAgentAccess,
+    private readonly agentClient: MigrationAgentClient,
+    private readonly logger: Logger
+  ) {}
+
+  /**
+   * Starts the rehearsal and returns at once with the migration marked as running.
+   * @throws when the migration is not ready for one, or one is already running
+   */
+  async start(orgId: string, actor: string): Promise<org_agent_migrations> {
+    const migration = await this.migrationRepository.getActiveByOrgId(orgId);
+    if (!migration) {
+      throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
+    }
+    if (![OrgAgentMigrationStatus.CREATED, OrgAgentMigrationStatus.REHEARSED].includes(migration.status as never)) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationInvalidTransition);
+    }
+    if (!(migration.preflight as unknown as IPreflightReport | null)?.passed) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationPreflightNotPassed);
+    }
+    if (!migration.tenantId || !migration.targetTokenEncrypted) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationPreflightNotPassed);
+    }
+
+    // A live rehearsal keeps its start time fresh (see startHeartbeat), so a short window frees the lock after a restart.
+    const staleBefore = new Date(Date.now() - envMs('ORG_MIGRATION_REHEARSAL_STALE_MS', 3 * MINUTE_MS));
+    if (!(await this.migrationRepository.tryStartRehearsal(migration.id, staleBefore))) {
+      throw new ConflictException(ResponseMessages.agent.error.migrationRehearsalRunning);
+    }
+
+    void this.execute(migration, actor).catch((error) => {
+      this.logger.error(`[rehearsal] ${migration.id} crashed: ${error instanceof Error ? error.message : 'failed'}`);
+    });
+    return this.migrationRepository.getById(migration.id) as Promise<org_agent_migrations>;
+  }
+
+  private startHeartbeat(migrationId: string): () => void {
+    const timer = setInterval(
+      () => {
+        this.migrationRepository.touchRehearsal(migrationId).catch(() => undefined);
+      },
+      envMs('ORG_MIGRATION_REHEARSAL_HEARTBEAT_MS', 30 * 1000)
+    );
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+
+  private async execute(migration: org_agent_migrations, actor: string): Promise<void> {
+    const stopHeartbeat = this.startHeartbeat(migration.id);
+    try {
+      await this.runRehearsal(migration, actor);
+    } finally {
+      stopHeartbeat();
+    }
+  }
+
+  private async runRehearsal(migration: org_agent_migrations, actor: string): Promise<void> {
+    let shared: IAgentAccess | undefined;
+    let dedicated: IAgentAccess | undefined;
+    try {
+      shared = await this.access.shared();
+      dedicated = await this.access.dedicated(migration);
+    } catch (error) {
+      this.logger.error(
+        `[rehearsal] ${migration.id} could not read agent access: ${error instanceof Error ? error.message : 'failed'}`
+      );
+    }
+    if (!shared || !dedicated) {
+      await this.recordFailure(migration.id, { code: 'AGENT_UNAVAILABLE' });
+      return;
+    }
+
+    const record: IRehearsalRecord = { downloadMethod: 'PULL' };
+    let exportJobId: string | undefined;
+    try {
+      const session = await this.guard('IMPORT', () =>
+        this.agentClient.createImportSession(dedicated.endpoint, dedicated.token)
+      );
+      const importKeyFingerprint = createHash('sha256')
+        .update(Buffer.from(session.importPublicKey, 'base64'))
+        .digest('hex');
+
+      const exportStarted = Date.now();
+      const exportJob = await this.guard('EXPORT', () =>
+        this.agentClient.startSealedExport(shared.endpoint, shared.token, migration.tenantId, session.importPublicKey)
+      );
+      exportJobId = exportJob.jobId;
+      const exported = await this.waitFor('EXPORT', () =>
+        this.agentClient.getExportJob(shared.endpoint, shared.token, migration.tenantId, exportJob.jobId)
+      );
+      record.exportMs = Date.now() - exportStarted;
+
+      const importStarted = Date.now();
+      const importJob = await this.guard('IMPORT', () =>
+        this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
+          sessionId: session.sessionId,
+          exportUrl: exported.downloadUrl,
+          checksum: exported.checksum,
+          sealedStoreKey: exported.sealedStoreKey,
+          storageVersion: exported.storageVersion,
+          dryRun: true
+        })
+      );
+      const imported = await this.waitFor('IMPORT', () =>
+        this.agentClient.getImportJob(dedicated.endpoint, dedicated.token, importJob.jobId)
+      );
+      record.importMs = Date.now() - importStarted;
+
+      const rehearsalDurationMs = record.exportMs + record.importMs;
+      record.exportCleanup = await this.deleteExport(shared, migration.tenantId, exportJobId);
+      exportJobId = undefined;
+      record.finishedAt = new Date().toISOString();
+
+      await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.REHEARSED, actor, {
+        counts: imported.counts as never,
+        rehearsalDurationMs,
+        predictedFreezeMs: predictFreezeMs(rehearsalDurationMs),
+        exportJobId: exportJob.jobId,
+        importJobId: importJob.jobId,
+        importKeyFingerprint,
+        storageVersion: exported.storageVersion,
+        rehearsalStatus: 'DONE',
+        rehearsal: record as never
+      });
+    } catch (error) {
+      if (exportJobId) {
+        record.exportCleanup = await this.deleteExport(shared, migration.tenantId, exportJobId);
+      }
+      const failure = error instanceof RehearsalFailure ? error : new RehearsalFailure('EXPORT', 'REHEARSAL_FAILED');
+      await this.recordFailure(
+        migration.id,
+        { ...record, step: failure.step, code: failure.code },
+        'FAILED' === record.exportCleanup ? exportJobId : undefined
+      );
+    }
+  }
+
+  // Maps an agent failure to the code the owner sees and which step it came from.
+  private async guard<T>(step: 'EXPORT' | 'IMPORT', call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (error) {
+      throw new RehearsalFailure(step, this.failureCode(step, error));
+    }
+  }
+
+  private failureCode(step: 'EXPORT' | 'IMPORT', error: unknown): string {
+    if (error instanceof MigrationAgentError) {
+      if ('CONFLICT' === error.kind && ['TARGET_NOT_PRISTINE', 'STORAGE_VERSION_MISMATCH'].includes(error.agentCode)) {
+        return error.agentCode;
+      }
+      if ('REJECTED' === error.kind) {
+        return 'AGENT_TOKEN_REJECTED';
+      }
+      if ('UNREACHABLE' === error.kind) {
+        return 'AGENT_UNREACHABLE';
+      }
+    }
+    return `${step}_FAILED`;
+  }
+
+  // Polls a job to completion. A few failed polls in a row are tolerated: the job runs on the agent either way.
+  private async waitFor(step: 'EXPORT' | 'IMPORT', fetchJob: () => Promise<IPortabilityJob>): Promise<IPortabilityJob> {
+    const deadline = Date.now() + envMs('ORG_MIGRATION_JOB_TIMEOUT_MS', 60 * MINUTE_MS);
+    const intervalMs = envMs('ORG_MIGRATION_POLL_INTERVAL_MS', 5000);
+    let failedPolls = 0;
+
+    for (;;) {
+      try {
+        const job = await fetchJob();
+        failedPolls = 0;
+        if ('completed' === job.status) {
+          return job;
+        }
+        if ('failed' === job.status) {
+          throw new RehearsalFailure(step, `${step}_FAILED`);
+        }
+      } catch (error) {
+        if (error instanceof RehearsalFailure) {
+          throw error;
+        }
+        failedPolls += 1;
+        if (MAX_CONSECUTIVE_POLL_FAILURES <= failedPolls) {
+          throw new RehearsalFailure(step, this.failureCode(step, error));
+        }
+      }
+      if (Date.now() >= deadline) {
+        throw new RehearsalFailure(step, 'REHEARSAL_TIMEOUT');
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  // The agent refuses to delete an export that is still running, so a job cut short by a timeout is given time to settle.
+  private async awaitExportSettled(shared: IAgentAccess, tenantId: string, jobId: string): Promise<void> {
+    const deadline = Date.now() + envMs('ORG_MIGRATION_EXPORT_CLEANUP_WAIT_MS', 2 * MINUTE_MS);
+    const intervalMs = envMs('ORG_MIGRATION_POLL_INTERVAL_MS', 5000);
+    for (;;) {
+      try {
+        const job = await this.agentClient.getExportJob(shared.endpoint, shared.token, tenantId, jobId);
+        if ('completed' === job.status || 'failed' === job.status) {
+          return;
+        }
+      } catch {
+        return;
+      }
+      if (Date.now() >= deadline) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  private async deleteExport(shared: IAgentAccess, tenantId: string, jobId: string): Promise<'DELETED' | 'FAILED'> {
+    await this.awaitExportSettled(shared, tenantId, jobId);
+    try {
+      await this.agentClient.deleteExport(shared.endpoint, shared.token, tenantId, jobId);
+      return 'DELETED';
+    } catch (error) {
+      this.logger.warn(
+        `[rehearsal] export ${jobId} was not deleted from S3: ${error instanceof Error ? error.message : 'failed'}`
+      );
+      return 'FAILED';
+    }
+  }
+
+  // `leftoverExportJobId` keeps an export that could not be deleted findable, so a later run or a sweeper can remove it.
+  private async recordFailure(
+    migrationId: string,
+    record: IRehearsalRecord & { code: string },
+    leftoverExportJobId?: string
+  ): Promise<void> {
+    try {
+      await this.migrationRepository.update(migrationId, {
+        rehearsalStatus: 'FAILED',
+        rehearsal: { ...record, finishedAt: new Date().toISOString() } as never,
+        ...(leftoverExportJobId ? { exportJobId: leftoverExportJobId } : {})
+      });
+    } catch (error) {
+      this.logger.error(`[rehearsal] could not record failure: ${error instanceof Error ? error.message : 'failed'}`);
+    }
+  }
+}

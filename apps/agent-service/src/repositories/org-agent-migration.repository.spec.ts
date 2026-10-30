@@ -30,6 +30,7 @@ const buildRepository = (overrides: { updateCount?: number } = {}) => {
     ),
     org_agent_migrations: {
       findFirst,
+      updateMany: migrationUpdateMany,
       findUnique: jest.fn(),
       count: jest.fn().mockResolvedValue(3),
       findMany: jest.fn().mockResolvedValue([])
@@ -122,6 +123,61 @@ describe('OrgAgentMigrationRepository', () => {
         repository.transition({ id: ID, from: Status.CREATED, to: Status.REHEARSED, actor: USER_ID })
       ).rejects.toThrow(ConflictException);
       expect(eventCreate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('update', () => {
+    it('writes by id alone when no status is given', async () => {
+      const { repository, prisma } = buildRepository();
+      (prisma.org_agent_migrations as unknown as Record<string, jest.Mock>).update = jest
+        .fn()
+        .mockResolvedValue({ id: ID });
+
+      await repository.update(ID, { error: null });
+
+      expect((prisma.org_agent_migrations as unknown as Record<string, jest.Mock>).update).toHaveBeenCalledWith({
+        where: { id: ID },
+        data: { error: null, lastChangedDateTime: expect.any(Date) }
+      });
+    });
+
+    it('writes only while the migration is in one of the given statuses, and refuses once it has moved on', async () => {
+      const { repository, migrationUpdateMany, prisma } = buildRepository();
+      (prisma.org_agent_migrations as unknown as Record<string, jest.Mock>).findUniqueOrThrow = jest
+        .fn()
+        .mockResolvedValue({ id: ID });
+
+      await repository.update(ID, { error: null }, [Status.CREATED, Status.SCHEDULED]);
+      expect(migrationUpdateMany).toHaveBeenCalledWith({
+        where: { id: ID, status: { in: [Status.CREATED, Status.SCHEDULED] } },
+        data: { error: null, lastChangedDateTime: expect.any(Date) }
+      });
+
+      migrationUpdateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(repository.update(ID, { error: null }, [Status.CREATED])).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('tryStartRehearsal', () => {
+    it('only starts on a migration that is not booked or moving', async () => {
+      const { repository, migrationUpdateMany } = buildRepository();
+
+      await repository.tryStartRehearsal(ID, new Date(0));
+
+      expect(migrationUpdateMany.mock.calls[0][0].where.status).toEqual({ in: [Status.CREATED, Status.REHEARSED] });
+    });
+  });
+
+  describe('touchRehearsal', () => {
+    it('freshens the start time of a rehearsal that is running, and of no other', async () => {
+      const { repository, migrationUpdateMany } = buildRepository();
+
+      await repository.touchRehearsal(ID);
+
+      expect(migrationUpdateMany).toHaveBeenCalledWith({
+        where: { id: ID, rehearsalStatus: 'RUNNING' },
+        data: { rehearsalStartedAt: expect.any(Date) }
+      });
     });
   });
 

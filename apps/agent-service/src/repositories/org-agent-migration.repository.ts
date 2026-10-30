@@ -4,6 +4,7 @@ import { Prisma, org_agent_migrations } from '@prisma/client';
 import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { PrismaService } from '@credebl/prisma-service';
 import { ResponseMessages } from '@credebl/common/response-messages';
+import { FileUploadStatus } from 'apps/api-gateway/src/enum';
 import { TERMINAL_STATUSES } from '../migration/org-agent-migration.state-machine';
 
 type MigrationRow = org_agent_migrations;
@@ -15,6 +16,7 @@ export type OrgAgentMigrationPatch = Omit<
 >;
 
 const UNIQUE_VIOLATION = 'P2002';
+export const REHEARSAL_RUNNING = 'RUNNING';
 
 @Injectable()
 export class OrgAgentMigrationRepository {
@@ -141,5 +143,88 @@ export class OrgAgentMigrationRepository {
       );
       throw error;
     }
+  }
+
+  /**
+   * Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). With
+   * `onlyWhileIn`, it writes only while the migration is still in one of those statuses, so a step that overlapped a
+   * cancel or an abort cannot write onto the finished row.
+   * @throws ConflictException when `onlyWhileIn` is given and the migration has moved on
+   */
+  async update(
+    id: string,
+    patch: OrgAgentMigrationPatch,
+    onlyWhileIn?: OrgAgentMigrationStatus[]
+  ): Promise<MigrationRow> {
+    if (!onlyWhileIn) {
+      return this.prisma.org_agent_migrations.update({
+        where: { id },
+        data: { ...patch, lastChangedDateTime: new Date() }
+      });
+    }
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, status: { in: onlyWhileIn } },
+      data: { ...patch, lastChangedDateTime: new Date() }
+    });
+    if (1 !== count) {
+      throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
+    }
+    return this.prisma.org_agent_migrations.findUniqueOrThrow({ where: { id } });
+  }
+
+  /**
+   * Marks a rehearsal as running unless one already is. A run that started before `staleBefore` is treated as dead
+   * (the process died mid-rehearsal) and may be replaced.
+   * @returns false when a live rehearsal already holds it
+   */
+  async tryStartRehearsal(id: string, staleBefore: Date): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: {
+        id,
+        // A rehearsal started alongside a booking would leave a SCHEDULED row whose rehearsal is not DONE.
+        status: { in: [OrgAgentMigrationStatus.CREATED, OrgAgentMigrationStatus.REHEARSED] },
+        OR: [
+          { rehearsalStatus: null },
+          { rehearsalStatus: { not: REHEARSAL_RUNNING } },
+          { rehearsalStartedAt: { lt: staleBefore } }
+        ]
+      },
+      data: {
+        rehearsalStatus: REHEARSAL_RUNNING,
+        rehearsalStartedAt: new Date(),
+        rehearsal: Prisma.JsonNull,
+        lastChangedDateTime: new Date()
+      }
+    });
+    return 1 === count;
+  }
+
+  /** Shows a running rehearsal is still alive, so only one that stopped is taken for dead. */
+  async touchRehearsal(id: string): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({
+      where: { id, rehearsalStatus: REHEARSAL_RUNNING },
+      data: { rehearsalStartedAt: new Date() }
+    });
+  }
+
+  /** True while the org has a bulk issuance that has started or been restarted and not yet finished. */
+  async hasActiveBulkIssuance(orgId: string): Promise<boolean> {
+    const active = await this.prisma.file_upload.findFirst({
+      where: { orgId, deletedAt: null, status: { in: [FileUploadStatus.started, FileUploadStatus.retry] } },
+      select: { id: true }
+    });
+    return Boolean(active);
+  }
+
+  /** How many OID4VC, x509, AnonCreds and status-list records the org has; the move supports none of them. */
+  async countOutOfScopeArtefacts(orgId: string): Promise<Record<string, number>> {
+    const [oidcIssuers, oid4vpVerifiers, x509Certificates, credentialDefinitions, statusLists] = await Promise.all([
+      this.prisma.oidc_issuer.count({ where: { orgAgent: { orgId } } }),
+      this.prisma.oid4vp_verifier.count({ where: { orgAgent: { orgId } } }),
+      this.prisma.x509_certificates.count({ where: { org_agents: { orgId } } }),
+      this.prisma.credential_definition.count({ where: { orgId } }),
+      this.prisma.status_list_allocation.count({ where: { orgId } })
+    ]);
+    return { oidcIssuers, oid4vpVerifiers, x509Certificates, credentialDefinitions, statusLists };
   }
 }

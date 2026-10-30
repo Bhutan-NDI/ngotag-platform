@@ -21,6 +21,10 @@ import { NATSClient } from '@credebl/common/NATSClient';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { OrgAgentMigrationController } from './migration/org-agent-migration.controller';
 import { OrgAgentMigrationService } from './migration/org-agent-migration.service';
+import { OrgAgentMigrationPreflightService } from './migration/org-agent-migration.preflight.service';
+import { OrgAgentMigrationRehearsalService } from './migration/org-agent-migration.rehearsal.service';
+import { MigrationAgentAccess } from './migration/migration-agent-access';
+import { MigrationAgentClient } from './migration/migration-agent.client';
 import { OrgAgentMigrationRepository } from './repositories/org-agent-migration.repository';
 
 @Module({
@@ -53,6 +57,10 @@ import { OrgAgentMigrationRepository } from './repositories/org-agent-migration.
     AgentServiceService,
     AgentServiceRepository,
     OrgAgentMigrationService,
+    OrgAgentMigrationPreflightService,
+    OrgAgentMigrationRehearsalService,
+    MigrationAgentAccess,
+    MigrationAgentClient,
     OrgAgentMigrationRepository,
     PrismaService,
     Logger,

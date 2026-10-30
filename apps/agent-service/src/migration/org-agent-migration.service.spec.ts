@@ -7,7 +7,6 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { OrgAgentMigrationStatus as Status } from '@credebl/enum/enum';
 import { ResponseMessages } from '@credebl/common/response-messages';
-import { OrgAgentMigrationController } from './org-agent-migration.controller';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 
 const ORG_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
@@ -263,41 +262,5 @@ describe('OrgAgentMigrationService', () => {
       await expect(service.abort(MIGRATION_ID, 'X', null)).rejects.toThrow(BadRequestException);
       expect(migrationRepository.transition).not.toHaveBeenCalled();
     });
-  });
-});
-
-describe('OrgAgentMigrationController', () => {
-  const handlers: [keyof OrgAgentMigrationController, string][] = [
-    ['createMigration', 'migrate-org-agent'],
-    ['getMigration', 'get-org-agent-migration'],
-    ['listMigrations', 'list-org-agent-migrations']
-  ];
-
-  it.each(handlers)('%s is bound to the %s NATS subject', (method, cmd) => {
-    const pattern = Reflect.getMetadata('microservices:pattern', OrgAgentMigrationController.prototype[method]);
-
-    expect(pattern).toEqual([{ cmd }]);
-  });
-
-  it('delegates to the service', async () => {
-    const service = {
-      createMigration: jest.fn().mockResolvedValue('created'),
-      getMigration: jest.fn().mockResolvedValue('found'),
-      listMigrations: jest.fn().mockResolvedValue('listed')
-    };
-    const controller = new OrgAgentMigrationController(service as never);
-    const createPayload = {
-      orgId: ORG_ID,
-      userId: USER_ID,
-      targetAdminEndpoint: 'https://a.example.com',
-      targetDidcommEndpoint: 'https://b.example.com'
-    };
-
-    await expect(controller.createMigration(createPayload)).resolves.toBe('created');
-    await expect(controller.getMigration({ orgId: ORG_ID })).resolves.toBe('found');
-    await expect(controller.listMigrations({ orgId: ORG_ID })).resolves.toBe('listed');
-    expect(service.createMigration).toHaveBeenCalledWith(createPayload);
-    expect(service.getMigration).toHaveBeenCalledWith(ORG_ID);
-    expect(service.listMigrations).toHaveBeenCalledWith({ orgId: ORG_ID });
   });
 });

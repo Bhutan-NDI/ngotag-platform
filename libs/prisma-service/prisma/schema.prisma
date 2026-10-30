@@ -282,6 +282,14 @@ model org_agent_migrations {
   stabilisationEndsAt    DateTime?                    @db.Timestamptz(6)
   purgedAt               DateTime?                    @db.Timestamptz(6)
   error                  String?                      @db.VarChar
+  // The dedicated agent's root token (AES-encrypted), kept from preflight until cutover writes it to org_agents.
+  // Never returned to callers.
+  targetTokenEncrypted   String?                      @db.VarChar
+  backupsConfirmedAt     DateTime?                    @db.Timestamptz(6)
+  preflight              Json?
+  rehearsalStatus        String?                      @db.VarChar(16)
+  rehearsalStartedAt     DateTime?                    @db.Timestamptz(6)
+  rehearsal              Json?
   organisation           organisation                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
   events                 org_agent_migration_events[]
 

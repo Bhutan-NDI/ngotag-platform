@@ -461,6 +461,8 @@ export const ResponseMessages = {
       migrationOrgNotShared: 'Only an organization on the shared agent can be migrated to a dedicated agent',
       migrationEndpointInvalid:
         'The dedicated agent admin and DIDComm addresses must be distinct HTTPS URLs, and the DIDComm address must be public and carry no credentials',
+      migrationPreflightNotPassed: 'The preflight checks must pass before the rehearsal can run',
+      migrationRehearsalRunning: 'A rehearsal is already running for this migration',
       walletDoesNotExists: 'Organization wallet does not exists',
       requiredDomain: 'Domain is required for Web method',
       requiredNetwork: 'Network is required',
