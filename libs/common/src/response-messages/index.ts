@@ -480,6 +480,8 @@ export const ResponseMessages = {
       migrationPlatformAdminRequired: 'Only a platform admin can roll a move back',
       migrationCancelNotAllowed: 'The move can only be cancelled before it starts',
       migrationNotRehearsed: 'The move can only be confirmed after a rehearsal has finished',
+      orgBulkJobActive:
+        'ORG_BULK_JOB_ACTIVE: the organization has a bulk issuance running, so the move cannot be confirmed until it finishes',
       migrationRehearsalStale: 'The rehearsal is too old to schedule a move from; run a new rehearsal first',
       migrationConfirmationMismatch: 'The organization name typed does not match',
       migrationSlotInvalid: 'The slot must be a future time within the booking window',
