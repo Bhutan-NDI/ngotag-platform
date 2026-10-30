@@ -93,7 +93,11 @@ export class ProofTemplateController {
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({ name: 'templateId', required: false })
   @ApiQuery({ name: 'id', required: false })
-  @ApiQuery({ name: 'roleId', required: true, description: 'Only templates mapped to this verifier role' })
+  @ApiQuery({
+    name: 'roleId',
+    required: false,
+    description: 'Only templates mapped to this verifier role. Required unless id or templateId is given'
+  })
   async getProofTemplatesAsService(
     @Query()
     data: { id?: string; templateId?: string; roleId?: string; search?: string; page?: number; pageSize?: number },
@@ -103,8 +107,9 @@ export class ProofTemplateController {
     if (!orgId) {
       throw new BadRequestException('orgId is required');
     }
-    // typeof guards against a repeated ?roleId=a&roleId=b, which Express parses into an array
-    if (!data.roleId || 'string' !== typeof data.roleId) {
+    // The list is scoped to one verifier role; an id/templateId lookup resolves a single template
+    // and may be made outside a role context.
+    if (!data.id && !data.templateId && !data.roleId) {
       throw new BadRequestException('roleId is required');
     }
     const result = await this.proofTemplateService.getProofTemplates(data, orgId);
