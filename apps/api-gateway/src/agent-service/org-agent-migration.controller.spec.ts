@@ -361,6 +361,15 @@ describe('wallet move routes', () => {
       expect(service.get).not.toHaveBeenCalled();
     });
 
+    it('answers 200 with no data for an organisation that has never moved', async () => {
+      service.get.mockResolvedValue(null);
+
+      const response = await request(app.getHttpServer()).get(`/orgs/${ORG_ID}/agents/migrate`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toBeNull();
+    });
+
     it('does not show it to someone outside the org', async () => {
       currentUser = userWith([membership(OTHER_ORG_ID, 'owner')]);
 

@@ -150,7 +150,8 @@ export class OrgAgentMigrationRepository {
           data: {
             ...patch,
             status: to,
-            lastChangedDateTime: new Date()
+            lastChangedDateTime: new Date(),
+            ...(OrgAgentMigrationStatus.COMPLETED === to ? { completedAt: new Date() } : {})
           }
         });
         if (1 !== count) {

@@ -73,6 +73,15 @@ export class OrgAgentMigrationService {
     }
   }
 
+  // For the status view, where an organisation that has never moved is an ordinary answer, not an error.
+  async findMigration(orgId: string): Promise<org_agent_migrations | null> {
+    try {
+      return await this.migrationRepository.getLatestByOrgId(orgId);
+    } catch (error) {
+      throw new RpcException(error.response ?? error);
+    }
+  }
+
   async getMigration(orgId: string): Promise<org_agent_migrations> {
     try {
       const migration = await this.migrationRepository.getLatestByOrgId(orgId);
