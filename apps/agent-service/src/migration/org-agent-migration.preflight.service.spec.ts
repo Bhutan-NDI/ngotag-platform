@@ -528,6 +528,7 @@ describe('OrgAgentMigrationPreflightService', () => {
       { abort: jest.fn() } as never,
       service,
       executor as never,
+      {} as never,
       { error: jest.fn(), warn: jest.fn(), log: jest.fn() } as never
     );
 

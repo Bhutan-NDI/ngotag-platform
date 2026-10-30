@@ -101,6 +101,40 @@ describe('OrgAgentMigrationRepository scheduling queries', () => {
     });
   });
 
+  describe('findWindowEnded', () => {
+    it('asks for stabilising moves whose window has ended, earliest first, outside any live lease', async () => {
+      const { repository, prisma } = build();
+      const now = new Date();
+
+      await repository.findWindowEnded(now, 5);
+
+      expect(prisma.org_agent_migrations.findMany).toHaveBeenCalledWith({
+        where: {
+          status: 'STABILISING',
+          stabilisationEndsAt: { lte: now },
+          OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+        },
+        orderBy: { stabilisationEndsAt: 'asc' },
+        take: 5
+      });
+    });
+  });
+
+  describe('findRotating', () => {
+    it('asks for rotating moves outside any live lease, oldest first', async () => {
+      const { repository, prisma } = build();
+      const now = new Date();
+
+      await repository.findRotating(now, 5);
+
+      expect(prisma.org_agent_migrations.findMany).toHaveBeenCalledWith({
+        where: { status: 'ROTATING', OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }] },
+        orderBy: { createDateTime: 'asc' },
+        take: 5
+      });
+    });
+  });
+
   describe('getConfirmingActor', () => {
     it('returns the latest confirmation, or null', async () => {
       const { repository, prisma } = build();

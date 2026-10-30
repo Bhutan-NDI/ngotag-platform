@@ -11,6 +11,7 @@ import { OrgAgentMigrationExecutor } from './org-agent-migration.executor.servic
 import { OrgAgentMigrationPreflightService } from './org-agent-migration.preflight.service';
 import { OrgAgentMigrationScheduler } from './org-agent-migration.scheduler';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
+import { OrgAgentMigrationSwitchOverService } from './org-agent-migration.switch-over.service';
 
 const compile = async (repository: Record<string, jest.Mock> = {}) =>
   Test.createTestingModule({
@@ -28,6 +29,7 @@ const compile = async (repository: Record<string, jest.Mock> = {}) =>
       { provide: OrgAgentMigrationService, useValue: {} },
       { provide: OrgAgentMigrationPreflightService, useValue: {} },
       { provide: OrgAgentMigrationExecutor, useValue: {} },
+      { provide: OrgAgentMigrationSwitchOverService, useValue: {} },
       { provide: Logger, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn() } }
     ]
   }).compile();

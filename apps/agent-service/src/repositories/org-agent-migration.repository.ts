@@ -272,6 +272,14 @@ export class OrgAgentMigrationRepository {
     return 1 === count;
   }
 
+  /** Keeps other ticks and replicas away from a migration for `leaseMs`, which is how a failing step backs off. */
+  async holdLease(id: string, leaseMs: number): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({
+      where: { id },
+      data: { leaseUntil: new Date(Date.now() + leaseMs) }
+    });
+  }
+
   /** Scheduled moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
   async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
     return this.prisma.org_agent_migrations.findMany({
@@ -282,6 +290,31 @@ export class OrgAgentMigrationRepository {
         OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
       },
       orderBy: { scheduledFor: 'asc' },
+      take
+    });
+  }
+
+  /** Moves in the stabilisation window whose window has ended, earliest first. */
+  async findWindowEnded(now: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.STABILISING,
+        stabilisationEndsAt: { lte: now },
+        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+      },
+      orderBy: { stabilisationEndsAt: 'asc' },
+      take
+    });
+  }
+
+  /** Moves whose connections are being rotated, oldest first. */
+  async findRotating(now: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.ROTATING,
+        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+      },
+      orderBy: { createDateTime: 'asc' },
       take
     });
   }

@@ -86,6 +86,14 @@ export interface IRehearsalRecord {
   finishedAt?: string;
 }
 
+export interface IRotationProgress {
+  job: { status: string; startedAt?: string; completedAt?: string };
+  counts: Record<string, number>;
+  polledAt: string;
+  // Since when the number of connections still waiting for an answer has not changed.
+  stalledSince?: string;
+}
+
 export type IOrgAgentMigration = Omit<org_agent_migrations, 'targetTokenEncrypted'>;
 
 // The stored token is a credential and must never leave agent-service.
