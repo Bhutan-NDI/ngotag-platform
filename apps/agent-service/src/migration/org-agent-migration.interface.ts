@@ -30,6 +30,16 @@ export interface IRehearseOrgAgentMigration {
   userId: string;
 }
 
+export interface IRestoreOrgAgentMigration {
+  orgId: string;
+  userId: string;
+}
+
+export interface ICancelOrgAgentMigration {
+  orgId: string;
+  userId: string;
+}
+
 export interface IScheduleOrgAgentMigration {
   orgId: string;
   userId: string;
@@ -37,6 +47,9 @@ export interface IScheduleOrgAgentMigration {
   // When to start. Left out, the move starts at once.
   scheduledFor?: string | Date;
 }
+
+// How the dedicated agent gets the sealed export: it pulls it from S3, or the platform pushes it.
+export type DownloadMethod = 'PULL' | 'PUSH';
 
 export enum PreflightCheckId {
   ORG_IS_SHARED = 'ORG_IS_SHARED',
@@ -48,6 +61,8 @@ export enum PreflightCheckId {
   TARGET_PRISTINE = 'TARGET_PRISTINE',
   DIDCOMM_REACHABLE = 'DIDCOMM_REACHABLE',
   NO_BULK_JOB = 'NO_BULK_JOB',
+  WEBHOOK_DELIVERS = 'WEBHOOK_DELIVERS',
+  DOWNLOAD_METHOD = 'DOWNLOAD_METHOD',
   NO_OUT_OF_SCOPE_ARTEFACTS = 'NO_OUT_OF_SCOPE_ARTEFACTS',
   NO_WEBSOCKET_ENDPOINTS = 'NO_WEBSOCKET_ENDPOINTS',
   SHARED_REDIS = 'SHARED_REDIS',
@@ -74,18 +89,56 @@ export interface IPreflightReport {
 export interface IRehearsalRecord {
   step?: 'EXPORT' | 'IMPORT';
   code?: string;
-  downloadMethod?: 'PULL';
+  downloadMethod?: DownloadMethod;
   exportMs?: number;
   importMs?: number;
   exportCleanup?: 'DELETED' | 'FAILED';
   finishedAt?: string;
 }
 
-export type IOrgAgentMigration = Omit<org_agent_migrations, 'targetTokenEncrypted'>;
+export interface IRotationProgress {
+  job: { status: string; startedAt?: string; completedAt?: string };
+  counts: Record<string, number>;
+  polledAt: string;
+  // Since when the number of connections still waiting for an answer has not changed.
+  stalledSince?: string;
+}
 
-// The stored token is a credential and must never leave agent-service.
+// What an owner or platform admin may read. Everything else on the row (the shared agent's snapshot, tenant and job
+// ids, the export checksum and key fingerprint, the lease, and the stored token) stays inside agent-service.
+export const PUBLIC_MIGRATION_FIELDS = [
+  'id',
+  'createDateTime',
+  'lastChangedDateTime',
+  'orgId',
+  'status',
+  'startedBy',
+  'targetAdminEndpoint',
+  'targetDidcommEndpoint',
+  'counts',
+  'releaseVersion',
+  'storageVersion',
+  'rehearsalDurationMs',
+  'predictedFreezeMs',
+  'scheduledFor',
+  'freezeDeadline',
+  'stabilisationEndsAt',
+  'purgedAt',
+  'error',
+  'backupsConfirmedAt',
+  'preflight',
+  'rehearsalStatus',
+  'rehearsalStartedAt',
+  'rehearsal',
+  'rotation',
+  'webhookConfirmedAt',
+  'downloadMethod',
+  'completedAt'
+] as const;
+
+export type IOrgAgentMigration = Pick<org_agent_migrations, (typeof PUBLIC_MIGRATION_FIELDS)[number]>;
+
 export const toPublicMigration = (migration: org_agent_migrations): IOrgAgentMigration => {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { targetTokenEncrypted, ...rest } = migration;
-  return rest;
+  const entries = PUBLIC_MIGRATION_FIELDS.map((field) => [field, migration[field]]);
+  return Object.fromEntries(entries) as IOrgAgentMigration;
 };

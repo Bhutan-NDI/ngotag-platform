@@ -36,7 +36,10 @@ const buildRepository = (overrides: { updateCount?: number } = {}) => {
       findMany: jest.fn().mockResolvedValue([])
     }
   };
-  (prisma as Record<string, unknown>).org_agent_migration_events = { count: jest.fn().mockResolvedValue(3) };
+  (prisma as Record<string, unknown>).org_agent_migration_events = {
+    count: jest.fn().mockResolvedValue(3),
+    findFirst: jest.fn().mockResolvedValue({ detail: { reason: 'WEBHOOK_UNREACHABLE' } })
+  };
   const repository = new OrgAgentMigrationRepository(prisma as never, { error: jest.fn() } as never);
   return { repository, prisma, tx, migrationCreate, migrationUpdateMany, eventCreate, findFirst };
 };
@@ -63,8 +66,14 @@ describe('OrgAgentMigrationRepository', () => {
         tenantId: 'tenant-1'
       });
       expect(eventCreate).toHaveBeenCalledWith({
-        data: { migrationId: ID, fromStatus: null, toStatus: Status.CREATED, actor: USER_ID }
+        data: {
+          migrationId: ID,
+          fromStatus: null,
+          toStatus: Status.CREATED,
+          actor: USER_ID
+        }
       });
+      expect(JSON.stringify(eventCreate.mock.calls[0][0])).not.toContain('example.com');
     });
 
     it('turns the partial unique index violation into a conflict', async () => {
@@ -145,12 +154,46 @@ describe('OrgAgentMigrationRepository', () => {
       });
     });
 
-    it('records a system step with no actor', async () => {
+    it('names SYSTEM as the actor of a step no person made', async () => {
       const { repository, eventCreate } = buildRepository();
 
       await repository.transition({ id: ID, from: Status.STABILISING, to: Status.ROTATING, actor: null });
 
-      expect(eventCreate.mock.calls[0][0].data.actor).toBeNull();
+      expect(eventCreate.mock.calls[0][0].data.actor).toBe('SYSTEM');
+    });
+
+    it('carries the checksum and the import-key fingerprint on a state change once the export exists', async () => {
+      const { repository, tx, eventCreate } = buildRepository();
+      tx.org_agent_migrations.findUniqueOrThrow.mockResolvedValue({
+        id: ID,
+        checksum: 'sha256-of-the-export',
+        importKeyFingerprint: 'fingerprint-of-the-key'
+      });
+
+      await repository.transition({ id: ID, from: Status.IMPORTING, to: Status.VERIFYING, actor: USER_ID });
+
+      expect(eventCreate.mock.calls[0][0].data.detail).toEqual({
+        checksum: 'sha256-of-the-export',
+        importKeyFingerprint: 'fingerprint-of-the-key'
+      });
+    });
+
+    it('leaves the detail out of a state change before there is anything to carry', async () => {
+      const { repository, eventCreate } = buildRepository();
+
+      await repository.transition({ id: ID, from: Status.CREATED, to: Status.REHEARSED, actor: USER_ID });
+
+      expect(eventCreate.mock.calls[0][0].data).not.toHaveProperty('detail');
+    });
+
+    it('stamps the time a move completed, and only then', async () => {
+      const done = buildRepository();
+      await done.repository.transition({ id: ID, from: Status.ROTATING, to: Status.COMPLETED, actor: null });
+      expect(done.migrationUpdateMany.mock.calls[0][0].data.completedAt).toBeInstanceOf(Date);
+
+      const notDone = buildRepository();
+      await notDone.repository.transition({ id: ID, from: Status.REHEARSED, to: Status.FROZEN, actor: USER_ID });
+      expect(notDone.migrationUpdateMany.mock.calls[0][0].data).not.toHaveProperty('completedAt');
     });
 
     it('refuses, and records nothing, when another actor already moved the migration', async () => {
@@ -215,6 +258,26 @@ describe('OrgAgentMigrationRepository', () => {
         where: { id: ID, rehearsalStatus: 'RUNNING' },
         data: { rehearsalStartedAt: expect.any(Date) }
       });
+    });
+  });
+
+  describe('getEventDetail', () => {
+    it('returns the detail of the latest entry of an action, or null when there is none', async () => {
+      const { repository, prisma } = buildRepository();
+      const events = (prisma as unknown as { org_agent_migration_events: { findFirst: jest.Mock } })
+        .org_agent_migration_events;
+
+      await expect(repository.getEventDetail(ID, 'SWITCHOVER_WEBHOOK_UNCONFIRMED')).resolves.toEqual({
+        reason: 'WEBHOOK_UNREACHABLE'
+      });
+      expect(events.findFirst).toHaveBeenCalledWith({
+        where: { migrationId: ID, action: 'SWITCHOVER_WEBHOOK_UNCONFIRMED' },
+        orderBy: { createDateTime: 'desc' },
+        select: { detail: true }
+      });
+
+      events.findFirst.mockResolvedValue(null);
+      await expect(repository.getEventDetail(ID, 'X')).resolves.toBeNull();
     });
   });
 

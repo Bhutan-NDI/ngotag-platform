@@ -85,7 +85,7 @@
     "form-data": "^4.0.5",
     "fs": "0.0.1-security",
     "generate-password": "^1.7.1",
-    "handlebars": "^4.7.9",
+    "handlebars": "^4.7.10",
     "helmet": "^8.1.0",
     "html-pdf": "^3.0.1",
     "html-to-image": "^1.11.13",
@@ -241,7 +241,11 @@
       "@azure/core-tracing": "1.2.0",
       "@azure/core-util": "1.11.0",
       "@azure/core-xml": "1.4.5",
-      "@azure/logger": "1.1.4"
+      "@azure/logger": "1.1.4",
+      "form-data@<2.5.6": "2.5.6",
+      "handlebars@<4.7.10": "4.7.10",
+      "proxy-addr@<2.0.8": "2.0.8",
+      "websocket-driver@<0.7.5": "0.7.5"
     }
   },
   "packageManager": "pnpm@9.15.3+sha512.1f79bc245a66eb0b07c5d4d83131240774642caaa86ef7d0434ab47c0d16f66b04e21e0c086eb61e62c77efc4d7f7ec071afad3796af64892fae66509173893a",

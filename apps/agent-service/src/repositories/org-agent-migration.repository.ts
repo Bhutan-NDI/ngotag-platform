@@ -20,6 +20,19 @@ const UNIQUE_VIOLATION = 'P2002';
 export const REHEARSAL_RUNNING = 'RUNNING';
 export const REHEARSAL_DONE = 'DONE';
 
+// Named on every audit entry no person made: the timer, a recovery, a failed move.
+export const SYSTEM_ACTOR = 'SYSTEM';
+
+// What every state change carries once the export exists (SAD §7.7): the checksum of what was handed over and the
+// fingerprint of the key it was sealed to. Neither is a secret.
+const custodyFacts = (row: MigrationRow): Prisma.InputJsonObject => ({
+  ...(row.checksum ? { checksum: row.checksum } : {}),
+  ...(row.importKeyFingerprint ? { importKeyFingerprint: row.importKeyFingerprint } : {})
+});
+
+const withDetail = (facts: Prisma.InputJsonObject): { detail?: Prisma.InputJsonObject } =>
+  0 < Object.keys(facts).length ? { detail: facts } : {};
+
 @Injectable()
 export class OrgAgentMigrationRepository {
   constructor(
@@ -54,7 +67,12 @@ export class OrgAgentMigrationRepository {
           }
         });
         await tx.org_agent_migration_events.create({
-          data: { migrationId: migration.id, fromStatus: null, toStatus: migration.status, actor: params.startedBy }
+          data: {
+            migrationId: migration.id,
+            fromStatus: null,
+            toStatus: migration.status,
+            actor: params.startedBy
+          }
         });
         return migration;
       });
@@ -132,22 +150,25 @@ export class OrgAgentMigrationRepository {
           data: {
             ...patch,
             status: to,
-            lastChangedDateTime: new Date()
+            lastChangedDateTime: new Date(),
+            ...(OrgAgentMigrationStatus.COMPLETED === to ? { completedAt: new Date() } : {})
           }
         });
         if (1 !== count) {
           throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
         }
+        const row = await tx.org_agent_migrations.findUniqueOrThrow({ where: { id } });
         await tx.org_agent_migration_events.create({
           data: {
             migrationId: id,
             fromStatus: from,
             toStatus: to,
-            actor,
-            ...(event ? { action: event.action, ...(undefined === event.detail ? {} : { detail: event.detail }) } : {})
+            actor: actor ?? SYSTEM_ACTOR,
+            ...(event ? { action: event.action } : {}),
+            ...withDetail({ ...custodyFacts(row), ...((event?.detail ?? {}) as Prisma.InputJsonObject) })
           }
         });
-        return tx.org_agent_migrations.findUniqueOrThrow({ where: { id } });
+        return row;
       });
     } catch (error) {
       this.logger.error(
@@ -212,15 +233,17 @@ export class OrgAgentMigrationRepository {
           throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
         }
 
+        const row = await tx.org_agent_migrations.findUniqueOrThrow({ where: { id: params.migrationId } });
         await tx.org_agent_migration_events.create({
           data: {
             migrationId: params.migrationId,
             fromStatus: OrgAgentMigrationStatus.VERIFYING,
             toStatus: OrgAgentMigrationStatus.CUTOVER,
-            actor: params.actor
+            actor: params.actor ?? SYSTEM_ACTOR,
+            ...withDetail(custodyFacts(row))
           }
         });
-        return tx.org_agent_migrations.findUniqueOrThrow({ where: { id: params.migrationId } });
+        return row;
       });
     } catch (error) {
       this.logger.error(`[OrgAgentMigrationRepository.cutover] - ${error instanceof Error ? error.message : 'failed'}`);
@@ -272,6 +295,84 @@ export class OrgAgentMigrationRepository {
     return 1 === count;
   }
 
+  /** Frees a lease the caller holds, so a retry is not refused as busy for the rest of it. */
+  async releaseLease(id: string): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({ where: { id }, data: { leaseUntil: null } });
+  }
+
+  /**
+   * Takes the migration's one webhook probe slot, unless a probe that has not expired is already out.
+   * @returns false when another probe is in flight
+   */
+  async tryBeginWebhookProbe(id: string, probeHash: string, expiresAt: Date, now: Date = new Date()): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, OR: [{ webhookProbeHash: null }, { webhookProbeExpiresAt: { lt: now } }] },
+      data: { webhookProbeHash: probeHash, webhookProbeExpiresAt: expiresAt }
+    });
+    return 1 === count;
+  }
+
+  /**
+   * The dedicated agent's webhook has reached the platform: consumes the probe, once, if it is the live probe of this
+   * org's unfinished migration.
+   * @returns false for anything else, which the caller must not distinguish
+   */
+  async confirmWebhookProbe(orgId: string, probeHash: string, now: Date = new Date()): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: {
+        orgId,
+        status: { notIn: [...TERMINAL_STATUSES] },
+        webhookProbeHash: probeHash,
+        webhookProbeExpiresAt: { gt: now }
+      },
+      data: { webhookProbeHash: null, webhookProbeExpiresAt: null, webhookConfirmedAt: now }
+    });
+    return 1 === count;
+  }
+
+  /** Frees the probe slot if the probe is still the one that took it. */
+  async endWebhookProbe(id: string, probeHash: string): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({
+      where: { id, webhookProbeHash: probeHash },
+      data: { webhookProbeHash: null, webhookProbeExpiresAt: null }
+    });
+  }
+
+  /** Migrations in an open stabilisation window whose webhook has not been confirmed and is due another try. */
+  async findAwaitingWebhook(now: Date, retryBefore: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.STABILISING,
+        webhookConfirmedAt: null,
+        stabilisationEndsAt: { gt: now },
+        OR: [{ webhookCheckedAt: null }, { webhookCheckedAt: { lt: retryBefore } }]
+      },
+      orderBy: { stabilisationEndsAt: 'asc' },
+      take
+    });
+  }
+
+  /**
+   * Takes this try at the window's webhook check, unless another replica took it within the retry spacing. Kept apart
+   * from the lease so that a failing check never holds up a disaster restore.
+   * @returns false when someone else has the try
+   */
+  async tryBeginWebhookCheck(id: string, now: Date, retryBefore: Date): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, OR: [{ webhookCheckedAt: null }, { webhookCheckedAt: { lt: retryBefore } }] },
+      data: { webhookCheckedAt: now }
+    });
+    return 1 === count;
+  }
+
+  /** Keeps other ticks and replicas away from a migration for `leaseMs`, which is how a failing step backs off. */
+  async holdLease(id: string, leaseMs: number): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({
+      where: { id },
+      data: { leaseUntil: new Date(Date.now() + leaseMs) }
+    });
+  }
+
   /** Scheduled moves whose slot has arrived, earliest first. Only a finished rehearsal counts as ready. */
   async findDueForStart(now: Date, take: number): Promise<MigrationRow[]> {
     return this.prisma.org_agent_migrations.findMany({
@@ -282,6 +383,31 @@ export class OrgAgentMigrationRepository {
         OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
       },
       orderBy: { scheduledFor: 'asc' },
+      take
+    });
+  }
+
+  /** Moves in the stabilisation window whose window has ended, earliest first. */
+  async findWindowEnded(now: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.STABILISING,
+        stabilisationEndsAt: { lte: now },
+        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+      },
+      orderBy: { stabilisationEndsAt: 'asc' },
+      take
+    });
+  }
+
+  /** Moves whose connections are being rotated, oldest first. */
+  async findRotating(now: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.ROTATING,
+        OR: [{ leaseUntil: null }, { leaseUntil: { lt: now } }]
+      },
+      orderBy: { createDateTime: 'asc' },
       take
     });
   }
@@ -336,6 +462,106 @@ export class OrgAgentMigrationRepository {
       select: { actor: true }
     });
     return event?.actor ?? null;
+  }
+
+  async isPlatformAdmin(userId: string): Promise<boolean> {
+    const admin = await this.prisma.user_org_roles.findFirst({
+      where: { userId, orgRole: { name: OrgRoles.PLATFORM_ADMIN } },
+      select: { id: true }
+    });
+    return Boolean(admin);
+  }
+
+  /**
+   * Gives the org back to the shared agent (SAD E.7): the org's agent row is set back to what it was before the move,
+   * the migration becomes DISASTER_RESTORED, and the invitation made on the lost agent is removed, all in one
+   * transaction. The agent row only matches while it is still the dedicated one the move created; its token is cleared
+   * so the platform mints a fresh tenant token from the base wallet, as it does for any shared org.
+   * @throws ConflictException when the agent row or the migration changed in the meantime; nothing is written
+   */
+  async restoreOrgAgent(params: {
+    migrationId: string;
+    orgId: string;
+    expectedAgentEndPoint: string;
+    sharedOrgAgentTypeId: string;
+    dedicatedOrgAgentTypeId: string;
+    agentEndPoint: string;
+    tenantId: string;
+    walletName: string;
+    lastChangedBy: string;
+    actor: string;
+    newInvitationDid: string | null;
+  }): Promise<{ migration: MigrationRow; invitationsRemoved: number }> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const agent = await tx.org_agents.updateMany({
+          where: {
+            orgId: params.orgId,
+            orgAgentTypeId: params.dedicatedOrgAgentTypeId,
+            agentEndPoint: params.expectedAgentEndPoint
+          },
+          data: {
+            orgAgentTypeId: params.sharedOrgAgentTypeId,
+            agentEndPoint: params.agentEndPoint,
+            tenantId: params.tenantId,
+            walletName: params.walletName,
+            apiKey: null,
+            lastChangedBy: params.lastChangedBy,
+            lastChangedDateTime: new Date()
+          }
+        });
+        if (1 !== agent.count) {
+          throw new ConflictException(ResponseMessages.agent.error.agentRowChangedDuringMigration);
+        }
+
+        const migration = await tx.org_agent_migrations.updateMany({
+          where: { id: params.migrationId, status: OrgAgentMigrationStatus.STABILISING },
+          data: {
+            status: OrgAgentMigrationStatus.DISASTER_RESTORED,
+            error: null,
+            lastChangedDateTime: new Date()
+          }
+        });
+        if (1 !== migration.count) {
+          throw new ConflictException(ResponseMessages.agent.error.migrationStateChanged);
+        }
+
+        const restored = await tx.org_agent_migrations.findUniqueOrThrow({ where: { id: params.migrationId } });
+        await tx.org_agent_migration_events.create({
+          data: {
+            migrationId: params.migrationId,
+            fromStatus: OrgAgentMigrationStatus.STABILISING,
+            toStatus: OrgAgentMigrationStatus.DISASTER_RESTORED,
+            actor: params.actor,
+            ...withDetail(custodyFacts(restored))
+          }
+        });
+
+        const removed = params.newInvitationDid
+          ? await tx.agent_invitations.deleteMany({
+              where: { orgId: params.orgId, invitationDid: params.newInvitationDid }
+            })
+          : { count: 0 };
+        return { migration: restored, invitationsRemoved: removed.count };
+      });
+    } catch (error) {
+      this.logger.error(
+        `[OrgAgentMigrationRepository.restoreOrgAgent] - ${error instanceof Error ? error.message : 'failed'}`
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Records facts on a migration only while it is still in `status`, for a step that ran alongside others.
+   * @returns false when the migration has moved on
+   */
+  async updateIfStatus(id: string, status: OrgAgentMigrationStatus, patch: OrgAgentMigrationPatch): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, status },
+      data: { ...patch, lastChangedDateTime: new Date() }
+    });
+    return 1 === count;
   }
 
   /**
@@ -440,11 +666,21 @@ export class OrgAgentMigrationRepository {
         migrationId,
         fromStatus: migration.status,
         toStatus: migration.status,
-        actor: entry.actor,
+        actor: entry.actor ?? SYSTEM_ACTOR,
         action: entry.action,
         ...(entry.detail === undefined ? {} : { detail: entry.detail })
       }
     });
+  }
+
+  /** The detail of the latest audit entry of an action for a migration, if there is one. */
+  async getEventDetail(migrationId: string, action: string): Promise<Record<string, unknown> | null> {
+    const event = await this.prisma.org_agent_migration_events.findFirst({
+      where: { migrationId, action },
+      orderBy: { createDateTime: 'desc' },
+      select: { detail: true }
+    });
+    return (event?.detail as Record<string, unknown> | null | undefined) ?? null;
   }
 
   /** How many times an audit action has been recorded for a migration. */

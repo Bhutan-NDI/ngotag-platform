@@ -11,7 +11,9 @@ import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration
 export enum KeyExportAlertKind {
   MOVE_STARTED = 'MOVE_STARTED',
   REHEARSAL_EXPORT = 'REHEARSAL_EXPORT',
-  MOVE_EXPORT = 'MOVE_EXPORT'
+  MOVE_EXPORT = 'MOVE_EXPORT',
+  DISASTER_RESTORE = 'DISASTER_RESTORE',
+  MOVE_STUCK = 'MOVE_STUCK'
 }
 
 /** Things the platform does or finds on its own during a move, which the same people should hear about once. */
@@ -26,7 +28,15 @@ export interface IKeyExportAlertResult {
   sent: number;
 }
 
-const DESCRIPTIONS: Record<KeyExportAlertKind, { subject: string; what: string }> = {
+interface IAlertDescription {
+  subject: string;
+  what: string;
+  who?: string;
+  actorLabel?: string;
+  targetLabel?: string;
+}
+
+const DESCRIPTIONS: Record<KeyExportAlertKind, IAlertDescription> = {
   [KeyExportAlertKind.MOVE_STARTED]: {
     subject: 'A wallet move was started',
     what: 'started a move of the organisation’s wallet to its own agent'
@@ -38,6 +48,20 @@ const DESCRIPTIONS: Record<KeyExportAlertKind, { subject: string; what: string }
   [KeyExportAlertKind.REHEARSAL_EXPORT]: {
     subject: 'The organisation’s signing keys were exported for a rehearsal',
     what: 'exported the organisation’s wallet, including its signing keys, for a rehearsal of the move'
+  },
+  [KeyExportAlertKind.MOVE_STUCK]: {
+    subject: 'A wallet move is stuck after the switch',
+    who: 'The platform',
+    what: 'switched the organisation to its new agent but could not finish the move. The organisation stays paused until the failing step succeeds, and it keeps retrying',
+    // The actor is the owner who confirmed the move, not whoever the platform's own retry acts for.
+    actorLabel: 'Move confirmed by',
+    targetLabel: 'The new agent'
+  },
+  [KeyExportAlertKind.DISASTER_RESTORE]: {
+    subject: 'A wallet move was rolled back',
+    who: 'A platform admin',
+    what: 'rolled the organisation’s move back to the shared agent after its new agent was lost; what the new agent did since the switch is lost',
+    targetLabel: 'The agent that was lost'
   }
 };
 
@@ -96,14 +120,14 @@ export class OrgAgentMigrationAlertService {
       return { recipients: recipients.length, sent: 0 };
     }
 
-    const { subject, what } = DESCRIPTIONS[kind];
+    const description = DESCRIPTIONS[kind];
     return this.send(
       recipients,
       platformConfig.emailFrom,
-      `[Security] ${subject}`,
+      `[Security] ${description.subject}`,
       {
-        text: this.text(what, orgName, actorEmail, migration),
-        html: this.html(what, orgName, actorEmail, migration)
+        text: this.text(description, orgName, actorEmail, migration),
+        html: this.html(description, orgName, actorEmail, migration)
       },
       migration.id
     );
@@ -161,27 +185,28 @@ export class OrgAgentMigrationAlertService {
   }
 
   private facts(
+    description: IAlertDescription,
     orgName: string | null,
     actorEmail: string | null,
     migration: org_agent_migrations
   ): [string, string][] {
     return [
       ['Organisation', orgName ?? migration.orgId],
-      ['Done by', actorEmail ?? 'an unknown user'],
-      ['Keys are going to', hostOf(migration.targetAdminEndpoint)],
+      [description.actorLabel ?? 'Done by', actorEmail ?? 'an unknown user'],
+      [description.targetLabel ?? 'Keys are going to', hostOf(migration.targetAdminEndpoint)],
       ['Time', new Date().toISOString()]
     ];
   }
 
   private text(
-    what: string,
+    description: IAlertDescription,
     orgName: string | null,
     actorEmail: string | null,
     migration: org_agent_migrations
   ): string {
-    const lines = this.facts(orgName, actorEmail, migration).map(([label, value]) => `${label}: ${value}`);
+    const lines = this.facts(description, orgName, actorEmail, migration).map(([label, value]) => `${label}: ${value}`);
     return [
-      `An organisation owner ${what}.`,
+      `${description.who ?? 'An organisation owner'} ${description.what}.`,
       '',
       ...lines,
       '',
@@ -190,14 +215,14 @@ export class OrgAgentMigrationAlertService {
   }
 
   private html(
-    what: string,
+    description: IAlertDescription,
     orgName: string | null,
     actorEmail: string | null,
     migration: org_agent_migrations
   ): string {
-    const rows = this.facts(orgName, actorEmail, migration)
+    const rows = this.facts(description, orgName, actorEmail, migration)
       .map(([label, value]) => `<tr><td><strong>${escapeHtml(label)}</strong></td><td>${escapeHtml(value)}</td></tr>`)
       .join('');
-    return `<p>An organisation owner ${escapeHtml(what)}.</p><table>${rows}</table><p>If you did not expect this, contact the security team now.</p>`;
+    return `<p>${escapeHtml(description.who ?? 'An organisation owner')} ${escapeHtml(description.what)}.</p><table>${rows}</table><p>If you did not expect this, contact the security team now.</p>`;
   }
 }

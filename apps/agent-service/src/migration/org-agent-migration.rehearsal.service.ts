@@ -15,7 +15,7 @@ import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration
 import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
 import { envMs, JobPollFailure, jobTimeoutMs, pollJob } from './migration-job-poller';
 import { IPortabilityJob, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
-import { IPreflightReport, IRehearsalRecord } from './org-agent-migration.interface';
+import { DownloadMethod, IPreflightReport, IRehearsalRecord } from './org-agent-migration.interface';
 import {
   IKeyExportAlertResult,
   KeyExportAlertKind,
@@ -40,6 +40,11 @@ class RehearsalFailure extends Error {
   ) {
     super(code);
   }
+}
+
+interface ICustodyFacts {
+  checksum?: string;
+  importKeyFingerprint?: string;
 }
 
 /**
@@ -146,36 +151,67 @@ export class OrgAgentMigrationRehearsalService {
       return;
     }
 
-    const record: IRehearsalRecord = { downloadMethod: 'PULL' };
+    const downloadMethod: DownloadMethod = 'PUSH' === migration.downloadMethod ? 'PUSH' : 'PULL';
+    const record: IRehearsalRecord = { downloadMethod };
+    // Starting a new export over a leftover one that cannot be deleted would lose track of it in S3.
+    const leftover = await this.removeLeftoverExport(migration, shared);
+    if ('FAILED' === leftover) {
+      await this.recordFailure(
+        migration.id,
+        actor,
+        { code: 'EXPORT_CLEANUP_FAILED', step: 'EXPORT', exportCleanup: 'FAILED' },
+        {},
+        migration.exportJobId ?? undefined
+      );
+      return;
+    }
+    // Audited whether the rehearsal finishes or not: the export has happened as soon as they are known.
+    const custody: ICustodyFacts = {};
     let exportJobId: string | undefined;
     try {
+      if ('DELETED' === leftover) {
+        await this.migrationRepository.update(migration.id, { exportJobId: null });
+      }
       const session = await this.guard('IMPORT', () =>
         this.agentClient.createImportSession(dedicated.endpoint, dedicated.token)
       );
       const importKeyFingerprint = createHash('sha256')
         .update(Buffer.from(session.importPublicKey, 'base64'))
         .digest('hex');
+      custody.importKeyFingerprint = importKeyFingerprint;
 
       const exportStarted = Date.now();
       const exportJob = await this.guard('EXPORT', () =>
         this.agentClient.startSealedExport(shared.endpoint, shared.token, migration.tenantId, session.importPublicKey)
       );
       exportJobId = exportJob.jobId;
+      // Kept at once, so an export left behind by a crash can be found and removed by the next rehearsal.
+      await this.migrationRepository.update(migration.id, { exportJobId });
       const exported = await this.waitFor('EXPORT', () =>
         this.agentClient.getExportJob(shared.endpoint, shared.token, migration.tenantId, exportJob.jobId)
       );
       record.exportMs = Date.now() - exportStarted;
+      custody.checksum = exported.checksum;
 
       const importStarted = Date.now();
       const importJob = await this.guard('IMPORT', () =>
-        this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
-          sessionId: session.sessionId,
-          exportUrl: exported.downloadUrl,
-          checksum: exported.checksum,
-          sealedStoreKey: exported.sealedStoreKey,
-          storageVersion: exported.storageVersion,
-          dryRun: true
-        })
+        'PUSH' === downloadMethod
+          ? this.agentClient.pushImport(dedicated.endpoint, dedicated.token, {
+              downloadUrl: exported.downloadUrl,
+              sessionId: session.sessionId,
+              checksum: exported.checksum,
+              sealedStoreKey: exported.sealedStoreKey,
+              storageVersion: exported.storageVersion,
+              dryRun: true
+            })
+          : this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
+              sessionId: session.sessionId,
+              exportUrl: exported.downloadUrl,
+              checksum: exported.checksum,
+              sealedStoreKey: exported.sealedStoreKey,
+              storageVersion: exported.storageVersion,
+              dryRun: true
+            })
       );
       const imported = await this.waitFor('IMPORT', () =>
         this.agentClient.getImportJob(dedicated.endpoint, dedicated.token, importJob.jobId)
@@ -191,7 +227,7 @@ export class OrgAgentMigrationRehearsalService {
         counts: imported.counts as never,
         rehearsalDurationMs,
         predictedFreezeMs: predictFreezeMs(rehearsalDurationMs),
-        exportJobId: exportJob.jobId,
+        exportJobId: 'DELETED' === record.exportCleanup ? null : exportJob.jobId,
         importJobId: importJob.jobId,
         importKeyFingerprint,
         storageVersion: exported.storageVersion,
@@ -200,7 +236,8 @@ export class OrgAgentMigrationRehearsalService {
       });
       await this.audit(migration.id, actor, 'REHEARSAL_FINISHED', {
         outcome: 'DONE',
-        exportCleanup: record.exportCleanup ?? 'DELETED'
+        exportCleanup: record.exportCleanup ?? 'DELETED',
+        ...custody
       });
     } catch (error) {
       if (exportJobId) {
@@ -211,7 +248,8 @@ export class OrgAgentMigrationRehearsalService {
         migration.id,
         actor,
         { ...record, step: failure.step, code: failure.code },
-        'FAILED' === record.exportCleanup ? exportJobId : undefined
+        custody,
+        'FAILED' === record.exportCleanup ? exportJobId : 'DELETED' === record.exportCleanup ? null : undefined
       );
     }
   }
@@ -229,6 +267,9 @@ export class OrgAgentMigrationRehearsalService {
     if (error instanceof MigrationAgentError) {
       if ('CONFLICT' === error.kind && ['TARGET_NOT_PRISTINE', 'STORAGE_VERSION_MISMATCH'].includes(error.agentCode)) {
         return error.agentCode;
+      }
+      if ('DOWNLOAD_FAILED' === error.agentCode) {
+        return 'DOWNLOAD_FAILED';
       }
       if ('REJECTED' === error.kind) {
         return 'AGENT_TOKEN_REJECTED';
@@ -278,12 +319,24 @@ export class OrgAgentMigrationRehearsalService {
     }
   }
 
+  // An export an earlier rehearsal started and never cleaned up, because the process stopped part way.
+  private async removeLeftoverExport(
+    migration: org_agent_migrations,
+    shared: IAgentAccess
+  ): Promise<'DELETED' | 'FAILED' | undefined> {
+    return migration.exportJobId ? this.deleteExport(shared, migration.tenantId, migration.exportJobId) : undefined;
+  }
+
   private async deleteExport(shared: IAgentAccess, tenantId: string, jobId: string): Promise<'DELETED' | 'FAILED'> {
     await this.awaitExportSettled(shared, tenantId, jobId);
     try {
       await this.agentClient.deleteExport(shared.endpoint, shared.token, tenantId, jobId);
       return 'DELETED';
     } catch (error) {
+      // The agent keeps job records for a day only; the artifact itself then relies on the bucket's lifecycle rule.
+      if (error instanceof MigrationAgentError && 'NOT_FOUND' === error.kind) {
+        return 'DELETED';
+      }
       this.logger.warn(
         `[rehearsal] export ${jobId} was not deleted from S3: ${error instanceof Error ? error.message : 'failed'}`
       );
@@ -291,18 +344,20 @@ export class OrgAgentMigrationRehearsalService {
     }
   }
 
-  // `leftoverExportJobId` keeps an export that could not be deleted findable, so a later run or a sweeper can remove it.
+  // `leftoverExportJobId` keeps an export that could not be deleted findable, so a later run or a sweeper can remove it;
+  // null clears an id whose export is gone.
   private async recordFailure(
     migrationId: string,
     actor: string | null,
     record: IRehearsalRecord & { code: string },
-    leftoverExportJobId?: string
+    custody: ICustodyFacts = {},
+    leftoverExportJobId?: string | null
   ): Promise<void> {
     try {
       await this.migrationRepository.update(migrationId, {
         rehearsalStatus: 'FAILED',
         rehearsal: { ...record, finishedAt: new Date().toISOString() } as never,
-        ...(leftoverExportJobId ? { exportJobId: leftoverExportJobId } : {})
+        ...(undefined === leftoverExportJobId ? {} : { exportJobId: leftoverExportJobId })
       });
     } catch (error) {
       this.logger.error(`[rehearsal] could not record failure: ${error instanceof Error ? error.message : 'failed'}`);
@@ -311,7 +366,8 @@ export class OrgAgentMigrationRehearsalService {
       outcome: 'FAILED',
       code: record.code,
       ...(record.step ? { step: record.step } : {}),
-      ...(record.exportCleanup ? { exportCleanup: record.exportCleanup } : {})
+      ...(record.exportCleanup ? { exportCleanup: record.exportCleanup } : {}),
+      ...custody
     });
   }
 

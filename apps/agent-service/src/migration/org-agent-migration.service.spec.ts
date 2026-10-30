@@ -28,7 +28,7 @@ const sharedAgentRow = {
   agentOptions: Buffer.from('options')
 };
 
-const buildService = (options: { agent?: unknown; migration?: unknown } = {}) => {
+const buildService = (options: { agent?: unknown; migration?: unknown; active?: unknown } = {}) => {
   const agentRepository = {
     getAgentDetailsByOrgId: jest.fn().mockResolvedValue('agent' in options ? options.agent : sharedAgentRow),
     getOrgAgentTypeDetails: jest.fn().mockResolvedValue('shared-type-id')
@@ -39,6 +39,10 @@ const buildService = (options: { agent?: unknown; migration?: unknown } = {}) =>
       .fn()
       .mockResolvedValue('migration' in options ? options.migration : { id: MIGRATION_ID, status: Status.CREATED }),
     getLatestByOrgId: jest.fn(),
+    getActiveByOrgId: jest
+      .fn()
+      .mockResolvedValue('active' in options ? options.active : { id: MIGRATION_ID, status: Status.REHEARSED }),
+    recordEvent: jest.fn().mockResolvedValue(undefined),
     list: jest.fn().mockResolvedValue({ total: 0, migrations: [] }),
     transition: jest.fn().mockResolvedValue({ id: MIGRATION_ID })
   };
@@ -159,6 +163,20 @@ describe('OrgAgentMigrationService', () => {
       expect(rpcError(await service.getMigration(ORG_ID).catch((e) => e))).toMatchObject({ statusCode: 404 });
     });
 
+    it('findMigration answers null for an org that has never had one, instead of an error', async () => {
+      const { service, migrationRepository } = buildService();
+      migrationRepository.getLatestByOrgId.mockResolvedValue(null);
+
+      await expect(service.findMigration(ORG_ID)).resolves.toBeNull();
+    });
+
+    it('findMigration returns the latest migration when there is one', async () => {
+      const { service, migrationRepository } = buildService();
+      migrationRepository.getLatestByOrgId.mockResolvedValue({ id: MIGRATION_ID });
+
+      await expect(service.findMigration(ORG_ID)).resolves.toEqual({ id: MIGRATION_ID });
+    });
+
     it.each([
       [{}, 0, 20],
       [{ pageNumber: 3, pageSize: 10 }, 20, 10],
@@ -229,7 +247,116 @@ describe('OrgAgentMigrationService', () => {
     });
   });
 
+  describe('cancel', () => {
+    it.each([Status.CREATED, Status.REHEARSED, Status.SCHEDULED])(
+      'lets the owner call off a move in %s',
+      async (status) => {
+        const { service, migrationRepository } = buildService({
+          migration: { id: MIGRATION_ID, status },
+          active: { id: MIGRATION_ID, status }
+        });
+
+        await service.cancel(ORG_ID, USER_ID);
+
+        expect(migrationRepository.transition).toHaveBeenCalledWith({
+          id: MIGRATION_ID,
+          from: status,
+          to: Status.CANCELLED,
+          actor: USER_ID,
+          patch: { targetTokenEncrypted: null }
+        });
+      }
+    );
+
+    it('records who cancelled it', async () => {
+      const { service, migrationRepository } = buildService();
+
+      await service.cancel(ORG_ID, USER_ID);
+
+      expect(migrationRepository.recordEvent).toHaveBeenCalledWith(MIGRATION_ID, {
+        action: 'MOVE_CANCELLED',
+        actor: USER_ID,
+        detail: { by: 'OWNER' }
+      });
+    });
+
+    it.each([
+      Status.FROZEN,
+      Status.EXPORTING,
+      Status.IMPORTING,
+      Status.VERIFYING,
+      Status.CUTOVER,
+      Status.STABILISING,
+      Status.ROTATING
+    ])('refuses once the move is in %s, because the move itself owns it by then', async (status) => {
+      const { service, migrationRepository } = buildService({ active: { id: MIGRATION_ID, status } });
+
+      await expect(service.cancel(ORG_ID, USER_ID)).rejects.toThrow(BadRequestException);
+
+      expect(migrationRepository.transition).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the scheduler started the move between the read and the write', async () => {
+      const { service, migrationRepository } = buildService();
+      migrationRepository.transition.mockRejectedValue(new ConflictException('changed'));
+
+      await expect(service.cancel(ORG_ID, USER_ID)).rejects.toThrow(BadRequestException);
+
+      expect(migrationRepository.recordEvent).not.toHaveBeenCalled();
+    });
+
+    it('cancels from the status it checked, so a move frozen in between is refused rather than aborted', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.FROZEN },
+        active: { id: MIGRATION_ID, status: Status.REHEARSED }
+      });
+      migrationRepository.transition.mockRejectedValue(new ConflictException('changed'));
+
+      await expect(service.cancel(ORG_ID, USER_ID)).rejects.toThrow(BadRequestException);
+
+      expect(migrationRepository.transition).toHaveBeenCalledWith(expect.objectContaining({ from: Status.REHEARSED }));
+    });
+
+    it('cancels on a retry when the conflict was only the slot being moved, not the move starting', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.REHEARSED },
+        active: { id: MIGRATION_ID, status: Status.SCHEDULED }
+      });
+      migrationRepository.transition.mockRejectedValueOnce(new ConflictException('changed'));
+
+      await expect(service.cancel(ORG_ID, USER_ID)).resolves.toEqual({ id: MIGRATION_ID });
+
+      expect(migrationRepository.transition).toHaveBeenCalledTimes(2);
+      expect(migrationRepository.transition).toHaveBeenLastCalledWith(
+        expect.objectContaining({ from: Status.REHEARSED, to: Status.CANCELLED })
+      );
+    });
+
+    it('still answers success when only the audit entry could not be written', async () => {
+      const { service, migrationRepository } = buildService();
+      migrationRepository.recordEvent.mockRejectedValue(new Error('db blip'));
+
+      await expect(service.cancel(ORG_ID, USER_ID)).resolves.toEqual({ id: MIGRATION_ID });
+    });
+
+    it('refuses when the org has no active move', async () => {
+      const { service } = buildService({ active: null });
+
+      await expect(service.cancel(ORG_ID, USER_ID)).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('abort', () => {
+    it('drops the stored token of the dedicated agent, since a finished migration has no use for it', async () => {
+      const { service, migrationRepository } = buildService({
+        migration: { id: MIGRATION_ID, status: Status.EXPORTING }
+      });
+
+      await service.abort(MIGRATION_ID, 'EXPORT_FAILED', null);
+
+      expect(migrationRepository.transition.mock.calls[0][0].patch).toMatchObject({ targetTokenEncrypted: null });
+    });
+
     it.each([Status.SCHEDULED, Status.FROZEN, Status.EXPORTING, Status.IMPORTING, Status.VERIFYING])(
       'fails a migration in %s with the error code recorded',
       async (status) => {

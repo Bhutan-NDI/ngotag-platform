@@ -10,6 +10,30 @@ export interface IAgentRuntimeConfig {
   inboundTransports: string[];
   outboundTransports: string[];
   cronPurgeEnabled: boolean;
+  // True on the shared, multi-tenant agent. Absent on an agent too old to report it.
+  tenancy?: boolean;
+}
+
+export interface IWebhookProbe {
+  configured: boolean;
+  delivered: boolean;
+  status?: number;
+}
+
+export interface IExportBucketProbe {
+  configured: boolean;
+  reachable?: boolean;
+  reason?: string;
+}
+
+export interface IPushImport {
+  /** Where the platform fetches the sealed export from: the export job's presigned URL */
+  downloadUrl: string;
+  sessionId: string;
+  checksum: string;
+  sealedStoreKey: string;
+  storageVersion: string;
+  dryRun?: boolean;
 }
 
 export interface IAgentInfo {
@@ -58,6 +82,22 @@ export interface ICreatedInvitation {
   invitationDid?: string;
 }
 
+export interface IRotationCounts {
+  total: number;
+  pending: number;
+  retrying: number;
+  failed: number;
+  waiting: number;
+  stale: number;
+  refused: number;
+  updated: number;
+}
+
+export interface IRotationStatus {
+  job: { status: 'idle' | 'running' | 'completed'; startedAt?: string; completedAt?: string };
+  counts: IRotationCounts;
+}
+
 export type AgentErrorKind = 'UNREACHABLE' | 'REJECTED' | 'CONFLICT' | 'NOT_FOUND' | 'FAILED';
 
 /**
@@ -77,6 +117,15 @@ export class MigrationAgentError extends Error {
 
 const REQUEST_TIMEOUT_MS = 15000;
 const REINJECT_TIMEOUT_MS = 10 * 60 * 1000;
+export const RESTORE_TIMEOUT_MS = 10 * 60 * 1000;
+
+const DEFAULT_PUSH_TIMEOUT_MS = 30 * 60 * 1000;
+
+// A large wallet over a slow link takes far longer than an ordinary call.
+const pushTimeoutMs = (): number => {
+  const configured = Number(process.env.ORG_MIGRATION_PUSH_TIMEOUT_MS);
+  return Number.isFinite(configured) && 0 < configured ? configured : DEFAULT_PUSH_TIMEOUT_MS;
+};
 
 const trimSlash = (url: string): string => url.replace(/\/+$/, '');
 
@@ -109,23 +158,28 @@ export class MigrationAgentClient {
       );
       return response.data;
     } catch (error) {
-      const status: number | undefined = error?.response?.status;
-      if (undefined === status) {
-        throw new MigrationAgentError('UNREACHABLE');
-      }
-      if (401 === status || 403 === status) {
-        throw new MigrationAgentError('REJECTED', status);
-      }
-      if (404 === status) {
-        throw new MigrationAgentError('NOT_FOUND', status);
-      }
-      const message = error.response?.data?.message;
-      throw new MigrationAgentError(
-        409 === status ? 'CONFLICT' : 'FAILED',
-        status,
-        'string' === typeof message ? message : undefined
-      );
+      throw this.toAgentError(error);
     }
+  }
+
+  // Only the status and the agent's own message survive: the axios error also holds the request and its headers.
+  private toAgentError(error): MigrationAgentError {
+    const status: number | undefined = error?.response?.status;
+    if (undefined === status) {
+      return new MigrationAgentError('UNREACHABLE');
+    }
+    if (401 === status || 403 === status) {
+      return new MigrationAgentError('REJECTED', status);
+    }
+    if (404 === status) {
+      return new MigrationAgentError('NOT_FOUND', status);
+    }
+    const message = error.response?.data?.message;
+    return new MigrationAgentError(
+      409 === status ? 'CONFLICT' : 'FAILED',
+      status,
+      'string' === typeof message ? message : undefined
+    );
   }
 
   // The API key goes in the authorization header, as the agent expects; it is exchanged for the root token.
@@ -155,6 +209,85 @@ export class MigrationAgentClient {
     }
   ): Promise<IPortabilityJob> {
     return this.request('post', adminEndpoint, '/agent/wallet/import', token, body);
+  }
+
+  // Whether the agent could pull an export from its S3 bucket, or the platform has to send it.
+  getExportBucket(adminEndpoint: string, token: string): Promise<IExportBucketProbe> {
+    return this.request('get', adminEndpoint, '/agent/wallet/export-bucket', token);
+  }
+
+  /**
+   * Import for an agent that cannot reach S3: the platform fetches the sealed export itself and streams it into the
+   * agent's upload route, so the file is never held in memory. A failed download reports DOWNLOAD_FAILED and carries
+   * nothing of the request, whose URL is signed.
+   */
+  async pushImport(
+    adminEndpoint: string,
+    token: string,
+    input: IPushImport,
+    // What is left of the freeze budget: the transfer is not allowed to outlast it.
+    budgetMs: number = Infinity
+  ): Promise<IPortabilityJob> {
+    if (!/^https:\/\//i.test(input.downloadUrl)) {
+      throw new MigrationAgentError('FAILED', undefined, 'DOWNLOAD_FAILED');
+    }
+    const timeout = Math.max(Math.min(pushTimeoutMs(), budgetMs), 1000);
+
+    let artifact;
+    try {
+      artifact = await firstValueFrom(
+        this.httpService.get(input.downloadUrl, {
+          responseType: 'stream',
+          timeout,
+          maxRedirects: 0,
+          validateStatus: (status) => 200 === status
+        })
+      );
+    } catch (error) {
+      // A refused download leaves its body unread; free the socket instead of holding it until the idle timeout.
+      error?.response?.data?.destroy?.();
+      throw new MigrationAgentError('FAILED', undefined, 'DOWNLOAD_FAILED');
+    }
+
+    // A stream that breaks part way surfaces as a failed upload; this keeps it reported as the download that failed.
+    let downloadFailed = false;
+    artifact.data?.on?.('error', () => {
+      downloadFailed = true;
+    });
+    const length = artifact.headers?.['content-length'];
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post<IPortabilityJob>(
+          `${trimSlash(adminEndpoint)}/agent/wallet/import/upload`,
+          artifact.data,
+          {
+            headers: {
+              authorization: token,
+              accept: 'application/json',
+              'content-type': 'application/octet-stream',
+              'x-session-id': input.sessionId,
+              'x-checksum': input.checksum,
+              'x-sealed-store-key': input.sealedStoreKey,
+              'x-storage-version': input.storageVersion,
+              ...(input.dryRun ? { 'x-dry-run': 'true' } : {}),
+              ...(length ? { 'content-length': length } : {})
+            },
+            timeout,
+            // Following redirects would make axios keep the whole body in memory to replay it.
+            maxRedirects: 0,
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity
+          }
+        )
+      );
+      return response.data;
+    } catch (error) {
+      artifact.data?.destroy?.();
+      if (downloadFailed) {
+        throw new MigrationAgentError('FAILED', undefined, 'DOWNLOAD_FAILED');
+      }
+      throw this.toAgentError(error);
+    }
   }
 
   getImportJob(adminEndpoint: string, token: string, jobId: string): Promise<IPortabilityJob> {
@@ -258,6 +391,11 @@ export class MigrationAgentClient {
     return this.request('post', adminEndpoint, '/agent/credential/self-attested', token, body);
   }
 
+  // The agent posts a test event to its own webhook URL; the platform decides whether it arrived.
+  probeWebhook(adminEndpoint: string, token: string, probeId: string): Promise<IWebhookProbe> {
+    return this.request('post', adminEndpoint, '/agent/webhook/probe', token, { probeId });
+  }
+
   verifyCredential(
     adminEndpoint: string,
     token: string,
@@ -272,5 +410,41 @@ export class MigrationAgentClient {
     body: { multiUseInvitation: boolean; autoAcceptConnection: boolean; label: string; imageUrl?: string }
   ): Promise<ICreatedInvitation> {
     return this.request('post', adminEndpoint, '/didcomm/oob/create-invitation', token, body);
+  }
+
+  // Takes the relay off for good, even a forwarding one: queued messages go back to the tenant first.
+  // The agent hands every queued message back before it answers, and hours of traffic may be waiting.
+  restoreRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<{ injected: number; failed: number }> {
+    return this.request(
+      'post',
+      sharedEndpoint,
+      `/multi-tenancy/relay/${encodeURIComponent(tenantId)}/restore`,
+      token,
+      {},
+      envMs('ORG_MIGRATION_RESTORE_TIMEOUT_MS', RESTORE_TIMEOUT_MS)
+    );
+  }
+
+  getRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<IRelayEntry> {
+    return this.request('get', sharedEndpoint, `/multi-tenancy/relay/${encodeURIComponent(tenantId)}`, token);
+  }
+
+  purgeProfile(sharedEndpoint: string, token: string, tenantId: string): Promise<{ profileRemoved: boolean }> {
+    return this.request(
+      'post',
+      sharedEndpoint,
+      `/multi-tenancy/${encodeURIComponent(tenantId)}/purge-profile`,
+      token,
+      {}
+    );
+  }
+
+  // Starts the rotation of every connection, or returns the job if one is already running.
+  startRotation(adminEndpoint: string, token: string): Promise<IRotationStatus> {
+    return this.request('post', adminEndpoint, '/didcomm/connections/rotate-all', token, {});
+  }
+
+  getRotationStatus(adminEndpoint: string, token: string): Promise<IRotationStatus> {
+    return this.request('get', adminEndpoint, '/didcomm/connections/rotate-all/status', token);
   }
 }

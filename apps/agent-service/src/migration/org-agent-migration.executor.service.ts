@@ -112,7 +112,7 @@ export class OrgAgentMigrationExecutor {
    * @param actorUserId the owner who confirmed the move; named in the export alert
    */
   async run(migrationId: string, actorUserId: string): Promise<void> {
-    const claimed = await this.claim(migrationId);
+    const claimed = await this.claim(migrationId, actorUserId);
     if (!claimed) {
       return;
     }
@@ -172,7 +172,7 @@ export class OrgAgentMigrationExecutor {
   private async resumeContext(migration: org_agent_migrations, relayHeld: boolean): Promise<IMoveContext> {
     return {
       migration,
-      actor: migration.startedBy,
+      actor: (await this.migrationRepository.getConfirmingActor(migration.id)) ?? migration.startedBy,
       deadlineAt: migration.freezeDeadline?.getTime() ?? Date.now(),
       shared: await this.access.shared(),
       dedicated: await this.access.dedicated(migration),
@@ -184,7 +184,8 @@ export class OrgAgentMigrationExecutor {
 
   // Freezing the org is this status change: every org-initiated agent call checks it.
   private async claim(
-    migrationId: string
+    migrationId: string,
+    actor: string
   ): Promise<{ migration: org_agent_migrations; deadlineAt: number } | undefined> {
     const migration = await this.migrationRepository.getById(migrationId);
     if (!migration || OrgAgentMigrationStatus.SCHEDULED !== migration.status) {
@@ -192,12 +193,13 @@ export class OrgAgentMigrationExecutor {
     }
     const deadlineAt = Date.now() + (migration.predictedFreezeMs ?? DEFAULT_FREEZE_MS);
     try {
-      // Still due: a slot moved, or a rehearsal started, after the scheduler read the row must stop this claim.
+      // Still due: a slot moved, or a rehearsal started, after the scheduler read the row must stop this claim. The
+      // rehearsal's key fingerprint is dropped so the trail only shows the move's own once its export exists.
       const frozen = await this.migrationService.advance(
         migrationId,
         OrgAgentMigrationStatus.FROZEN,
-        null,
-        { freezeDeadline: new Date(deadlineAt) },
+        actor,
+        { freezeDeadline: new Date(deadlineAt), importKeyFingerprint: null },
         { where: { rehearsalStatus: REHEARSAL_DONE, scheduledFor: { lte: new Date() } } }
       );
       return { migration: frozen, deadlineAt };
@@ -259,7 +261,7 @@ export class OrgAgentMigrationExecutor {
   private async exportWallet(ctx: IMoveContext): Promise<void> {
     const { shared, dedicated, migration } = ctx;
     this.checkBudget(ctx);
-    ctx.migration = await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.EXPORTING, null);
+    ctx.migration = await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.EXPORTING, ctx.actor);
 
     // The move is a real export of the org's keys, so the alert goes out first and is not optional.
     const alert = await this.alertService.alertKeyExport(ctx.migration, KeyExportAlertKind.MOVE_EXPORT, ctx.actor);
@@ -293,21 +295,42 @@ export class OrgAgentMigrationExecutor {
     const { dedicated, migration } = ctx;
     const { sessionId, exported } = ctx;
     this.checkBudget(ctx);
-    ctx.migration = await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.IMPORTING, null, {
+    ctx.migration = await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.IMPORTING, ctx.actor, {
       checksum: exported.checksum,
       storageVersion: exported.storageVersion
     });
 
+    // The method preflight settled on, with the final checks run just before the freeze.
+    const push = 'PUSH' === ctx.migration.downloadMethod;
     const job = await this.call('IMPORT_FAILED', () =>
-      this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
-        sessionId,
-        exportUrl: exported.downloadUrl,
-        checksum: exported.checksum,
-        sealedStoreKey: exported.sealedStoreKey,
-        storageVersion: exported.storageVersion,
-        dryRun: false
-      })
-    );
+      push
+        ? this.agentClient.pushImport(
+            dedicated.endpoint,
+            dedicated.token,
+            {
+              downloadUrl: exported.downloadUrl,
+              sessionId,
+              checksum: exported.checksum,
+              sealedStoreKey: exported.sealedStoreKey,
+              storageVersion: exported.storageVersion,
+              dryRun: false
+            },
+            ctx.deadlineAt - Date.now()
+          )
+        : this.agentClient.startImport(dedicated.endpoint, dedicated.token, {
+            sessionId,
+            exportUrl: exported.downloadUrl,
+            checksum: exported.checksum,
+            sealedStoreKey: exported.sealedStoreKey,
+            storageVersion: exported.storageVersion,
+            dryRun: false
+          })
+    ).catch((error) => {
+      // An upload cut off by the budget has no answer to read, so it would be recorded as the agent being unreachable.
+      throw push && error instanceof MoveFailure && Date.now() >= ctx.deadlineAt
+        ? new MoveFailure('FREEZE_BUDGET_EXCEEDED')
+        : error;
+    });
     await this.migrationRepository.update(migration.id, { importJobId: job.jobId });
 
     const imported = await this.wait('IMPORT', ctx, () =>
@@ -320,7 +343,7 @@ export class OrgAgentMigrationExecutor {
   private async verify(ctx: IMoveContext, moved: IMoveCounts): Promise<void> {
     const { migration } = ctx;
     this.checkBudget(ctx);
-    ctx.migration = await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.VERIFYING, null);
+    ctx.migration = await this.migrationService.advance(migration.id, OrgAgentMigrationStatus.VERIFYING, ctx.actor);
 
     const tolerance = Number(process.env.ORG_MIGRATION_COUNT_TOLERANCE ?? 0.2);
     const rehearsal = migration.counts as unknown as IMoveCounts | null;
@@ -394,7 +417,7 @@ export class OrgAgentMigrationExecutor {
         encryptedToken: migration.targetTokenEncrypted,
         walletName: snapshot.walletName ?? orgAgent.walletName,
         lastChangedBy: migration.startedBy,
-        actor: null,
+        actor: ctx.actor,
         patch: { counts: moved as never }
       });
     } catch (error) {
@@ -422,11 +445,34 @@ export class OrgAgentMigrationExecutor {
         await this.repeat(run);
       } catch (error) {
         this.logger.error(`[move] ${ctx.migration.id}: ${name} failed after the switch: ${this.describe(error)}`);
-        await this.audit(ctx.migration.id, 'COMPLETION_STEP_FAILED', { step: name });
         if (required) {
+          await this.noteStuck(ctx, name);
           return;
         }
+        await this.audit(ctx.migration.id, 'COMPLETION_STEP_FAILED', { step: name });
       }
+    }
+  }
+
+  // The org stays frozen until a required step after the switch succeeds, and nobody else would notice: tell the owners
+  // and platform admins, once per step, not on every retry. The step is only marked as reported once an alert actually
+  // went out: it is the once-per-step key, so a failed send would otherwise never be tried again.
+  private async noteStuck(ctx: IMoveContext, step: string): Promise<void> {
+    const code = `COMPLETION_STEP_FAILED:${step}`;
+    try {
+      const current = await this.migrationRepository.getById(ctx.migration.id);
+      if (!current || current.error === code) {
+        return;
+      }
+      const alert = await this.alertService.alertKeyExport(current, KeyExportAlertKind.MOVE_STUCK, ctx.actor);
+      if (1 > alert.sent) {
+        this.logger.error(`[move] ${ctx.migration.id}: nobody could be told that ${step} is stuck; will try again`);
+        return;
+      }
+      await this.migrationRepository.update(ctx.migration.id, { error: code });
+      await this.audit(ctx.migration.id, 'COMPLETION_STEP_FAILED', { step });
+    } catch (error) {
+      this.logger.error(`[move] ${ctx.migration.id}: could not report the stuck step: ${this.describe(error)}`);
     }
   }
 
@@ -520,10 +566,13 @@ export class OrgAgentMigrationExecutor {
   }
 
   private async unfreeze(ctx: IMoveContext): Promise<void> {
-    await this.migrationService.advance(ctx.migration.id, OrgAgentMigrationStatus.STABILISING, null, {
+    await this.migrationService.advance(ctx.migration.id, OrgAgentMigrationStatus.STABILISING, ctx.actor, {
       stabilisationEndsAt: new Date(Date.now() + stabilisationMs()),
+      // Preflight's probe does not count: the window's own check must show the webhook working now.
+      webhookConfirmedAt: null,
       // The token now lives on the org's agent row; the migration no longer needs its own copy.
-      targetTokenEncrypted: null
+      targetTokenEncrypted: null,
+      error: null
     });
   }
 
@@ -680,6 +729,9 @@ export class OrgAgentMigrationExecutor {
     if (error instanceof MigrationAgentError) {
       if ('CONFLICT' === error.kind && ['TARGET_NOT_PRISTINE', 'STORAGE_VERSION_MISMATCH'].includes(error.agentCode)) {
         return error.agentCode;
+      }
+      if ('DOWNLOAD_FAILED' === error.agentCode) {
+        return 'DOWNLOAD_FAILED';
       }
       if ('REJECTED' === error.kind) {
         return 'AGENT_TOKEN_REJECTED';

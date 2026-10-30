@@ -73,6 +73,15 @@ export class OrgAgentMigrationService {
     }
   }
 
+  // For the status view, where an organisation that has never moved is an ordinary answer, not an error.
+  async findMigration(orgId: string): Promise<org_agent_migrations | null> {
+    try {
+      return await this.migrationRepository.getLatestByOrgId(orgId);
+    } catch (error) {
+      throw new RpcException(error.response ?? error);
+    }
+  }
+
   async getMigration(orgId: string): Promise<org_agent_migrations> {
     try {
       const migration = await this.migrationRepository.getLatestByOrgId(orgId);
@@ -189,5 +198,62 @@ export class OrgAgentMigrationService {
       patch: { error: errorCode, targetTokenEncrypted: null },
       ...(undefined === expectedScheduledFor ? {} : { where: { scheduledFor: expectedScheduledFor } })
     });
+  }
+
+  /**
+   * The owner calls the move off before it starts. Once the org is frozen the executor owns the move, so this only
+   * applies while it is being prepared or waiting for its slot (CREATED, REHEARSED or SCHEDULED).
+   * @throws when there is no move, or it has already started
+   */
+  async cancel(orgId: string, userId: string): Promise<org_agent_migrations> {
+    const migration = await this.migrationRepository.getActiveByOrgId(orgId);
+    if (!migration) {
+      throw new NotFoundException(ResponseMessages.agent.error.migrationNotFound);
+    }
+    if (!canTransition(migration.status as OrgAgentMigrationStatus, OrgAgentMigrationStatus.CANCELLED)) {
+      throw new BadRequestException(ResponseMessages.agent.error.migrationCancelNotAllowed);
+    }
+
+    let cancelled: org_agent_migrations | undefined;
+    let current = migration;
+    for (let attempt = 0; !cancelled; attempt += 1) {
+      try {
+        // From the status just read, not a blind write: a move the scheduler froze in between must refuse, not abort.
+        cancelled = await this.migrationRepository.transition({
+          id: migration.id,
+          from: current.status as OrgAgentMigrationStatus,
+          to: OrgAgentMigrationStatus.CANCELLED,
+          actor: userId,
+          patch: { targetTokenEncrypted: null }
+        });
+      } catch (error) {
+        if (!(error instanceof ConflictException)) {
+          throw error;
+        }
+        // The row changed since the read. Another owner moving the slot, or the scheduler taking the move off its slot,
+        // leaves it cancellable; only a move that is now frozen or finished is refused.
+        const fresh = await this.migrationRepository.getById(migration.id);
+        if (
+          1 <= attempt ||
+          !fresh ||
+          !canTransition(fresh.status as OrgAgentMigrationStatus, OrgAgentMigrationStatus.CANCELLED)
+        ) {
+          throw new BadRequestException(ResponseMessages.agent.error.migrationCancelNotAllowed);
+        }
+        current = fresh;
+      }
+    }
+    try {
+      await this.migrationRepository.recordEvent(migration.id, {
+        action: 'MOVE_CANCELLED',
+        actor: userId,
+        detail: { by: 'OWNER' }
+      });
+    } catch (error) {
+      this.logger.error(
+        `[cancel] could not audit the cancellation: ${error instanceof Error ? error.message : 'failed'}`
+      );
+    }
+    return cancelled;
   }
 }

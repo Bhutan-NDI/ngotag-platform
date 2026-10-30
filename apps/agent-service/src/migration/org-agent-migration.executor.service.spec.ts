@@ -40,7 +40,8 @@ const infoOf = (endpoint: string) => ({
     autoAcceptProofs: 'contentApproved',
     inboundTransports: ['http'],
     outboundTransports: ['http', 'ws'],
-    cronPurgeEnabled: true
+    cronPurgeEnabled: true,
+    tenancy: 'https://shared.example.com' === endpoint
   }
 });
 
@@ -80,11 +81,13 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
     events: [] as { action?: string; to?: string; detail?: unknown }[],
     transitions: [] as string[],
     statusAt: {} as Record<string, string>,
-    invitations: [] as unknown[]
+    invitations: [] as unknown[],
+    confirmingActor: null as string | null
   };
 
   const clone = () => (world.row ? { ...world.row, freezeDeadline: world.row.freezeDeadline } : null);
   const migrationRepository: Record<string, jest.Mock> = {
+    getConfirmingActor: jest.fn(async () => world.confirmingActor),
     getById: jest.fn(async () => clone()),
     update: jest.fn(async (_id: string, patch: Record<string, unknown>) => {
       Object.assign(world.row, patch);
@@ -185,6 +188,10 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
     getExportJob: jest.fn(async () => exportedJob),
     startImport: jest.fn(async () => {
       log('startImport');
+      return { jobId: 'import-1', status: 'pending' };
+    }),
+    pushImport: jest.fn(async () => {
+      log('pushImport');
       return { jobId: 'import-1', status: 'pending' };
     }),
     getImportJob: jest.fn(async () => importedJob),
@@ -489,6 +496,15 @@ describe('move day: the whole move', () => {
     expect(world.row.targetTokenEncrypted).toBeNull();
   });
 
+  it('forgets the webhook confirmation preflight left, so the window checks the webhook for itself', async () => {
+    const { executor, world } = buildWorld({ webhookConfirmedAt: new Date('2026-10-01T00:00:00Z') });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row.status).toBe(Status.STABILISING);
+    expect(world.row.webhookConfirmedAt).toBeNull();
+  });
+
   it('allows a window of zero hours', async () => {
     process.env.ORG_MIGRATION_STABILISATION_HOURS = '0';
     const { executor, world } = buildWorld();
@@ -547,8 +563,9 @@ describe('move day: starting', () => {
 
     await world.executor.run(MIGRATION_ID, USER_ID);
 
-    const [, to, , , options] = world.migrationService.advance.mock.calls[0];
+    const [, to, , patch, options] = world.migrationService.advance.mock.calls[0];
     expect(to).toBe(Status.FROZEN);
+    expect(patch.importKeyFingerprint).toBeNull();
     expect(options.where).toEqual({ rehearsalStatus: 'DONE', scheduledFor: { lte: expect.any(Date) } });
   });
 
@@ -650,6 +667,17 @@ describe('move day: aborting before the switch', () => {
           const info = infoOf('https://didcomm.org.example.com');
           return e === DEDICATED.endpoint
             ? { ...info, config: { ...info.config, cronPurgeEnabled: false } }
+            : infoOf('https://shared.example.com');
+        })
+    ],
+    [
+      'the new agent turns out to be multi-tenant',
+      'VERIFICATION_FAILED:CONFIG',
+      (w) =>
+        w.agentClient.getAgentInfo.mockImplementation(async (e: string) => {
+          const info = infoOf('https://didcomm.org.example.com');
+          return e === DEDICATED.endpoint
+            ? { ...info, config: { ...info.config, tenancy: true } }
             : infoOf('https://shared.example.com');
         })
     ],
@@ -890,6 +918,102 @@ describe('move day: aborting before the switch', () => {
   });
 });
 
+describe('move day: how the agent gets the export', () => {
+  it('has the agent pull it from S3 by default', async () => {
+    const { executor, agentClient } = buildWorld();
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(agentClient.startImport).toHaveBeenCalledTimes(1);
+    expect(agentClient.pushImport).not.toHaveBeenCalled();
+  });
+
+  it('sends it to the agent itself when preflight found the agent cannot reach S3', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH' });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(agentClient.startImport).not.toHaveBeenCalled();
+    expect(agentClient.pushImport).toHaveBeenCalledWith(
+      DEDICATED.endpoint,
+      DEDICATED.token,
+      {
+        downloadUrl: exportedJob.downloadUrl,
+        sessionId: 'session-1',
+        checksum: exportedJob.checksum,
+        sealedStoreKey: exportedJob.sealedStoreKey,
+        storageVersion: '0.5',
+        dryRun: false
+      },
+      expect.any(Number)
+    );
+    expect(world.row.status).toBe(Status.STABILISING);
+  });
+
+  it('gives the transfer no more time than the freeze budget has left', async () => {
+    const { executor, agentClient } = buildWorld({ downloadMethod: 'PUSH', predictedFreezeMs: 15 * MINUTE });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    const budget = agentClient.pushImport.mock.calls[0][3];
+    expect(budget).toBeGreaterThan(0);
+    expect(budget).toBeLessThanOrEqual(15 * MINUTE);
+  });
+
+  it('records a push cut off by the freeze budget as FREEZE_BUDGET_EXCEEDED, not as the agent being unreachable', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH', predictedFreezeMs: 5000 });
+    agentClient.pushImport.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5100));
+      throw new MigrationAgentError('UNREACHABLE');
+    });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row).toMatchObject({ status: Status.FAILED, error: 'FREEZE_BUDGET_EXCEEDED' });
+  }, 20000);
+
+  it('still records a failed push inside the budget as the agent being unreachable', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH', predictedFreezeMs: 15 * MINUTE });
+    agentClient.pushImport.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row).toMatchObject({ status: Status.FAILED, error: 'AGENT_UNREACHABLE' });
+  });
+
+  it('aborts losslessly with DOWNLOAD_FAILED when the platform cannot fetch the export', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH' });
+    agentClient.pushImport.mockRejectedValue(new MigrationAgentError('FAILED', undefined, 'DOWNLOAD_FAILED'));
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row).toMatchObject({ status: Status.FAILED, error: 'DOWNLOAD_FAILED' });
+    expect(world.relay).toBe('none');
+  });
+});
+
+describe('move day: the audit trail', () => {
+  it('names the owner who confirmed the move on every step it takes, and on the switch itself', async () => {
+    const { executor, migrationService, migrationRepository } = buildWorld();
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    const actors = migrationService.advance.mock.calls.map((call) => call[2]);
+    expect(actors).toHaveLength(5);
+    expect(actors.every((actor) => USER_ID === actor)).toBe(true);
+    expect(migrationRepository.cutover.mock.calls[0][0].actor).toBe(USER_ID);
+  });
+
+  it('leaves a failure with no actor, so it is recorded as the system', async () => {
+    const world = buildWorld();
+    world.agentClient.getImportJob.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.migrationService.abort.mock.calls[0][2]).toBeNull();
+  });
+});
+
 describe('move day: signing check', () => {
   it('signs with an empty subject and the standard credentials context, so nothing org-specific can break it', async () => {
     const world = buildWorld();
@@ -1044,6 +1168,116 @@ describe('move day: after the switch', () => {
     expect(world.world.row.newInvitationDid).toBe('did:peer:2.new');
   });
 
+  describe('when a step after the switch keeps failing', () => {
+    const stuck = async () => {
+      const world = buildWorld();
+      world.agentClient.createConnectionInvitation.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+      await world.executor.run(MIGRATION_ID, USER_ID);
+      return world;
+    };
+
+    it('says which step on the migration, so the owner and the admins can see why the org is paused', async () => {
+      const world = await stuck();
+
+      expect(world.world.row).toMatchObject({
+        status: Status.CUTOVER,
+        error: 'COMPLETION_STEP_FAILED:INVITATION'
+      });
+    });
+
+    it('tells the owners and platform admins, naming who confirmed the move', async () => {
+      const world = await stuck();
+
+      const stuckAlerts = world.alertService.alertKeyExport.mock.calls.filter(([, kind]) => 'MOVE_STUCK' === kind);
+      expect(stuckAlerts).toHaveLength(1);
+      expect(stuckAlerts[0][2]).toBe(USER_ID);
+    });
+
+    it('does not say it again on every retry', async () => {
+      const world = await stuck();
+
+      await world.executor.resumeCutover(MIGRATION_ID);
+      await world.executor.resumeCutover(MIGRATION_ID);
+
+      const stuckAlerts = world.alertService.alertKeyExport.mock.calls.filter(([, kind]) => 'MOVE_STUCK' === kind);
+      expect(stuckAlerts).toHaveLength(1);
+      expect(world.world.events.filter((event) => 'COMPLETION_STEP_FAILED' === event.action)).toHaveLength(1);
+    });
+
+    it('says it again when a different step is the one that fails', async () => {
+      const world = await stuck();
+      world.agentClient.createConnectionInvitation.mockResolvedValue({
+        invitationUrl: 'https://didcomm.org.example.com?oob=abc',
+        invitationDid: 'did:peer:2.new'
+      });
+      world.agentClient.putRelay.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+      world.world.row.newInvitationDid = null;
+
+      await world.executor.resumeCutover(MIGRATION_ID);
+
+      expect(world.world.row.error).toBe('COMPLETION_STEP_FAILED:RELAY_FORWARD');
+      expect(world.alertService.alertKeyExport.mock.calls.filter(([, kind]) => 'MOVE_STUCK' === kind)).toHaveLength(2);
+    });
+
+    it('clears the note once the move finishes', async () => {
+      const world = await stuck();
+      world.agentClient.createConnectionInvitation.mockResolvedValue({
+        invitationUrl: 'https://didcomm.org.example.com?oob=abc',
+        invitationDid: 'did:peer:2.new'
+      });
+
+      await world.executor.resumeCutover(MIGRATION_ID);
+
+      expect(world.world.row).toMatchObject({ status: Status.STABILISING, error: null });
+    });
+
+    it('carries on when the alert cannot be sent, and does not mark the step as reported', async () => {
+      const world = buildWorld();
+      world.agentClient.createConnectionInvitation.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+      world.alertService.alertKeyExport.mockImplementation(async (_m, kind) => {
+        if ('MOVE_STUCK' === kind) {
+          throw new Error('mail down');
+        }
+        return { recipients: 1, sent: 1 };
+      });
+
+      await world.executor.run(MIGRATION_ID, USER_ID);
+
+      expect(world.world.row.status).toBe(Status.CUTOVER);
+      expect(world.world.row.error).not.toBe('COMPLETION_STEP_FAILED:INVITATION');
+    });
+
+    it.each([
+      ['throws', () => Promise.reject(new Error('mail down'))],
+      ['reaches nobody', () => Promise.resolve({ recipients: 2, sent: 0 })]
+    ])('tries the alert again on the next resume when it %s, instead of staying silent', async (_name, failing) => {
+      const world = buildWorld();
+      world.agentClient.createConnectionInvitation.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+      const stuckKinds = () =>
+        world.alertService.alertKeyExport.mock.calls.filter(([, kind]) => 'MOVE_STUCK' === kind).length;
+      world.alertService.alertKeyExport.mockImplementation(async (_m, kind) =>
+        'MOVE_STUCK' === kind ? failing() : { recipients: 1, sent: 1 }
+      );
+      await world.executor.run(MIGRATION_ID, USER_ID);
+      expect(stuckKinds()).toBe(1);
+
+      world.alertService.alertKeyExport.mockImplementation(async () => ({ recipients: 1, sent: 1 }));
+      await world.executor.resumeCutover(MIGRATION_ID);
+
+      expect(stuckKinds()).toBe(2);
+      expect(world.world.row.error).toBe('COMPLETION_STEP_FAILED:INVITATION');
+    });
+
+    it('does not mark the migration when only the S3 cleanup fails, which never holds the org', async () => {
+      const world = buildWorld();
+      world.agentClient.deleteExport.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+
+      await world.executor.run(MIGRATION_ID, USER_ID);
+
+      expect(world.world.row.error).toBeNull();
+    });
+  });
+
   it('does not wait on the S3 cleanup to unfreeze the org', async () => {
     const world = buildWorld();
     world.agentClient.deleteExport.mockRejectedValue(new MigrationAgentError('FAILED', 500));
@@ -1063,6 +1297,17 @@ describe('move day: after the switch', () => {
     expect(world.world.relay).toBe('FORWARD');
     expect(world.world.exports.size).toBe(0);
     expect(world.world.row.status).toBe(Status.STABILISING);
+  });
+
+  it('resumes as the owner who confirmed the move, and as whoever started it when none is on record', async () => {
+    const confirmed = switched();
+    confirmed.world.confirmingActor = 'owner-2';
+    await confirmed.executor.resumeCutover(MIGRATION_ID);
+    expect(confirmed.migrationService.advance.mock.calls.at(-1)?.[2]).toBe('owner-2');
+
+    const unrecorded = switched();
+    await unrecorded.executor.resumeCutover(MIGRATION_ID);
+    expect(unrecorded.migrationService.advance.mock.calls.at(-1)?.[2]).toBe(USER_ID);
   });
 
   it('resumes a switched-over move that never made its invitation', async () => {

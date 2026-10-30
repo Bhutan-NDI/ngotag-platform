@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  Equals,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -89,6 +90,17 @@ export class ScheduleOrgAgentMigrationDto {
   scheduledFor?: string;
 }
 
+export class DisasterRestoreDto {
+  @ApiProperty({
+    example: true,
+    description:
+      'Must be true. Confirms you know what a restore loses: everything the new agent recorded since the switch, and the connections made since then.'
+  })
+  @IsBoolean({ message: 'acknowledgeLosses must be a boolean.' })
+  @Equals(true, { message: 'acknowledgeLosses must be true to restore.' })
+  acknowledgeLosses: boolean;
+}
+
 export class ListOrgAgentMigrationsDto {
   // Not named `orgId`: OrgRolesGuard reads req.query.orgId and, whenever it finds one, checks org membership
   // instead of the PLATFORM_ADMIN role, which would refuse an admin who is not a member of that org.
@@ -117,4 +129,14 @@ export class ListOrgAgentMigrationsDto {
   @Min(1, { message: 'Page size must be greater than 0' })
   @Max(100, { message: 'Page size must be 100 or less' })
   pageSize?: number;
+}
+
+// What the dedicated agent posts to <platform>/wh/<orgId>/probe. The org comes from the path.
+export class WebhookProbeDto {
+  @IsUUID('4', { message: 'probeId must be a UUID.' })
+  probeId: string;
+
+  @IsOptional()
+  @IsString()
+  type?: string;
 }

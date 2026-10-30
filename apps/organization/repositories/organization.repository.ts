@@ -23,7 +23,7 @@ import {
   IUpdateOrganization,
   OrgInvitation
 } from '../interfaces/organization.interface';
-import { Invitation, PrismaTables, SortValue } from '@credebl/enum/enum';
+import { Invitation, ORG_AGENT_MIGRATION_TERMINAL_STATUSES, PrismaTables, SortValue } from '@credebl/enum/enum';
 // eslint-disable-next-line camelcase
 import {
   Prisma,
@@ -966,6 +966,17 @@ export class OrganizationRepository {
 
     try {
       return await this.prisma.$transaction(async (prisma) => {
+        // A move that is still running would carry on against an organisation that no longer exists.
+        const activeMigrations = await prisma.org_agent_migrations.count({
+          where: {
+            orgId: id,
+            status: { notIn: [...ORG_AGENT_MIGRATION_TERMINAL_STATUSES] }
+          }
+        });
+        if (0 < activeMigrations) {
+          throw new ConflictException(ResponseMessages.organisation.error.orgMigrationInProgress);
+        }
+
         // If an org_agents record exists, allow deletion only if it is an incomplete
         // orphan (no tenantId — wallet creation failed before Credo was called).
         // A fully provisioned wallet must be deleted via DELETE /orgs/:orgId/agents/wallet first.

@@ -7,15 +7,19 @@ import { OrgAgentMigrationPreflightService } from './org-agent-migration.preflig
 import { OrgAgentMigrationRehearsalService } from './org-agent-migration.rehearsal.service';
 import { OrgAgentMigrationAuthorizer } from './org-agent-migration.authorizer';
 import { OrgAgentMigrationScheduleService } from './org-agent-migration.schedule.service';
+import { OrgAgentMigrationRestoreService } from './org-agent-migration.restore.service';
 import { KeyExportAlertKind, OrgAgentMigrationAlertService } from './org-agent-migration.alert.service';
+import { OrgAgentMigrationWebhookService } from './org-agent-migration.webhook.service';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import {
+  ICancelOrgAgentMigration,
   ICreateOrgAgentMigration,
   IListOrgAgentMigrations,
   IOrgAgentMigration,
   IPreflightOrgAgentMigration,
   IPreflightReport,
   IRehearseOrgAgentMigration,
+  IRestoreOrgAgentMigration,
   IScheduleOrgAgentMigration,
   toPublicMigration
 } from './org-agent-migration.interface';
@@ -31,9 +35,11 @@ export class OrgAgentMigrationController {
     private readonly preflightService: OrgAgentMigrationPreflightService,
     private readonly rehearsalService: OrgAgentMigrationRehearsalService,
     private readonly scheduleService: OrgAgentMigrationScheduleService,
+    private readonly restoreService: OrgAgentMigrationRestoreService,
     private readonly authorizer: OrgAgentMigrationAuthorizer,
     private readonly alertService: OrgAgentMigrationAlertService,
     private readonly migrationRepository: OrgAgentMigrationRepository,
+    private readonly webhookService: OrgAgentMigrationWebhookService,
     private readonly logger: Logger
   ) {}
 
@@ -98,15 +104,44 @@ export class OrgAgentMigrationController {
     }
   }
 
+  // The owner calls the move off before it starts. The org stays exactly as it was.
+  @MessagePattern({ cmd: 'cancel-org-agent-migration' })
+  async cancel(payload: ICancelOrgAgentMigration): Promise<IOrgAgentMigration> {
+    try {
+      await this.authorizer.assertOwner(payload.orgId, payload.userId);
+      return toPublicMigration(await this.migrationService.cancel(payload.orgId, payload.userId));
+    } catch (error) {
+      throw new RpcException(error.response ?? error);
+    }
+  }
+
+  // Rolls a move back to the shared agent after the new agent was lost. Platform admins only, and lossy.
+  @MessagePattern({ cmd: 'disaster-restore-org-agent-migration' })
+  async disasterRestore(payload: IRestoreOrgAgentMigration): Promise<IOrgAgentMigration> {
+    try {
+      await this.authorizer.assertPlatformAdmin(payload.orgId, payload.userId);
+      return toPublicMigration(await this.restoreService.restore(payload.orgId, payload.userId));
+    } catch (error) {
+      throw new RpcException(error.response ?? error);
+    }
+  }
+
   @MessagePattern({ cmd: 'get-org-agent-migration' })
-  async getMigration(payload: { orgId: string }): Promise<IOrgAgentMigration> {
-    return toPublicMigration(await this.migrationService.getMigration(payload.orgId));
+  async getMigration(payload: { orgId: string }): Promise<IOrgAgentMigration | null> {
+    const migration = await this.migrationService.findMigration(payload.orgId);
+    return migration ? toPublicMigration(migration) : null;
   }
 
   @MessagePattern({ cmd: 'list-org-agent-migrations' })
   async listMigrations(payload: IListOrgAgentMigrations): Promise<{ total: number; migrations: IOrgAgentMigration[] }> {
     const { total, migrations } = await this.migrationService.listMigrations(payload);
     return { total, migrations: migrations.map(toPublicMigration) };
+  }
+
+  // The dedicated agent's webhook test event arriving. Anything but the live probe of an unfinished move is refused.
+  @MessagePattern({ cmd: 'confirm-org-agent-webhook' })
+  async confirmWebhook(payload: { orgId: string; probeId: string }): Promise<{ confirmed: boolean }> {
+    return { confirmed: await this.webhookService.confirm(payload.orgId, payload.probeId) };
   }
 
   // Best effort: the alert that gates each export is the one that matters, and it fails closed there.

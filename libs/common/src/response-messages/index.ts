@@ -118,6 +118,7 @@ export const ResponseMessages = {
       deleteOrgInvitation: 'Organization does not have access to delete this invitation',
       notFound: 'Organization agent not found',
       orgNotFound: 'Organization does not exists',
+      orgMigrationInProgress: 'The organization has a wallet move in progress and cannot be deleted until it ends',
       orgDataNotFoundInkeycloak: 'Organization not found in keycloak',
       orgNotMatch: 'Organization does not have access',
       invitationStatusInvalid: 'Unable to delete invitation with accepted/rejected status',
@@ -401,6 +402,8 @@ export const ResponseMessages = {
       migrationChecked: 'Wallet move checks completed',
       migrationRehearsalStarted: 'Wallet move rehearsal started',
       migrationScheduled: 'Wallet move scheduled',
+      migrationCancelled: 'Wallet move cancelled',
+      migrationRestored: 'Wallet move rolled back to the shared agent',
       migrationFetched: 'Wallet move fetched successfully',
       migrationsFetched: 'Wallet moves fetched successfully'
     },
@@ -469,6 +472,13 @@ export const ResponseMessages = {
         'The dedicated agent admin and DIDComm addresses must be distinct HTTPS URLs, and the DIDComm address must be public and carry no credentials',
       migrationPreflightNotPassed: 'The preflight checks must pass before the rehearsal can run',
       migrationRehearsalRunning: 'A rehearsal is already running for this migration',
+      migrationRestoreNotAllowed:
+        'A move can only be rolled back during its stabilisation window, before the shared copy is purged',
+      migrationRestoreBusy: 'The move is being worked on right now -- please try again in a moment',
+      migrationRestoreSnapshotMissing:
+        'The saved copy of the organization agent is incomplete, so it cannot be restored',
+      migrationPlatformAdminRequired: 'Only a platform admin can roll a move back',
+      migrationCancelNotAllowed: 'The move can only be cancelled before it starts',
       migrationNotRehearsed: 'The move can only be confirmed after a rehearsal has finished',
       migrationRehearsalStale: 'The rehearsal is too old to schedule a move from; run a new rehearsal first',
       migrationConfirmationMismatch: 'The organization name typed does not match',

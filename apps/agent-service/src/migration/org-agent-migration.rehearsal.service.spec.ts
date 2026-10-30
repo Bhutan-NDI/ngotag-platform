@@ -65,6 +65,7 @@ const build = (options: { migration?: object | null } = {}) => {
     startSealedExport: track('startSealedExport', { jobId: 'export-1', status: 'pending' }),
     getExportJob: track('getExportJob', completedExport),
     startImport: track('startImport', { jobId: 'import-1', status: 'pending' }),
+    pushImport: track('pushImport', { jobId: 'import-1', status: 'pending' }),
     getImportJob: track('getImportJob', completedImport),
     deleteExport: track('deleteExport', undefined)
   };
@@ -246,7 +247,12 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
     expect(done.migrationRepository.recordEvent).toHaveBeenCalledWith(MIGRATION_ID, {
       action: 'REHEARSAL_FINISHED',
       actor: USER_ID,
-      detail: { outcome: 'DONE', exportCleanup: 'DELETED' }
+      detail: {
+        outcome: 'DONE',
+        exportCleanup: 'DELETED',
+        checksum: completedExport.checksum,
+        importKeyFingerprint: createHash('sha256').update(Buffer.from(PUBLIC_KEY, 'base64')).digest('hex')
+      }
     });
 
     const failed = build();
@@ -262,6 +268,35 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
     );
   });
 
+  it('audits the checksum and key fingerprint of an export even when the rehearsal fails after it', async () => {
+    const { execute, agentClient, migrationRepository } = build();
+    agentClient.getImportJob.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+
+    await execute();
+
+    const [, entry] = migrationRepository.recordEvent.mock.calls.find(
+      ([, event]) => 'REHEARSAL_FINISHED' === event.action
+    );
+    expect(entry.detail).toMatchObject({
+      outcome: 'FAILED',
+      checksum: completedExport.checksum,
+      importKeyFingerprint: createHash('sha256').update(Buffer.from(PUBLIC_KEY, 'base64')).digest('hex')
+    });
+  });
+
+  it('has no checksum to audit when the export itself failed, only the key fingerprint', async () => {
+    const { execute, agentClient, migrationRepository } = build();
+    agentClient.getExportJob.mockResolvedValue({ ...completedExport, status: 'failed' });
+
+    await execute();
+
+    const [, entry] = migrationRepository.recordEvent.mock.calls.find(
+      ([, event]) => 'REHEARSAL_FINISHED' === event.action
+    );
+    expect(entry.detail).not.toHaveProperty('checksum');
+    expect(entry.detail).toHaveProperty('importKeyFingerprint');
+  });
+
   it('keeps going when the audit write fails', async () => {
     const { execute, migrationRepository, migrationService, logger } = build();
     migrationRepository.recordEvent.mockRejectedValue(new Error('db down'));
@@ -270,6 +305,161 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
 
     expect(migrationService.advance).toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalled();
+  });
+});
+
+describe('OrgAgentMigrationRehearsalService leftover exports', () => {
+  it('remembers the export it started before importing it, so a crash can be cleaned up after', async () => {
+    const { execute, migrationRepository, agentClient } = build();
+    let rememberedBeforeImport = false;
+    agentClient.startImport.mockImplementation(async () => {
+      rememberedBeforeImport = migrationRepository.update.mock.calls.some(
+        ([, patch]) => 'export-1' === patch.exportJobId && undefined === patch.rehearsalStatus
+      );
+      return { jobId: 'import-1', status: 'pending' };
+    });
+
+    await execute();
+
+    expect(rememberedBeforeImport).toBe(true);
+  });
+
+  it('removes the export an earlier rehearsal left behind, before it makes a new one', async () => {
+    const { execute, agentClient, calls } = build();
+
+    await execute({ ...migrationRow(), exportJobId: 'left-over' } as never);
+
+    expect(agentClient.deleteExport).toHaveBeenNthCalledWith(1, SHARED.endpoint, SHARED.token, 'tenant-1', 'left-over');
+    expect(calls.indexOf('deleteExport')).toBeLessThan(calls.indexOf('startSealedExport'));
+  });
+
+  it('has nothing to remove on a first rehearsal', async () => {
+    const { execute, agentClient } = build();
+
+    await execute({ ...migrationRow(), exportJobId: null } as never);
+
+    expect(agentClient.deleteExport).toHaveBeenCalledTimes(1);
+    expect(agentClient.deleteExport).toHaveBeenCalledWith(SHARED.endpoint, SHARED.token, 'tenant-1', 'export-1');
+  });
+
+  it('clears the id once the export is deleted, so a later rehearsal has nothing stale to remove', async () => {
+    const { execute, migrationService } = build();
+
+    await execute();
+
+    expect(migrationService.advance.mock.calls[0][3]).toMatchObject({ exportJobId: null });
+  });
+
+  it('clears the id of a leftover that is deleted, before the new export is recorded', async () => {
+    const { execute, migrationRepository } = build();
+
+    await execute({ ...migrationRow(), exportJobId: 'left-over' } as never);
+
+    const patches = migrationRepository.update.mock.calls.map(([, patch]) => patch);
+    expect(patches.findIndex((patch) => null === patch.exportJobId)).toBeLessThan(
+      patches.findIndex((patch) => 'export-1' === patch.exportJobId)
+    );
+  });
+
+  it('treats a leftover the agent no longer knows as already deleted, and goes on', async () => {
+    const { execute, agentClient, migrationService } = build();
+    agentClient.deleteExport.mockRejectedValueOnce(new MigrationAgentError('NOT_FOUND', 404));
+
+    await execute({ ...migrationRow(), exportJobId: 'expired' } as never);
+
+    expect(agentClient.startSealedExport).toHaveBeenCalled();
+    expect(migrationService.advance).toHaveBeenCalled();
+  });
+
+  it('leaves the id null on a failure whose export was cleaned up', async () => {
+    const { execute, migrationRepository, agentClient } = build();
+    agentClient.startImport.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+    await execute();
+
+    expect(failureRecorded(migrationRepository)).toMatchObject({ exportJobId: null });
+  });
+
+  it('stops, keeping the leftover findable, when it cannot be removed, instead of starting a new export over it', async () => {
+    const { execute, agentClient, migrationService, migrationRepository } = build();
+    agentClient.deleteExport.mockRejectedValue(new MigrationAgentError('CONFLICT', 409));
+
+    await execute({ ...migrationRow(), exportJobId: 'left-over' } as never);
+
+    expect(migrationService.advance).not.toHaveBeenCalled();
+    expect(agentClient.startSealedExport).not.toHaveBeenCalled();
+    expect(failureRecorded(migrationRepository)).toMatchObject({
+      exportJobId: 'left-over',
+      rehearsal: expect.objectContaining({ code: 'EXPORT_CLEANUP_FAILED', exportCleanup: 'FAILED' })
+    });
+  });
+});
+
+describe('OrgAgentMigrationRehearsalService download method', () => {
+  it('has the agent pull the export from S3 unless preflight found it cannot', async () => {
+    const { execute, agentClient, migrationService } = build();
+
+    await execute({ ...migrationRow(), downloadMethod: 'PULL' } as never);
+
+    expect(agentClient.startImport).toHaveBeenCalledTimes(1);
+    expect(agentClient.pushImport).not.toHaveBeenCalled();
+    expect(migrationService.advance.mock.calls[0][3].rehearsal.downloadMethod).toBe('PULL');
+  });
+
+  it('pulls when preflight has not settled on a method yet', async () => {
+    const { execute, agentClient } = build();
+
+    await execute({ ...migrationRow(), downloadMethod: null } as never);
+
+    expect(agentClient.startImport).toHaveBeenCalledTimes(1);
+    expect(agentClient.pushImport).not.toHaveBeenCalled();
+  });
+
+  it('sends the export to the agent itself when preflight found it cannot reach S3, as a dry run', async () => {
+    const { execute, agentClient, calls } = build();
+
+    await execute({ ...migrationRow(), downloadMethod: 'PUSH' } as never);
+
+    expect(agentClient.startImport).not.toHaveBeenCalled();
+    expect(agentClient.pushImport).toHaveBeenCalledWith(DEDICATED.endpoint, DEDICATED.token, {
+      downloadUrl: completedExport.downloadUrl,
+      sessionId: 'session-1',
+      checksum: completedExport.checksum,
+      sealedStoreKey: completedExport.sealedStoreKey,
+      storageVersion: '0.5',
+      dryRun: true
+    });
+    expect(calls).toEqual([
+      'createImportSession',
+      'startSealedExport',
+      'getExportJob',
+      'pushImport',
+      'getImportJob',
+      'getExportJob',
+      'deleteExport'
+    ]);
+  });
+
+  it('records which method the rehearsal used', async () => {
+    const { execute, migrationService } = build();
+
+    await execute({ ...migrationRow(), downloadMethod: 'PUSH' } as never);
+
+    const [, , , patch] = migrationService.advance.mock.calls[0];
+    expect(patch.rehearsal.downloadMethod).toBe('PUSH');
+  });
+
+  it('reports a failed download as DOWNLOAD_FAILED at the import step, and still removes the export', async () => {
+    const { execute, agentClient, migrationRepository } = build();
+    agentClient.pushImport.mockRejectedValue(new MigrationAgentError('FAILED', undefined, 'DOWNLOAD_FAILED'));
+
+    await execute({ ...migrationRow(), downloadMethod: 'PUSH' } as never);
+
+    expect(failureRecorded(migrationRepository).rehearsal).toMatchObject({
+      code: 'DOWNLOAD_FAILED',
+      step: 'IMPORT',
+      exportCleanup: 'DELETED'
+    });
   });
 });
 
@@ -346,7 +536,7 @@ describe('OrgAgentMigrationRehearsalService rehearsal run', () => {
       USER_ID,
       expect.objectContaining({
         counts: completedImport.counts,
-        exportJobId: 'export-1',
+        exportJobId: null,
         importJobId: 'import-1',
         importKeyFingerprint: createHash('sha256').update(Buffer.from(PUBLIC_KEY, 'base64')).digest('hex'),
         storageVersion: '0.5',

@@ -45,6 +45,18 @@ export class MigrationAgentAccess {
     };
   }
 
+  /**
+   * The dedicated agent as the org's own agent row now has it. After the switch the token lives on that row, not on
+   * the migration, so this is what every step from the stabilisation window on uses.
+   */
+  async dedicatedOfOrg(orgId: string): Promise<IAgentAccess | undefined> {
+    const row = await this.agentServiceRepository.getAgentApiKey(orgId);
+    if (!row?.agentEndPoint || !row.apiKey) {
+      return undefined;
+    }
+    return { endpoint: row.agentEndPoint, token: await this.commonService.decryptPassword(row.apiKey) };
+  }
+
   encryptToken(token: string): string {
     return this.commonService.dataEncryption(token);
   }

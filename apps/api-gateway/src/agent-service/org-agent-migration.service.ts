@@ -56,6 +56,17 @@ export class OrgAgentMigrationService extends BaseService {
     });
   }
 
+  cancel(orgId: string, userId: string): Promise<object> {
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'cancel-org-agent-migration', { orgId, userId });
+  }
+
+  disasterRestore(orgId: string, userId: string): Promise<object> {
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'disaster-restore-org-agent-migration', {
+      orgId,
+      userId
+    });
+  }
+
   get(orgId: string): Promise<object> {
     return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'get-org-agent-migration', { orgId });
   }
@@ -67,5 +78,9 @@ export class OrgAgentMigrationService extends BaseService {
       pageNumber: query.pageNumber,
       pageSize: query.pageSize
     });
+  }
+
+  confirmWebhook(orgId: string, probeId: string): Promise<{ confirmed: boolean }> {
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'confirm-org-agent-webhook', { orgId, probeId });
   }
 }

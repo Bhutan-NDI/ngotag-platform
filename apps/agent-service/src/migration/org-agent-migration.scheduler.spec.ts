@@ -22,7 +22,11 @@ const build = () => {
   const migrationRepository = {
     findDueForStart: jest.fn().mockResolvedValue([]),
     findStalled: jest.fn().mockResolvedValue([]),
+    findAwaitingWebhook: jest.fn().mockResolvedValue([]),
+    findWindowEnded: jest.fn().mockResolvedValue([]),
+    findRotating: jest.fn().mockResolvedValue([]),
     countInFlight: jest.fn().mockResolvedValue(0),
+    tryBeginWebhookCheck: jest.fn().mockResolvedValue(true),
     tryAcquireLease: jest.fn().mockResolvedValue(true),
     getConfirmingActor: jest.fn().mockResolvedValue('owner-1'),
     recordEvent: jest.fn().mockResolvedValue(undefined)
@@ -34,6 +38,11 @@ const build = () => {
     abortInterrupted: jest.fn().mockResolvedValue(true),
     resumeCutover: jest.fn().mockResolvedValue(undefined)
   };
+  const switchOverService = {
+    beginSwitchOver: jest.fn().mockResolvedValue('STARTED'),
+    advanceRotation: jest.fn().mockResolvedValue(undefined),
+    checkWebhook: jest.fn().mockResolvedValue(undefined)
+  };
   const logger = { error: jest.fn(), warn: jest.fn(), log: jest.fn() };
   const scheduler = new OrgAgentMigrationScheduler(
     registry as never,
@@ -41,9 +50,19 @@ const build = () => {
     migrationService as never,
     preflightService as never,
     executor as never,
+    switchOverService as never,
     logger as never
   );
-  return { scheduler, registry, migrationRepository, migrationService, preflightService, executor, logger };
+  return {
+    scheduler,
+    registry,
+    migrationRepository,
+    migrationService,
+    preflightService,
+    executor,
+    switchOverService,
+    logger
+  };
 };
 
 // Lets fire-and-forget promises settle.
@@ -54,7 +73,9 @@ afterEach(() => {
     'ORG_MIGRATION_SCHEDULER_ENABLED',
     'ORG_MIGRATION_TICK_MS',
     'ORG_MIGRATION_MAX_CONCURRENT',
-    'ORG_MIGRATION_START_WINDOW_MS'
+    'ORG_MIGRATION_START_WINDOW_MS',
+    'ORG_MIGRATION_SWITCHOVER_RETRY_MS',
+    'ORG_MIGRATION_ROTATION_POLL_MS'
   ]) {
     delete process.env[name];
   }
@@ -69,7 +90,7 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
     await scheduler.tick();
 
     expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', expect.any(Number));
-    expect(preflightService.run).toHaveBeenCalledWith('m1', {}, null);
+    expect(preflightService.run).toHaveBeenCalledWith('m1', { keepDownloadMethod: true }, null);
     expect(executor.run).toHaveBeenCalledWith('m1', 'owner-1');
     expect(preflightService.run.mock.invocationCallOrder[0]).toBeLessThan(executor.run.mock.invocationCallOrder[0]);
   });
@@ -470,6 +491,227 @@ describe('OrgAgentMigrationScheduler: recovering stalled moves', () => {
   });
 });
 
+describe('OrgAgentMigrationScheduler: ending the stabilisation window', () => {
+  const ended = (id = 'm1', overrides = {}) => ({
+    id,
+    status: Status.STABILISING,
+    stabilisationEndsAt: new Date(Date.now() - MINUTE),
+    ...overrides
+  });
+
+  it('switches an org over once its window has ended, then carries straight on into the rotation', async () => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findWindowEnded.mockResolvedValue([ended()]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', 2 * MINUTE);
+    expect(switchOverService.beginSwitchOver).toHaveBeenCalledWith('m1');
+    expect(switchOverService.advanceRotation).toHaveBeenCalledWith('m1');
+    expect(switchOverService.beginSwitchOver.mock.invocationCallOrder[0]).toBeLessThan(
+      switchOverService.advanceRotation.mock.invocationCallOrder[0]
+    );
+  });
+
+  it.each(['DEFERRED', 'SKIPPED'])('does not start the rotation when the switch-over is %s', async (outcome) => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findWindowEnded.mockResolvedValue([ended()]);
+    switchOverService.beginSwitchOver.mockResolvedValue(outcome);
+
+    await scheduler.tick();
+
+    expect(switchOverService.advanceRotation).not.toHaveBeenCalled();
+  });
+
+  it('leaves a migration to the replica that holds its lease', async () => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findWindowEnded.mockResolvedValue([ended()]);
+    migrationRepository.tryAcquireLease.mockResolvedValue(false);
+
+    await scheduler.tick();
+
+    expect(switchOverService.beginSwitchOver).not.toHaveBeenCalled();
+  });
+
+  it('carries on to the next migration when one fails', async () => {
+    const { scheduler, switchOverService, migrationRepository, logger } = build();
+    migrationRepository.findWindowEnded.mockResolvedValue([ended('m1'), ended('m2')]);
+    switchOverService.beginSwitchOver.mockRejectedValueOnce(new Error('boom')).mockResolvedValue('DEFERRED');
+
+    await scheduler.tick();
+
+    expect(switchOverService.beginSwitchOver).toHaveBeenCalledTimes(2);
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('reads the retry interval from the environment', async () => {
+    process.env.ORG_MIGRATION_SWITCHOVER_RETRY_MS = '30000';
+    const { scheduler, migrationRepository } = build();
+    migrationRepository.findWindowEnded.mockResolvedValue([ended()]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', 30000);
+  });
+
+  it('still starts and recovers moves when ending windows fails', async () => {
+    const { scheduler, executor, migrationRepository } = build();
+    migrationRepository.findWindowEnded.mockRejectedValue(new Error('db hiccup'));
+    migrationRepository.findStalled.mockResolvedValue([due('m1', { status: Status.EXPORTING })]);
+
+    await scheduler.tick();
+
+    expect(executor.abortInterrupted).toHaveBeenCalledWith('m1');
+  });
+});
+
+describe('OrgAgentMigrationScheduler: confirming webhooks during the window', () => {
+  const waiting = (id = 'm1') => ({
+    id,
+    status: Status.STABILISING,
+    stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE)
+  });
+
+  it('checks the webhook of a migration whose window is open and whose webhook is not yet confirmed', async () => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting()]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.tryBeginWebhookCheck).toHaveBeenCalledWith('m1', expect.any(Date), expect.any(Date));
+    expect(switchOverService.checkWebhook).toHaveBeenCalledWith('m1');
+  });
+
+  it('never takes the lease for it, so a disaster restore is not refused as busy', async () => {
+    const { scheduler, migrationRepository } = build();
+    migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting()]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.tryAcquireLease).not.toHaveBeenCalled();
+  });
+
+  it('spaces its tries by a configurable time, ten minutes by default', async () => {
+    const { scheduler, migrationRepository } = build();
+    await scheduler.tick();
+    const [now, retryBefore] = migrationRepository.findAwaitingWebhook.mock.calls[0];
+    expect(now.getTime() - retryBefore.getTime()).toBe(10 * MINUTE);
+
+    process.env.ORG_MIGRATION_WEBHOOK_RETRY_MS = String(2 * MINUTE);
+    migrationRepository.findAwaitingWebhook.mockClear();
+    await scheduler.tick();
+    const [later, laterRetryBefore] = migrationRepository.findAwaitingWebhook.mock.calls[0];
+    expect(later.getTime() - laterRetryBefore.getTime()).toBe(2 * MINUTE);
+  });
+
+  it('leaves a migration alone when another replica took this try', async () => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting()]);
+    migrationRepository.tryBeginWebhookCheck.mockResolvedValue(false);
+
+    await scheduler.tick();
+
+    expect(switchOverService.checkWebhook).not.toHaveBeenCalled();
+  });
+
+  it('carries on to the next migration, and the rest of the pass, when one check fails', async () => {
+    const { scheduler, switchOverService, migrationRepository, logger } = build();
+    migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting('m1'), waiting('m2')]);
+    switchOverService.checkWebhook.mockRejectedValueOnce(new Error('db down'));
+    migrationRepository.findWindowEnded.mockResolvedValue([
+      { id: 'm3', status: Status.STABILISING, stabilisationEndsAt: new Date(Date.now() - MINUTE) }
+    ]);
+
+    await scheduler.tick();
+
+    expect(switchOverService.checkWebhook).toHaveBeenCalledWith('m2');
+    expect(switchOverService.beginSwitchOver).toHaveBeenCalledWith('m3');
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('survives the lookup failing', async () => {
+    const { scheduler, migrationRepository, switchOverService } = build();
+    migrationRepository.findAwaitingWebhook.mockRejectedValue(new Error('db down'));
+
+    await expect(scheduler.tick()).resolves.toBeUndefined();
+    expect(switchOverService.checkWebhook).not.toHaveBeenCalled();
+  });
+});
+
+describe('OrgAgentMigrationScheduler: watching rotations', () => {
+  const rotating = (id = 'm1', overrides = {}) => ({
+    id,
+    status: Status.ROTATING,
+    purgedAt: null,
+    rotationJobId: null,
+    ...overrides
+  });
+
+  it('drives a rotation that still has purging or starting to do on a short lease', async () => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findRotating.mockResolvedValue([rotating()]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', 2 * MINUTE);
+    expect(switchOverService.advanceRotation).toHaveBeenCalledWith('m1');
+  });
+
+  it('only looks in now and then once the rotation is running', async () => {
+    const { scheduler, migrationRepository } = build();
+    migrationRepository.findRotating.mockResolvedValue([
+      rotating('m1', { purgedAt: new Date(), rotationJobId: 'rotate-all:x' })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', 10 * MINUTE);
+  });
+
+  it('reads the polling interval from the environment', async () => {
+    process.env.ORG_MIGRATION_ROTATION_POLL_MS = '60000';
+    const { scheduler, migrationRepository } = build();
+    migrationRepository.findRotating.mockResolvedValue([
+      rotating('m1', { purgedAt: new Date(), rotationJobId: 'rotate-all:x' })
+    ]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', 60000);
+  });
+
+  it('leaves a rotation to the replica that holds its lease', async () => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findRotating.mockResolvedValue([rotating()]);
+    migrationRepository.tryAcquireLease.mockResolvedValue(false);
+
+    await scheduler.tick();
+
+    expect(switchOverService.advanceRotation).not.toHaveBeenCalled();
+  });
+
+  it('carries on to the next rotation when one fails', async () => {
+    const { scheduler, switchOverService, migrationRepository, logger } = build();
+    migrationRepository.findRotating.mockResolvedValue([rotating('m1'), rotating('m2')]);
+    switchOverService.advanceRotation.mockRejectedValueOnce(new Error('boom')).mockResolvedValue(undefined);
+
+    await scheduler.tick();
+
+    expect(switchOverService.advanceRotation).toHaveBeenCalledTimes(2);
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('still ends windows when watching rotations fails', async () => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findRotating.mockRejectedValue(new Error('db hiccup'));
+    migrationRepository.findWindowEnded.mockResolvedValue([{ id: 'm9', status: Status.STABILISING }]);
+
+    await scheduler.tick();
+
+    expect(switchOverService.beginSwitchOver).toHaveBeenCalledWith('m9');
+  });
+});
+
 describe('OrgAgentMigrationScheduler: lifecycle', () => {
   it('ticks on an interval it registers, and stops it on shutdown', async () => {
     jest.useFakeTimers();
@@ -482,6 +724,8 @@ describe('OrgAgentMigrationScheduler: lifecycle', () => {
 
     expect(migrationRepository.findStalled).toHaveBeenCalledTimes(2);
     expect(migrationRepository.findDueForStart).toHaveBeenCalledTimes(2);
+    expect(migrationRepository.findWindowEnded).toHaveBeenCalledTimes(2);
+    expect(migrationRepository.findRotating).toHaveBeenCalledTimes(2);
 
     scheduler.onModuleDestroy();
     expect(registry.deleteInterval).toHaveBeenCalledWith('org-agent-migration-tick');

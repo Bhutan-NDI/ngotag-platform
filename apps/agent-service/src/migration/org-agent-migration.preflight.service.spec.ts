@@ -17,7 +17,8 @@ const sharedConfig = {
   autoAcceptProofs: 'contentApproved',
   inboundTransports: ['http'],
   outboundTransports: ['http', 'ws'],
-  cronPurgeEnabled: true
+  cronPurgeEnabled: true,
+  tenancy: true
 };
 const sharedInfo = {
   endpoints: ['https://shared.example.com'],
@@ -26,7 +27,11 @@ const sharedInfo = {
   storageVersion: '0.5',
   config: sharedConfig
 };
-const dedicatedInfo = { ...sharedInfo, endpoints: ['https://didcomm.org.example.com/'], config: { ...sharedConfig } };
+const dedicatedInfo = {
+  ...sharedInfo,
+  endpoints: ['https://didcomm.org.example.com/'],
+  config: { ...sharedConfig, tenancy: false }
+};
 
 const migrationRow = (overrides = {}) => ({
   id: MIGRATION_ID,
@@ -65,6 +70,7 @@ const build = (options: { migration?: object; dedicated?: object; shared?: objec
     createImportSession: jest.fn().mockResolvedValue({ sessionId: 's', importPublicKey: 'k' }),
     probeRelayTarget: jest.fn().mockResolvedValue({ reachable: true, status: 404 }),
     getRelayHealth: jest.fn().mockResolvedValue({ enabled: true, redisReady: true }),
+    getExportBucket: jest.fn().mockResolvedValue({ configured: true, reachable: true }),
     getEndpointSchemes: jest.fn().mockResolvedValue({ didsScanned: 3, schemes: [{ scheme: 'https', count: 3 }] })
   };
   const access = {
@@ -72,15 +78,17 @@ const build = (options: { migration?: object; dedicated?: object; shared?: objec
     dedicated: jest.fn().mockResolvedValue(undefined),
     encryptToken: jest.fn().mockImplementation((token: string) => `enc(${token})`)
   };
+  const webhookService = { check: jest.fn().mockResolvedValue({ confirmed: true }) };
   const logger = { error: jest.fn() };
   const service = new OrgAgentMigrationPreflightService(
     agentServiceRepository as never,
     migrationRepository as never,
     agentClient as never,
     access as never,
+    webhookService as never,
     logger as never
   );
-  return { service, agentServiceRepository, migrationRepository, agentClient, access, logger };
+  return { service, agentServiceRepository, migrationRepository, agentClient, access, webhookService, logger };
 };
 
 const input = { apiKey: 'api-key', backupsConfirmed: true };
@@ -88,6 +96,193 @@ const checkOf = (report: { checks: { id: string; status: string }[] }, id: Check
   report.checks.find((check) => check.id === id);
 
 describe('OrgAgentMigrationPreflightService', () => {
+  describe('how the agent gets the export', () => {
+    const methodOf = (migrationRepository: { update: jest.Mock }) =>
+      migrationRepository.update.mock.calls[0][1].downloadMethod;
+
+    it('is PULL when the agent can reach its export bucket', async () => {
+      const { service, migrationRepository } = build();
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({ status: 'PASS', detail: { method: 'PULL' } });
+      expect(methodOf(migrationRepository)).toBe('PULL');
+    });
+
+    it.each([
+      [{ configured: false }, 'BUCKET_NOT_CONFIGURED'],
+      [{ configured: true, reachable: false, reason: 'DNS' }, 'DNS'],
+      [{ configured: true, reachable: false }, 'UNREACHABLE']
+    ])('is PUSH, and still a pass, when the agent reports %j', async (bucket, reason) => {
+      const { service, migrationRepository, agentClient } = build();
+      agentClient.getExportBucket.mockResolvedValue(bucket);
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(report.passed).toBe(true);
+      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+        status: 'PASS',
+        detail: { method: 'PUSH', reason }
+      });
+      expect(methodOf(migrationRepository)).toBe('PUSH');
+    });
+
+    describe('in the final check before the freeze, with the method locked', () => {
+      const locked = { ...input, keepDownloadMethod: true };
+      const rehearsedAs = (method: 'PULL' | 'PUSH', stored: 'PULL' | 'PUSH' | null = method) => ({
+        migration: migrationRow({ downloadMethod: stored, rehearsal: { downloadMethod: method } })
+      });
+
+      it('keeps a rehearsed PULL while the agent can still reach its bucket', async () => {
+        const { service, migrationRepository } = build(rehearsedAs('PULL'));
+
+        const { report } = await service.run(MIGRATION_ID, locked);
+
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({ status: 'PASS', detail: { method: 'PULL' } });
+        expect(methodOf(migrationRepository)).toBe('PULL');
+      });
+
+      it('does not switch a rehearsed PULL to PUSH over one failed probe: the check fails instead', async () => {
+        const { service, migrationRepository, agentClient } = build(rehearsedAs('PULL'));
+        agentClient.getExportBucket.mockResolvedValue({ configured: true, reachable: false, reason: 'TIMEOUT' });
+
+        const { report } = await service.run(MIGRATION_ID, locked);
+
+        expect(report.passed).toBe(false);
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+          status: 'FAIL',
+          code: 'DOWNLOAD_METHOD_CHANGED',
+          detail: { rehearsed: 'PULL', reason: 'TIMEOUT' }
+        });
+        expect(methodOf(migrationRepository)).toBe('PULL');
+      });
+
+      it('keeps a rehearsed PUSH even when the agent can now reach its bucket', async () => {
+        const { service, migrationRepository } = build(rehearsedAs('PUSH'));
+
+        const { report } = await service.run(MIGRATION_ID, locked);
+
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({ status: 'PASS', detail: { method: 'PUSH' } });
+        expect(methodOf(migrationRepository)).toBe('PUSH');
+      });
+
+      it('locks to the method the rehearsal ran, not the one a later preflight stored', async () => {
+        const { service, migrationRepository, agentClient } = build(rehearsedAs('PULL', 'PUSH'));
+        agentClient.getExportBucket.mockResolvedValue({ configured: true, reachable: false, reason: 'TIMEOUT' });
+
+        const { report } = await service.run(MIGRATION_ID, locked);
+
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+          status: 'FAIL',
+          code: 'DOWNLOAD_METHOD_CHANGED'
+        });
+        expect(methodOf(migrationRepository)).toBe('PULL');
+      });
+
+      it('treats a rehearsal with no recorded method as PULL, and does not turn it into PUSH on one failed probe', async () => {
+        const { service, agentClient } = build({ migration: migrationRow({ downloadMethod: null, rehearsal: {} }) });
+        agentClient.getExportBucket.mockResolvedValue({ configured: true, reachable: false, reason: 'TIMEOUT' });
+
+        const { report } = await service.run(MIGRATION_ID, locked);
+
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+          status: 'FAIL',
+          code: 'DOWNLOAD_METHOD_CHANGED'
+        });
+      });
+    });
+
+    it('leaves the method as it was when the agent cannot be asked', async () => {
+      const { service, migrationRepository, agentClient } = build();
+      agentClient.getExportBucket.mockRejectedValue(new MigrationAgentError('NOT_FOUND', 404));
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(report.passed).toBe(true);
+      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+        status: 'PASS',
+        detail: { method: 'PULL', reason: 'PROBE_UNAVAILABLE' }
+      });
+      expect(migrationRepository.update.mock.calls[0][1]).not.toHaveProperty('downloadMethod');
+    });
+
+    it('reports the method the migration already has, not PULL, when an unlocked run cannot ask the agent', async () => {
+      const { service, agentClient } = build({ migration: migrationRow({ downloadMethod: 'PUSH' }) });
+      agentClient.getExportBucket.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+        status: 'PASS',
+        detail: { method: 'PUSH', reason: 'PROBE_UNAVAILABLE' }
+      });
+    });
+
+    it.each(['PULL', 'PUSH'] as const)(
+      'keeps the rehearsed %s when the final check cannot ask the agent, and still passes',
+      async (method) => {
+        const { service, migrationRepository, agentClient } = build({
+          migration: migrationRow({ downloadMethod: method, rehearsal: { downloadMethod: method } })
+        });
+        agentClient.getExportBucket.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+        const { report } = await service.run(MIGRATION_ID, { ...input, keepDownloadMethod: true });
+
+        expect(report.passed).toBe(true);
+        expect(checkOf(report, Check.DOWNLOAD_METHOD)).toMatchObject({
+          status: 'PASS',
+          detail: { method, reason: 'PROBE_UNAVAILABLE' }
+        });
+        expect(migrationRepository.update.mock.calls[0][1].downloadMethod).toBe(method);
+      }
+    );
+
+    it('is skipped when the agent could not be reached at all', async () => {
+      const { service, agentClient } = build();
+      agentClient.getAgentInfo.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+      await service.run(MIGRATION_ID, input);
+
+      expect(agentClient.getExportBucket).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the webhook check', () => {
+    it('has the dedicated agent send a test event to the platform, using the stored admin address and token', async () => {
+      const { service, webhookService } = build();
+
+      await service.run(MIGRATION_ID, input);
+
+      expect(webhookService.check).toHaveBeenCalledWith(expect.objectContaining({ id: MIGRATION_ID }), {
+        endpoint: 'https://admin.org.example.com',
+        token: ROOT_TOKEN
+      });
+    });
+
+    it.each(['WEBHOOK_NOT_CONFIGURED', 'WEBHOOK_UNREACHABLE', 'WEBHOOK_REJECTED', 'WEBHOOK_PROBE_UNSUPPORTED'])(
+      'fails with %s when the event does not arrive',
+      async (code) => {
+        const { service, webhookService } = build();
+        webhookService.check.mockResolvedValue({ confirmed: false, code });
+
+        const { report } = await service.run(MIGRATION_ID, input);
+
+        expect(report.passed).toBe(false);
+        expect(checkOf(report, Check.WEBHOOK_DELIVERS)).toMatchObject({ status: 'FAIL', code });
+      }
+    );
+
+    it('is skipped when the agent could not be reached, since there is nothing to send the event', async () => {
+      const { service, webhookService, agentClient } = build();
+      agentClient.getAgentInfo.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(webhookService.check).not.toHaveBeenCalled();
+      expect(checkOf(report, Check.WEBHOOK_DELIVERS)).toMatchObject({ status: 'SKIPPED' });
+    });
+  });
+
   it('passes every check for a correctly set up agent and stores the report, the token and the confirmation', async () => {
     const { service, migrationRepository, agentClient } = build();
 
@@ -310,7 +505,7 @@ describe('OrgAgentMigrationPreflightService', () => {
       const { service } = build({
         dedicated: {
           ...dedicatedInfo,
-          config: { ...sharedConfig, autoAcceptProofs: 'never', cronPurgeEnabled: false }
+          config: { ...sharedConfig, tenancy: false, autoAcceptProofs: 'never', cronPurgeEnabled: false }
         }
       });
 
@@ -321,6 +516,31 @@ describe('OrgAgentMigrationPreflightService', () => {
         code: 'CONFIG_MISMATCH',
         detail: { settings: ['autoAcceptProofs', 'cronPurgeEnabled'] }
       });
+    });
+
+    it.each([
+      ['a multi-tenant agent', { tenancy: true }],
+      ['an agent too old to say whether it is multi-tenant', { tenancy: undefined }]
+    ])('refuses %s as the new home of a wallet', async (_name, override) => {
+      const { service } = build({
+        dedicated: { ...dedicatedInfo, config: { ...sharedConfig, ...override } }
+      });
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.CONFIG_MATCHES)).toMatchObject({
+        status: 'FAIL',
+        code: 'CONFIG_MISMATCH',
+        detail: { settings: ['tenancy'] }
+      });
+    });
+
+    it('accepts an agent that says it is not multi-tenant', async () => {
+      const { service } = build();
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.CONFIG_MATCHES)).toMatchObject({ status: 'PASS' });
     });
 
     it('fails an agent that is too old to report its configuration', async () => {
@@ -529,6 +749,7 @@ describe('OrgAgentMigrationPreflightService', () => {
       { abort: jest.fn() } as never,
       service,
       executor as never,
+      {} as never,
       { error: jest.fn(), warn: jest.fn(), log: jest.fn() } as never
     );
 
@@ -560,19 +781,26 @@ describe('OrgAgentMigrationPreflightService', () => {
 });
 
 describe('configMismatches', () => {
+  const dedicated = { ...sharedConfig, tenancy: false };
+
   it('is empty for a matching configuration', () => {
-    expect(configMismatches(sharedConfig, { ...sharedConfig })).toEqual([]);
+    expect(configMismatches(sharedConfig, { ...dedicated })).toEqual([]);
   });
 
   it('requires http inbound only: a websocket inbound transport is a mismatch', () => {
-    expect(configMismatches(sharedConfig, { ...sharedConfig, inboundTransports: ['http', 'ws'] })).toEqual([
+    expect(configMismatches(sharedConfig, { ...dedicated, inboundTransports: ['http', 'ws'] })).toEqual([
       'inboundTransports'
     ]);
   });
 
   it('requires both http and ws outbound', () => {
-    expect(configMismatches(sharedConfig, { ...sharedConfig, outboundTransports: ['http'] })).toEqual([
+    expect(configMismatches(sharedConfig, { ...dedicated, outboundTransports: ['http'] })).toEqual([
       'outboundTransports'
     ]);
+  });
+
+  it('requires the new agent to say it is not multi-tenant', () => {
+    expect(configMismatches(sharedConfig, { ...dedicated, tenancy: true })).toEqual(['tenancy']);
+    expect(configMismatches(sharedConfig, { ...dedicated, tenancy: undefined })).toEqual(['tenancy']);
   });
 });

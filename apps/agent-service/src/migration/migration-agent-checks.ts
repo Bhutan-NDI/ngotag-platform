@@ -28,7 +28,7 @@ const sameSet = (a: string[], b: string[]): boolean => a.length === b.length && 
 
 /**
  * The agent settings the move depends on (SAD 5.3): the dedicated agent answers like the shared one, takes DIDComm
- * over http only, can send over http and ws, and runs the cron purge. Returns what differs, or nothing.
+ * over http only, can send over http and ws, runs the cron purge, and is not multi-tenant. Returns what differs, or nothing.
  */
 export const configMismatches = (shared: IAgentRuntimeConfig, dedicated: IAgentRuntimeConfig): string[] => {
   const differences: string[] = [];
@@ -49,6 +49,10 @@ export const configMismatches = (shared: IAgentRuntimeConfig, dedicated: IAgentR
   }
   if (!dedicated.cronPurgeEnabled) {
     differences.push('cronPurgeEnabled');
+  }
+  // Only an agent that says it is not multi-tenant qualifies: the wallet is imported into its root profile.
+  if (false !== dedicated.tenancy) {
+    differences.push('tenancy');
   }
   return differences;
 };

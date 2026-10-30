@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiExcludeEndpoint,
   ApiForbiddenResponse,
   ApiOperation,
   ApiResponse,
@@ -37,9 +38,11 @@ import { OrgRolesGuard } from '../authz/guards/org-roles.guard';
 import { StepUpAuthGuard } from '../authz/guards/step-up.guard';
 import {
   CreateOrgAgentMigrationDto,
+  DisasterRestoreDto,
   ListOrgAgentMigrationsDto,
   PreflightOrgAgentMigrationDto,
-  ScheduleOrgAgentMigrationDto
+  ScheduleOrgAgentMigrationDto,
+  WebhookProbeDto
 } from './dto/org-agent-migration.dto';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 
@@ -167,10 +170,34 @@ export class OrgAgentMigrationController {
     return res.status(HttpStatus.OK).json(finalResponse);
   }
 
-  @Get('/orgs/:orgId/agents/migrate')
+  @Post('/orgs/:orgId/agents/migrate/cancel')
+  @ApiOperation({
+    summary: 'Cancel the wallet move',
+    description:
+      'Calls the move off before it starts. The organisation stays exactly as it was. Once the move has started it can no longer be cancelled.'
+  })
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @Roles(OrgRoles.OWNER)
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async cancelMigration(
+    @Param('orgId', ...orgIdPipes) orgId: string,
+    @User() reqUser: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const data = await this.migrationService.cancel(orgId, reqUser.id);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.agent.success.migrationCancelled,
+      data
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  @Get(['/orgs/:orgId/agents/migrate', '/orgs/:orgId/agents/migrate/status'])
   @ApiOperation({
     summary: 'Get the wallet move',
-    description: 'The active move for the organisation, or the latest finished one.'
+    description: 'The active move for the organisation, or the latest finished one. `/status` is the same route.'
   })
   @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
   @Roles(
@@ -189,6 +216,44 @@ export class OrgAgentMigrationController {
     const finalResponse: IResponse = {
       statusCode: HttpStatus.OK,
       message: ResponseMessages.agent.success.migrationFetched,
+      data
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  /**
+   * The org filter is `targetOrgId` in the path for the same reason as in the list: the role guard treats an `orgId`
+   * as "check membership of that org", which would refuse a platform admin who is not a member.
+   */
+  @Post('/agents/migrations/:targetOrgId/disaster-restore')
+  @ApiOperation({
+    summary: 'Roll a wallet move back to the shared agent',
+    description:
+      'For platform admins, during the stabilisation window only, when the new agent is lost for good. The organisation goes back to the shared agent and the wallet it kept. Lossy: what the new agent recorded since the switch is gone, and connections made since then break.'
+  })
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @Roles(OrgRoles.PLATFORM_ADMIN)
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async disasterRestore(
+    @Param(
+      'targetOrgId',
+      TrimStringParamPipe,
+      new ParseUUIDPipe({
+        exceptionFactory: (): Error => {
+          throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
+        }
+      })
+    )
+    targetOrgId: string,
+    @Body() _dto: DisasterRestoreDto,
+    @User() reqUser: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    const data = await this.migrationService.disasterRestore(targetOrgId, reqUser.id);
+
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.agent.success.migrationRestored,
       data
     };
     return res.status(HttpStatus.OK).json(finalResponse);
@@ -215,5 +280,20 @@ export class OrgAgentMigrationController {
       data
     };
     return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  /**
+   * The dedicated agent's webhook test event. Open like the other webhook routes, so it answers only for the live
+   * one-time probe of this organisation's unfinished move, and with nothing more for anything else.
+   */
+  @Post('/wh/:orgId/probe')
+  @ApiExcludeEndpoint()
+  async confirmWebhookProbe(
+    @Param('orgId', ...orgIdPipes) orgId: string,
+    @Body() body: WebhookProbeDto,
+    @Res() res: Response
+  ): Promise<Response> {
+    const { confirmed } = await this.migrationService.confirmWebhook(orgId, body.probeId);
+    return res.status(confirmed ? HttpStatus.OK : HttpStatus.NOT_FOUND).json({ confirmed });
   }
 }

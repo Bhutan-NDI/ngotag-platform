@@ -46,8 +46,11 @@ describe('wallet move routes', () => {
     preflight: jest.fn(),
     rehearse: jest.fn(),
     schedule: jest.fn(),
+    cancel: jest.fn(),
+    disasterRestore: jest.fn(),
     get: jest.fn(),
-    list: jest.fn()
+    list: jest.fn(),
+    confirmWebhook: jest.fn()
   };
 
   beforeAll(async () => {
@@ -285,6 +288,46 @@ describe('wallet move routes', () => {
     });
   });
 
+  describe('POST /orgs/:orgId/agents/migrate/cancel', () => {
+    it('lets an owner cancel the move, as the user in the token', async () => {
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/cancel`).send();
+
+      expect(response.status).toBe(200);
+      expect(service.cancel).toHaveBeenCalledWith(ORG_ID, 'user-1');
+    });
+
+    it('does not ask for a fresh sign-in', async () => {
+      currentUser = owner({ sessionCreatedAt: minutesAgo(240) });
+
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/cancel`).send();
+
+      expect(response.status).toBe(200);
+    });
+
+    it.each(['admin', 'super_admin', 'issuer', 'verifier', 'member'])('refuses a %s', async (role) => {
+      currentUser = userWith([membership(ORG_ID, role)]);
+
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/cancel`).send();
+
+      expect(response.status).toBe(403);
+      expect(service.cancel).not.toHaveBeenCalled();
+    });
+
+    it('refuses an owner of a different organisation', async () => {
+      currentUser = userWith([membership(OTHER_ORG_ID, 'owner')]);
+
+      const response = await request(app.getHttpServer()).post(`/orgs/${ORG_ID}/agents/migrate/cancel`).send();
+
+      expect(response.status).toBe(403);
+    });
+
+    it('rejects an org id that is not a UUID', async () => {
+      const response = await request(app.getHttpServer()).post('/orgs/not-a-uuid/agents/migrate/cancel').send();
+
+      expect(response.status).toBe(400);
+    });
+  });
+
   describe('GET /orgs/:orgId/agents/migrate', () => {
     it.each(['owner', 'admin', 'member', 'issuer', 'verifier'])('shows the move to a %s of the org', async (role) => {
       currentUser = userWith([membership(ORG_ID, role)]);
@@ -293,6 +336,38 @@ describe('wallet move routes', () => {
 
       expect(response.status).toBe(200);
       expect(service.get).toHaveBeenCalledWith(ORG_ID);
+    });
+
+    it.each([`/orgs/${ORG_ID}/agents/migrate`, `/orgs/${ORG_ID}/agents/migrate/status`])(
+      'answers on %s, with the same move',
+      async (path) => {
+        service.get.mockResolvedValue({ migration: { id: 'm1' } });
+
+        const response = await request(app.getHttpServer()).get(path);
+
+        expect(response.status).toBe(200);
+        expect(response.body).toMatchObject({ data: { migration: { id: 'm1' } } });
+        expect(service.get).toHaveBeenCalledWith(ORG_ID);
+      }
+    );
+
+    it('keeps the same checks on the /status path: outside the org, and holders, are refused', async () => {
+      currentUser = userWith([membership(OTHER_ORG_ID, 'owner')]);
+      expect((await request(app.getHttpServer()).get(`/orgs/${ORG_ID}/agents/migrate/status`)).status).toBe(403);
+
+      currentUser = userWith([membership(ORG_ID, 'owner')], { userRole: 'holder' });
+      expect((await request(app.getHttpServer()).get(`/orgs/${ORG_ID}/agents/migrate/status`)).status).toBe(403);
+
+      expect(service.get).not.toHaveBeenCalled();
+    });
+
+    it('answers 200 with no data for an organisation that has never moved', async () => {
+      service.get.mockResolvedValue(null);
+
+      const response = await request(app.getHttpServer()).get(`/orgs/${ORG_ID}/agents/migrate`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toBeNull();
     });
 
     it('does not show it to someone outside the org', async () => {
@@ -310,6 +385,57 @@ describe('wallet move routes', () => {
       const response = await request(app.getHttpServer()).get(`/orgs/${ORG_ID}/agents/migrate`);
 
       expect(response.status).toBe(403);
+    });
+  });
+
+  describe('POST /agents/migrations/:targetOrgId/disaster-restore', () => {
+    const admin = () => userWith([membership(PLATFORM_ORG_ID, 'platform_admin')]);
+    const restore = (orgId = ORG_ID, body: object = { acknowledgeLosses: true }) =>
+      request(app.getHttpServer()).post(`/agents/migrations/${orgId}/disaster-restore`).send(body);
+
+    it('lets a platform admin who is not a member of the org roll its move back, as the user in the token', async () => {
+      currentUser = admin();
+
+      const response = await restore();
+
+      expect(response.status).toBe(200);
+      expect(service.disasterRestore).toHaveBeenCalledWith(ORG_ID, 'user-1');
+    });
+
+    it('refuses an owner of that very organisation: only the platform team can roll back', async () => {
+      const response = await restore();
+
+      expect(response.status).toBe(403);
+      expect(service.disasterRestore).not.toHaveBeenCalled();
+    });
+
+    it.each(['admin', 'super_admin', 'issuer', 'member'])('refuses a %s of the organisation', async (role) => {
+      currentUser = userWith([membership(ORG_ID, role)]);
+
+      const response = await restore();
+
+      expect(response.status).toBe(403);
+    });
+
+    it.each([
+      ['no acknowledgement', {}],
+      ['an acknowledgement of false', { acknowledgeLosses: false }],
+      ['an acknowledgement that is not a boolean', { acknowledgeLosses: 'yes' }]
+    ])('refuses %s: the losses must be acknowledged', async (_name, body) => {
+      currentUser = admin();
+
+      const response = await restore(ORG_ID, body);
+
+      expect(response.status).toBe(400);
+      expect(service.disasterRestore).not.toHaveBeenCalled();
+    });
+
+    it('rejects an org id that is not a UUID', async () => {
+      currentUser = admin();
+
+      const response = await restore('not-a-uuid');
+
+      expect(response.status).toBe(400);
     });
   });
 
@@ -364,6 +490,50 @@ describe('wallet move routes', () => {
 
       expect(response.status).toBe(400);
       expect(service.list).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /wh/:orgId/probe', () => {
+    const PROBE_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+
+    it('needs no sign-in, and answers 200 for the live probe of that org', async () => {
+      currentUser = undefined;
+      service.confirmWebhook.mockResolvedValue({ confirmed: true });
+
+      const response = await request(app.getHttpServer())
+        .post(`/wh/${ORG_ID}/probe`)
+        .send({ type: 'WebhookProbe', probeId: PROBE_ID });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ confirmed: true });
+      expect(service.confirmWebhook).toHaveBeenCalledWith(ORG_ID, PROBE_ID);
+    });
+
+    it('answers 404 with nothing more for any other probe', async () => {
+      service.confirmWebhook.mockResolvedValue({ confirmed: false });
+
+      const response = await request(app.getHttpServer()).post(`/wh/${ORG_ID}/probe`).send({ probeId: PROBE_ID });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ confirmed: false });
+    });
+
+    it.each([
+      ['no probe id', {}],
+      ['a probe id that is not a UUID', { probeId: 'guess' }],
+      ['a probe id that is not a string', { probeId: 5 }]
+    ])('rejects %s with 400 and asks nothing', async (_name, body) => {
+      const response = await request(app.getHttpServer()).post(`/wh/${ORG_ID}/probe`).send(body);
+
+      expect(response.status).toBe(400);
+      expect(service.confirmWebhook).not.toHaveBeenCalled();
+    });
+
+    it('rejects an org id that is not a UUID with 400', async () => {
+      const response = await request(app.getHttpServer()).post('/wh/not-a-uuid/probe').send({ probeId: PROBE_ID });
+
+      expect(response.status).toBe(400);
+      expect(service.confirmWebhook).not.toHaveBeenCalled();
     });
   });
 });

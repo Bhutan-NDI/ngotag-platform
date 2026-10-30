@@ -17,7 +17,8 @@ import {
   fail,
   pass
 } from './migration-agent-checks';
-import { IPreflightReport, PreflightCheckId } from './org-agent-migration.interface';
+import { DownloadMethod, IPreflightReport, IRehearsalRecord, PreflightCheckId } from './org-agent-migration.interface';
+import { OrgAgentMigrationWebhookService } from './org-agent-migration.webhook.service';
 
 type Check = AgentCheck;
 
@@ -38,6 +39,7 @@ export class OrgAgentMigrationPreflightService {
     private readonly migrationRepository: OrgAgentMigrationRepository,
     private readonly agentClient: MigrationAgentClient,
     private readonly access: MigrationAgentAccess,
+    private readonly webhookService: OrgAgentMigrationWebhookService,
     private readonly logger: Logger
   ) {}
 
@@ -48,7 +50,8 @@ export class OrgAgentMigrationPreflightService {
    */
   async run(
     migrationId: string,
-    input: { apiKey?: string; backupsConfirmed?: boolean },
+    // `keepDownloadMethod`: the final check before the freeze, which must not switch to a method nobody rehearsed.
+    input: { apiKey?: string; backupsConfirmed?: boolean; keepDownloadMethod?: boolean },
     actor: string | null = null
   ): Promise<{ migration: org_agent_migrations; report: IPreflightReport }> {
     const migration = await this.migrationRepository.getById(migrationId);
@@ -88,8 +91,17 @@ export class OrgAgentMigrationPreflightService {
       this.checkSharedRedis(shared, record),
       this.checkEndpointSchemes(migration, shared, record),
       this.checkBulkJobs(migration, record),
-      this.checkArtefacts(migration, record)
+      this.checkArtefacts(migration, record),
+      this.checkWebhook(migration, token, dedicatedInfo, record)
     ]);
+
+    const downloadMethod = await this.checkDownloadMethod(
+      migration,
+      token,
+      dedicatedInfo,
+      record,
+      input.keepDownloadMethod
+    );
 
     const report = this.buildReport(checks);
     // Only while the move is still open: a cancel or an abort that overlapped this run must not get the token back.
@@ -103,7 +115,8 @@ export class OrgAgentMigrationPreflightService {
           : {}),
         ...(dedicatedInfo
           ? { releaseVersion: dedicatedInfo.releaseVersion, storageVersion: dedicatedInfo.storageVersion }
-          : {})
+          : {}),
+        ...(downloadMethod ? { downloadMethod } : {})
       },
       [OrgAgentMigrationStatus.CREATED, OrgAgentMigrationStatus.REHEARSED, OrgAgentMigrationStatus.SCHEDULED]
     );
@@ -229,6 +242,66 @@ export class OrgAgentMigrationPreflightService {
           ? fail('TARGET_NOT_PRISTINE')
           : fail(this.agentFailureCode(error))
       );
+    }
+  }
+
+  private async checkWebhook(
+    migration: org_agent_migrations,
+    token: string | undefined,
+    info: IAgentInfo | undefined,
+    record: (id: PreflightCheckId, check: Check) => void
+  ): Promise<void> {
+    if (!token || !info) {
+      return;
+    }
+    const result = await this.webhookService.check(migration, { endpoint: migration.targetAdminEndpoint, token });
+    record(PreflightCheckId.WEBHOOK_DELIVERS, result.confirmed ? pass() : fail(result.code));
+  }
+
+  // An agent that cannot reach S3 is not refused, the platform sends it the export instead. With the method locked
+  // (the final check) it is the method the rehearsal ran: a PULL that can no longer reach S3 fails, since the move's
+  // budget was sized for it, and a PUSH stays PUSH.
+  private async checkDownloadMethod(
+    migration: org_agent_migrations,
+    token: string | undefined,
+    info: IAgentInfo | undefined,
+    record: (id: PreflightCheckId, check: Check) => void,
+    lock = false
+  ): Promise<DownloadMethod | undefined> {
+    if (!token || !info) {
+      return undefined;
+    }
+    const rehearsed = lock ? ((migration.rehearsal as IRehearsalRecord | null)?.downloadMethod ?? 'PULL') : null;
+    try {
+      const bucket = await this.agentClient.getExportBucket(migration.targetAdminEndpoint, token);
+      const reachable = bucket.configured && bucket.reachable;
+      const reason = bucket.configured ? (bucket.reason ?? 'UNREACHABLE') : 'BUCKET_NOT_CONFIGURED';
+      if (rehearsed) {
+        record(
+          PreflightCheckId.DOWNLOAD_METHOD,
+          'PULL' === rehearsed && !reachable
+            ? fail('DOWNLOAD_METHOD_CHANGED', { rehearsed, reason })
+            : pass({ method: rehearsed })
+        );
+        return rehearsed;
+      }
+      if (reachable) {
+        record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: 'PULL' }));
+        return 'PULL';
+      }
+      record(PreflightCheckId.DOWNLOAD_METHOD, pass({ method: 'PUSH', reason }));
+      return 'PUSH';
+    } catch {
+      // The probe not answering (an agent without it, a timeout, a 5xx) is not a failed check, but it is not a skipped one
+      // either: the method is the rehearsed one, or PULL as before push mode existed, and the report says why.
+      record(
+        PreflightCheckId.DOWNLOAD_METHOD,
+        pass({
+          method: rehearsed ?? (migration.downloadMethod as DownloadMethod | null) ?? 'PULL',
+          reason: 'PROBE_UNAVAILABLE'
+        })
+      );
+      return rehearsed ?? undefined;
     }
   }
 
