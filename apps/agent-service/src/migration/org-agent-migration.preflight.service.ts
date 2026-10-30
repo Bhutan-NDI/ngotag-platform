@@ -7,57 +7,24 @@ import * as jwt from 'jsonwebtoken';
 import { AgentServiceRepository } from '../repositories/agent-service.repository';
 import { OrgAgentMigrationRepository } from '../repositories/org-agent-migration.repository';
 import { IAgentAccess, MigrationAgentAccess } from './migration-agent-access';
-import { IAgentInfo, IAgentRuntimeConfig, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
-import { IPreflightCheck, IPreflightReport, PreflightCheckId } from './org-agent-migration.interface';
+import { IAgentInfo, MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
+import {
+  AgentCheck,
+  checkConfig,
+  checkEndpoint,
+  checkRelease,
+  configMismatches,
+  fail,
+  pass
+} from './migration-agent-checks';
+import { IPreflightReport, PreflightCheckId } from './org-agent-migration.interface';
 
-type Check = Omit<IPreflightCheck, 'id'>;
+type Check = AgentCheck;
 
-const pass = (detail?: IPreflightCheck['detail']): Check => ({ status: 'PASS', ...(detail ? { detail } : {}) });
-const fail = (code: string, detail?: IPreflightCheck['detail']): Check => ({
-  status: 'FAIL',
-  code,
-  ...(detail ? { detail } : {})
-});
 const skipped = (): Check => ({ status: 'SKIPPED' });
 
-const sameAddress = (a: string, b: string): boolean => {
-  try {
-    const left = new URL(a);
-    const right = new URL(b);
-    return left.origin === right.origin && left.pathname.replace(/\/+$/, '') === right.pathname.replace(/\/+$/, '');
-  } catch {
-    return false;
-  }
-};
-
-const sameSet = (a: string[], b: string[]): boolean => a.length === b.length && a.every((value) => b.includes(value));
-
-/**
- * The agent settings the move depends on (SAD 5.3): the dedicated agent answers like the shared one, takes DIDComm
- * over http only, can send over http and ws, and runs the cron purge. Returns what differs, or nothing.
- */
-export const configMismatches = (shared: IAgentRuntimeConfig, dedicated: IAgentRuntimeConfig): string[] => {
-  const differences: string[] = [];
-  if (shared.autoAcceptConnections !== dedicated.autoAcceptConnections) {
-    differences.push('autoAcceptConnections');
-  }
-  if (shared.autoAcceptCredentials !== dedicated.autoAcceptCredentials) {
-    differences.push('autoAcceptCredentials');
-  }
-  if (shared.autoAcceptProofs !== dedicated.autoAcceptProofs) {
-    differences.push('autoAcceptProofs');
-  }
-  if (!sameSet(dedicated.inboundTransports, ['http'])) {
-    differences.push('inboundTransports');
-  }
-  if (!['http', 'ws'].every((transport) => dedicated.outboundTransports.includes(transport))) {
-    differences.push('outboundTransports');
-  }
-  if (!dedicated.cronPurgeEnabled) {
-    differences.push('cronPurgeEnabled');
-  }
-  return differences;
-};
+// Kept here too: the specs and callers have always imported it from this module.
+export { configMismatches };
 
 /**
  * Checks that an organisation can move: the dedicated agent is the right agent in the right shape, nothing the move
@@ -218,17 +185,11 @@ export class OrgAgentMigrationPreflightService {
       return undefined;
     }
 
-    const endpoints = info.endpoints ?? [];
-    record(
-      PreflightCheckId.ENDPOINT_MATCHES,
-      endpoints[0] && sameAddress(endpoints[0], migration.targetDidcommEndpoint)
-        ? pass()
-        : fail('ENDPOINT_MISMATCH', { reported: endpoints })
-    );
+    record(PreflightCheckId.ENDPOINT_MATCHES, checkEndpoint(info, migration.targetDidcommEndpoint));
 
     const sharedInfo = await this.readSharedInfo(shared);
-    record(PreflightCheckId.RELEASE_MATCHES, this.compareRelease(info, sharedInfo));
-    record(PreflightCheckId.CONFIG_MATCHES, this.compareConfig(info, sharedInfo));
+    record(PreflightCheckId.RELEASE_MATCHES, checkRelease(info, sharedInfo));
+    record(PreflightCheckId.CONFIG_MATCHES, checkConfig(info, sharedInfo));
     return info;
   }
 
@@ -241,36 +202,6 @@ export class OrgAgentMigrationPreflightService {
     } catch {
       return undefined;
     }
-  }
-
-  private compareRelease(dedicated: IAgentInfo, shared?: IAgentInfo): Check {
-    if (!shared) {
-      return fail('SHARED_AGENT_UNAVAILABLE');
-    }
-    if (!dedicated.releaseVersion || dedicated.releaseVersion !== shared.releaseVersion) {
-      return fail('RELEASE_MISMATCH', {
-        found: dedicated.releaseVersion ?? 'unknown',
-        required: shared.releaseVersion ?? 'unknown'
-      });
-    }
-    if (dedicated.storageVersion !== shared.storageVersion) {
-      return fail('STORAGE_VERSION_MISMATCH', {
-        found: dedicated.storageVersion ?? 'unknown',
-        required: shared.storageVersion ?? 'unknown'
-      });
-    }
-    return pass({ release: dedicated.releaseVersion });
-  }
-
-  private compareConfig(dedicated: IAgentInfo, shared?: IAgentInfo): Check {
-    if (!shared) {
-      return fail('SHARED_AGENT_UNAVAILABLE');
-    }
-    if (!dedicated.config || !shared.config) {
-      return fail('CONFIG_UNAVAILABLE');
-    }
-    const differences = configMismatches(shared.config, dedicated.config);
-    return 0 === differences.length ? pass() : fail('CONFIG_MISMATCH', { settings: differences });
   }
 
   // A fresh session proves the wallet is pristine; it expires on its own and is not used again.

@@ -2,6 +2,7 @@
 import { HttpService } from '@nestjs/axios';
 import * as http from 'http';
 import { AddressInfo } from 'net';
+import { of } from 'rxjs';
 import { MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
 
 interface Seen {
@@ -110,6 +111,55 @@ describe('MigrationAgentClient against a real HTTP server', () => {
       'GET /agent/wallet/import/status/job%201'
     ]);
     expect(JSON.parse(seen[1].body)).toEqual(body);
+  });
+
+  it('gives a re-inject much longer than the default call, since the agent waits on each held message', async () => {
+    const httpService = { request: jest.fn(() => of({ data: { injected: 0, failed: 0 } })) };
+    const slowClient = new MigrationAgentClient(httpService as never);
+
+    await slowClient.reinjectRelay(baseUrl, 'tok', 'tenant-1');
+
+    expect(httpService.request).toHaveBeenCalledWith(expect.objectContaining({ timeout: 10 * 60 * 1000 }));
+  });
+
+  it('sets, re-injects and removes a relay on the documented routes', async () => {
+    await client.putRelay(baseUrl, 'tok', 'tenant-1', { mode: 'FORWARD', target: 'https://didcomm.example.org' });
+    await client.putRelay(baseUrl, 'tok', 'tenant-1', { mode: 'HOLD' });
+    await client.reinjectRelay(baseUrl, 'tok', 'tenant-1');
+    await client.deleteRelay(baseUrl, 'tok', 'tenant-1');
+
+    expect(seen.map(({ method, url }) => `${method} ${url}`)).toEqual([
+      'PUT /multi-tenancy/relay/tenant-1',
+      'PUT /multi-tenancy/relay/tenant-1',
+      'POST /multi-tenancy/relay/tenant-1/reinject',
+      'DELETE /multi-tenancy/relay/tenant-1'
+    ]);
+    expect(JSON.parse(seen[0].body)).toEqual({ mode: 'FORWARD', target: 'https://didcomm.example.org' });
+    expect(JSON.parse(seen[1].body)).toEqual({ mode: 'HOLD' });
+  });
+
+  it('signs a self-attested credential, verifies it, and creates an invitation on the documented routes', async () => {
+    respond = () => ({ status: 200, body: { credential: { issuer: 'did:polygon:0xabc' } } });
+    await client.createSelfAttestedCredential(baseUrl, 'tok', {
+      '@context': ['https://www.w3.org/2018/credentials/v1'],
+      type: ['VerifiableCredential'],
+      credentialSubject: {},
+      proofType: 'Ed25519Signature2018'
+    });
+    await client.verifyCredential(baseUrl, 'tok', { issuer: 'did:polygon:0xabc' });
+    await client.createConnectionInvitation(baseUrl, 'tok', {
+      multiUseInvitation: true,
+      autoAcceptConnection: true,
+      label: 'Acme'
+    });
+
+    expect(seen.map(({ method, url }) => `${method} ${url}`)).toEqual([
+      'POST /agent/credential/self-attested',
+      'POST /agent/credential/verify',
+      'POST /didcomm/oob/create-invitation'
+    ]);
+    expect(JSON.parse(seen[1].body)).toEqual({ credential: { issuer: 'did:polygon:0xabc' } });
+    expect(JSON.parse(seen[2].body)).toEqual({ multiUseInvitation: true, autoAcceptConnection: true, label: 'Acme' });
   });
 
   it.each([

@@ -1,6 +1,7 @@
 import { HttpService } from '@nestjs/axios';
 import { Injectable } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
+import { envMs } from './migration-job-poller';
 
 export interface IAgentRuntimeConfig {
   autoAcceptConnections: boolean;
@@ -42,6 +43,21 @@ export interface IEndpointSchemes {
   schemes: { scheme: string; count: number; exampleDids: string[] }[];
 }
 
+export interface IRelayEntry {
+  mode: 'HOLD' | 'FORWARD';
+  target?: string;
+  holdCount?: number;
+}
+
+export interface ISelfAttestedCredential {
+  credential: Record<string, unknown>;
+}
+
+export interface ICreatedInvitation {
+  invitationUrl: string;
+  invitationDid?: string;
+}
+
 export type AgentErrorKind = 'UNREACHABLE' | 'REJECTED' | 'CONFLICT' | 'NOT_FOUND' | 'FAILED';
 
 /**
@@ -60,6 +76,7 @@ export class MigrationAgentError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 15000;
+const REINJECT_TIMEOUT_MS = 10 * 60 * 1000;
 
 const trimSlash = (url: string): string => url.replace(/\/+$/, '');
 
@@ -73,11 +90,12 @@ export class MigrationAgentClient {
   constructor(private readonly httpService: HttpService) {}
 
   private async request<T>(
-    method: 'get' | 'post' | 'delete',
+    method: 'get' | 'post' | 'put' | 'delete',
     baseUrl: string,
     path: string,
     token: string,
-    body?: unknown
+    body?: unknown,
+    timeoutMs: number = REQUEST_TIMEOUT_MS
   ): Promise<T> {
     try {
       const response = await firstValueFrom(
@@ -86,7 +104,7 @@ export class MigrationAgentClient {
           url: `${trimSlash(baseUrl)}${path}`,
           data: body,
           headers: { authorization: token, accept: 'application/json' },
-          timeout: REQUEST_TIMEOUT_MS
+          timeout: timeoutMs
         })
       );
       return response.data;
@@ -194,5 +212,65 @@ export class MigrationAgentClient {
       `/multi-tenancy/${encodeURIComponent(tenantId)}/endpoint-schemes`,
       token
     );
+  }
+
+  putRelay(
+    sharedEndpoint: string,
+    token: string,
+    tenantId: string,
+    body: { mode: 'HOLD' | 'FORWARD'; target?: string }
+  ): Promise<IRelayEntry> {
+    return this.request('put', sharedEndpoint, `/multi-tenancy/relay/${encodeURIComponent(tenantId)}`, token, body);
+  }
+
+  // The agent re-injects synchronously, and can wait up to ten seconds for each held message.
+  reinjectRelay(
+    sharedEndpoint: string,
+    token: string,
+    tenantId: string
+  ): Promise<{ injected: number; failed: number }> {
+    return this.request(
+      'post',
+      sharedEndpoint,
+      `/multi-tenancy/relay/${encodeURIComponent(tenantId)}/reinject`,
+      token,
+      {},
+      envMs('ORG_MIGRATION_REINJECT_TIMEOUT_MS', REINJECT_TIMEOUT_MS)
+    );
+  }
+
+  async deleteRelay(sharedEndpoint: string, token: string, tenantId: string): Promise<void> {
+    await this.request('delete', sharedEndpoint, `/multi-tenancy/relay/${encodeURIComponent(tenantId)}`, token);
+  }
+
+  // The agent signs with its own default DID, so only the claims are given.
+  createSelfAttestedCredential(
+    adminEndpoint: string,
+    token: string,
+    body: {
+      '@context': string[];
+      type: string[];
+      credentialSubject: Record<string, unknown>;
+      proofType: string;
+      did?: string;
+    }
+  ): Promise<ISelfAttestedCredential> {
+    return this.request('post', adminEndpoint, '/agent/credential/self-attested', token, body);
+  }
+
+  verifyCredential(
+    adminEndpoint: string,
+    token: string,
+    credential: Record<string, unknown>
+  ): Promise<{ isValid?: boolean }> {
+    return this.request('post', adminEndpoint, '/agent/credential/verify', token, { credential });
+  }
+
+  createConnectionInvitation(
+    adminEndpoint: string,
+    token: string,
+    body: { multiUseInvitation: boolean; autoAcceptConnection: boolean; label: string; imageUrl?: string }
+  ): Promise<ICreatedInvitation> {
+    return this.request('post', adminEndpoint, '/didcomm/oob/create-invitation', token, body);
   }
 }

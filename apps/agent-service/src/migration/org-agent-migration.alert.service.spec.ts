@@ -84,6 +84,17 @@ describe('OrgAgentMigrationAlertService', () => {
     expect(sendEmail.mock.calls[0][0].emailSubject).toBe('[Security] A wallet move was started');
   });
 
+  it('uses its own subject for the move-day export', async () => {
+    const { service, sendEmail } = build();
+
+    await service.alertKeyExport(migration, KeyExportAlertKind.MOVE_EXPORT, USER_ID);
+
+    expect(sendEmail.mock.calls[0][0].emailSubject).toBe(
+      '[Security] The organisation’s signing keys were exported for the move'
+    );
+    expect(sendEmail.mock.calls[0][0].emailText).toContain('to move it to its own agent');
+  });
+
   it('escapes anything the owner typed before it goes into the HTML body', async () => {
     const { service, sendEmail } = build({ orgName: '<script>alert(1)</script> & Co' });
 
