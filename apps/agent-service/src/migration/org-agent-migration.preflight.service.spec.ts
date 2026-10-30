@@ -17,7 +17,8 @@ const sharedConfig = {
   autoAcceptProofs: 'contentApproved',
   inboundTransports: ['http'],
   outboundTransports: ['http', 'ws'],
-  cronPurgeEnabled: true
+  cronPurgeEnabled: true,
+  tenancy: true
 };
 const sharedInfo = {
   endpoints: ['https://shared.example.com'],
@@ -26,7 +27,11 @@ const sharedInfo = {
   storageVersion: '0.5',
   config: sharedConfig
 };
-const dedicatedInfo = { ...sharedInfo, endpoints: ['https://didcomm.org.example.com/'], config: { ...sharedConfig } };
+const dedicatedInfo = {
+  ...sharedInfo,
+  endpoints: ['https://didcomm.org.example.com/'],
+  config: { ...sharedConfig, tenancy: false }
+};
 
 const migrationRow = (overrides = {}) => ({
   id: MIGRATION_ID,
@@ -500,7 +505,7 @@ describe('OrgAgentMigrationPreflightService', () => {
       const { service } = build({
         dedicated: {
           ...dedicatedInfo,
-          config: { ...sharedConfig, autoAcceptProofs: 'never', cronPurgeEnabled: false }
+          config: { ...sharedConfig, tenancy: false, autoAcceptProofs: 'never', cronPurgeEnabled: false }
         }
       });
 
@@ -511,6 +516,31 @@ describe('OrgAgentMigrationPreflightService', () => {
         code: 'CONFIG_MISMATCH',
         detail: { settings: ['autoAcceptProofs', 'cronPurgeEnabled'] }
       });
+    });
+
+    it.each([
+      ['a multi-tenant agent', { tenancy: true }],
+      ['an agent too old to say whether it is multi-tenant', { tenancy: undefined }]
+    ])('refuses %s as the new home of a wallet', async (_name, override) => {
+      const { service } = build({
+        dedicated: { ...dedicatedInfo, config: { ...sharedConfig, ...override } }
+      });
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.CONFIG_MATCHES)).toMatchObject({
+        status: 'FAIL',
+        code: 'CONFIG_MISMATCH',
+        detail: { settings: ['tenancy'] }
+      });
+    });
+
+    it('accepts an agent that says it is not multi-tenant', async () => {
+      const { service } = build();
+
+      const { report } = await service.run(MIGRATION_ID, input);
+
+      expect(checkOf(report, Check.CONFIG_MATCHES)).toMatchObject({ status: 'PASS' });
     });
 
     it('fails an agent that is too old to report its configuration', async () => {
@@ -750,19 +780,26 @@ describe('OrgAgentMigrationPreflightService', () => {
 });
 
 describe('configMismatches', () => {
+  const dedicated = { ...sharedConfig, tenancy: false };
+
   it('is empty for a matching configuration', () => {
-    expect(configMismatches(sharedConfig, { ...sharedConfig })).toEqual([]);
+    expect(configMismatches(sharedConfig, { ...dedicated })).toEqual([]);
   });
 
   it('requires http inbound only: a websocket inbound transport is a mismatch', () => {
-    expect(configMismatches(sharedConfig, { ...sharedConfig, inboundTransports: ['http', 'ws'] })).toEqual([
+    expect(configMismatches(sharedConfig, { ...dedicated, inboundTransports: ['http', 'ws'] })).toEqual([
       'inboundTransports'
     ]);
   });
 
   it('requires both http and ws outbound', () => {
-    expect(configMismatches(sharedConfig, { ...sharedConfig, outboundTransports: ['http'] })).toEqual([
+    expect(configMismatches(sharedConfig, { ...dedicated, outboundTransports: ['http'] })).toEqual([
       'outboundTransports'
     ]);
+  });
+
+  it('requires the new agent to say it is not multi-tenant', () => {
+    expect(configMismatches(sharedConfig, { ...dedicated, tenancy: true })).toEqual(['tenancy']);
+    expect(configMismatches(sharedConfig, { ...dedicated, tenancy: undefined })).toEqual(['tenancy']);
   });
 });

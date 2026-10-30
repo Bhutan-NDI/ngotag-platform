@@ -40,7 +40,8 @@ const infoOf = (endpoint: string) => ({
     autoAcceptProofs: 'contentApproved',
     inboundTransports: ['http'],
     outboundTransports: ['http', 'ws'],
-    cronPurgeEnabled: true
+    cronPurgeEnabled: true,
+    tenancy: 'https://shared.example.com' === endpoint
   }
 });
 
@@ -666,6 +667,17 @@ describe('move day: aborting before the switch', () => {
           const info = infoOf('https://didcomm.org.example.com');
           return e === DEDICATED.endpoint
             ? { ...info, config: { ...info.config, cronPurgeEnabled: false } }
+            : infoOf('https://shared.example.com');
+        })
+    ],
+    [
+      'the new agent turns out to be multi-tenant',
+      'VERIFICATION_FAILED:CONFIG',
+      (w) =>
+        w.agentClient.getAgentInfo.mockImplementation(async (e: string) => {
+          const info = infoOf('https://didcomm.org.example.com');
+          return e === DEDICATED.endpoint
+            ? { ...info, config: { ...info.config, tenancy: true } }
             : infoOf('https://shared.example.com');
         })
     ],
