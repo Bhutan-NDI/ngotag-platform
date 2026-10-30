@@ -306,6 +306,11 @@ model org_agent_migration_events {
   fromStatus     String?              @db.VarChar(32)
   toStatus       String               @db.VarChar(32)
   actor          String?              @db.VarChar
+  // Null on a state change. On any other audited action (a preflight run, a rehearsal, a refused attempt) it names
+  // the action and fromStatus equals toStatus.
+  action         String?              @db.VarChar(48)
+  // Facts about the action. Never secrets, URLs or tokens.
+  detail         Json?
   migration      org_agent_migrations @relation(fields: [migrationId], references: [id], onDelete: Cascade)
 
   @@index([migrationId])

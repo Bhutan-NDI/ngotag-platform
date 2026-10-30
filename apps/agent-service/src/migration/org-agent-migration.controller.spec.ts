@@ -23,14 +23,30 @@ const build = () => {
   const report = { ranAt: 'now', passed: true, checks: [] };
   const preflightService = { run: jest.fn().mockResolvedValue({ migration: row({ id: 'm1' }), report }) };
   const rehearsalService = { start: jest.fn().mockResolvedValue(row({ rehearsalStatus: 'RUNNING' })) };
+  const authorizer = { assertOwner: jest.fn().mockResolvedValue(undefined) };
+  const alertService = { alertKeyExport: jest.fn().mockResolvedValue({ recipients: 2, sent: 2 }) };
+  const migrationRepository = { recordEvent: jest.fn().mockResolvedValue(undefined) };
   const logger = { error: jest.fn() };
   const controller = new OrgAgentMigrationController(
     migrationService as never,
     preflightService as never,
     rehearsalService as never,
+    authorizer as never,
+    alertService as never,
+    migrationRepository as never,
     logger as never
   );
-  return { controller, migrationService, preflightService, rehearsalService, logger, report };
+  return {
+    controller,
+    migrationService,
+    preflightService,
+    rehearsalService,
+    authorizer,
+    alertService,
+    migrationRepository,
+    logger,
+    report
+  };
 };
 
 describe('OrgAgentMigrationController', () => {
@@ -64,7 +80,7 @@ describe('OrgAgentMigrationController', () => {
       const result = await controller.createMigration(payload);
 
       expect(migrationService.createMigration).toHaveBeenCalledWith(payload);
-      expect(preflightService.run).toHaveBeenCalledWith('m1', payload);
+      expect(preflightService.run).toHaveBeenCalledWith('m1', payload, USER_ID);
       expect(result.preflight).toBe(report);
     });
 
@@ -96,7 +112,11 @@ describe('OrgAgentMigrationController', () => {
       await controller.preflight({ orgId: ORG_ID, userId: USER_ID, apiKey: 'new-key' });
 
       expect(migrationService.getMigration).toHaveBeenCalledWith(ORG_ID);
-      expect(preflightService.run).toHaveBeenCalledWith('m1', { orgId: ORG_ID, userId: USER_ID, apiKey: 'new-key' });
+      expect(preflightService.run).toHaveBeenCalledWith(
+        'm1',
+        { orgId: ORG_ID, userId: USER_ID, apiKey: 'new-key' },
+        USER_ID
+      );
     });
 
     it('surfaces a failure as an RPC error', async () => {
@@ -123,6 +143,91 @@ describe('OrgAgentMigrationController', () => {
       rehearsalService.start.mockRejectedValue(new Error('already running'));
 
       await expect(controller.rehearse({ orgId: ORG_ID, userId: USER_ID })).rejects.toBeInstanceOf(RpcException);
+    });
+  });
+
+  describe('owner-only access', () => {
+    const denied = () => new RpcException('Only an owner of the organization can move its wallet');
+    const payload = {
+      orgId: ORG_ID,
+      userId: USER_ID,
+      targetAdminEndpoint: 'https://a.example.com',
+      targetDidcommEndpoint: 'https://b.example.com'
+    };
+
+    it('checks the caller is an owner of the org before each action', async () => {
+      const { controller, authorizer } = build();
+
+      await controller.createMigration(payload);
+      await controller.preflight({ orgId: ORG_ID, userId: USER_ID });
+      await controller.rehearse({ orgId: ORG_ID, userId: USER_ID });
+
+      expect(authorizer.assertOwner).toHaveBeenCalledTimes(3);
+      expect(authorizer.assertOwner).toHaveBeenCalledWith(ORG_ID, USER_ID);
+    });
+
+    it('creates nothing for a non-owner', async () => {
+      const { controller, authorizer, migrationService, alertService } = build();
+      authorizer.assertOwner.mockRejectedValue(denied());
+
+      await expect(controller.createMigration(payload)).rejects.toBeInstanceOf(RpcException);
+
+      expect(migrationService.createMigration).not.toHaveBeenCalled();
+      expect(alertService.alertKeyExport).not.toHaveBeenCalled();
+    });
+
+    it('runs no checks for a non-owner', async () => {
+      const { controller, authorizer, preflightService } = build();
+      authorizer.assertOwner.mockRejectedValue(denied());
+
+      await expect(controller.preflight({ orgId: ORG_ID, userId: USER_ID })).rejects.toBeInstanceOf(RpcException);
+
+      expect(preflightService.run).not.toHaveBeenCalled();
+    });
+
+    it('starts no rehearsal for a non-owner', async () => {
+      const { controller, authorizer, rehearsalService } = build();
+      authorizer.assertOwner.mockRejectedValue(denied());
+
+      await expect(controller.rehearse({ orgId: ORG_ID, userId: USER_ID })).rejects.toBeInstanceOf(RpcException);
+
+      expect(rehearsalService.start).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the move-started alert', () => {
+    const payload = {
+      orgId: ORG_ID,
+      userId: USER_ID,
+      targetAdminEndpoint: 'https://a.example.com',
+      targetDidcommEndpoint: 'https://b.example.com'
+    };
+
+    it('goes out when the migration is created and is audited', async () => {
+      const { controller, alertService, migrationRepository } = build();
+
+      await controller.createMigration(payload);
+
+      expect(alertService.alertKeyExport).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'm1' }),
+        'MOVE_STARTED',
+        USER_ID
+      );
+      expect(migrationRepository.recordEvent).toHaveBeenCalledWith('m1', {
+        action: 'MOVE_STARTED_ALERT',
+        actor: USER_ID,
+        detail: { alertsSent: 2, recipients: 2 }
+      });
+    });
+
+    it('does not stop the migration from being created when it cannot be sent', async () => {
+      const { controller, alertService, preflightService } = build();
+      alertService.alertKeyExport.mockRejectedValue(new Error('smtp down'));
+
+      const result = await controller.createMigration(payload);
+
+      expect(result.migration).toMatchObject({ id: 'm1' });
+      expect(preflightService.run).toHaveBeenCalled();
     });
   });
 

@@ -48,6 +48,7 @@ const build = (options: { migration?: object; dedicated?: object; shared?: objec
   const migrationRepository = {
     getById: jest.fn().mockResolvedValue(migration),
     update: jest.fn().mockImplementation(async (_id, patch) => ({ ...migration, ...patch })),
+    recordEvent: jest.fn().mockResolvedValue(undefined),
     hasActiveBulkIssuance: jest.fn().mockResolvedValue(false),
     countOutOfScopeArtefacts: jest.fn().mockResolvedValue({ oidcIssuers: 0, credentialDefinitions: 0 })
   };
@@ -78,7 +79,7 @@ const build = (options: { migration?: object; dedicated?: object; shared?: objec
     access as never,
     logger as never
   );
-  return { service, agentServiceRepository, migrationRepository, agentClient, access };
+  return { service, agentServiceRepository, migrationRepository, agentClient, access, logger };
 };
 
 const input = { apiKey: 'api-key', backupsConfirmed: true };
@@ -148,6 +149,36 @@ describe('OrgAgentMigrationPreflightService', () => {
 
     expect(checkOf(report, Check.BACKUPS_CONFIRMED)?.status).toBe('PASS');
     expect(migrationRepository.update.mock.calls[0][1].backupsConfirmedAt).toBe(confirmedAt);
+  });
+
+  describe('audit', () => {
+    it('records who ran the checks and which failed, without any result detail', async () => {
+      const { service, migrationRepository } = build();
+
+      await service.run(MIGRATION_ID, { apiKey: 'api-key' }, 'user-1');
+
+      expect(migrationRepository.recordEvent).toHaveBeenCalledWith(MIGRATION_ID, {
+        action: 'PREFLIGHT_RUN',
+        actor: 'user-1',
+        detail: { passed: false, failed: [Check.BACKUPS_CONFIRMED] }
+      });
+    });
+
+    it('records a clean run as passed', async () => {
+      const { service, migrationRepository } = build();
+
+      await service.run(MIGRATION_ID, input, 'user-1');
+
+      expect(migrationRepository.recordEvent.mock.calls[0][1].detail).toEqual({ passed: true, failed: [] });
+    });
+
+    it('still returns the report when the audit write fails', async () => {
+      const { service, migrationRepository, logger } = build();
+      migrationRepository.recordEvent.mockRejectedValue(new Error('db down'));
+
+      await expect(service.run(MIGRATION_ID, input, 'user-1')).resolves.toMatchObject({ report: { passed: true } });
+      expect(logger.error).toHaveBeenCalled();
+    });
   });
 
   describe('failures', () => {

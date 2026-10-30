@@ -5,6 +5,7 @@ import { OrgAgentMigrationStatus } from '@credebl/enum/enum';
 import { PrismaService } from '@credebl/prisma-service';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { FileUploadStatus } from 'apps/api-gateway/src/enum';
+import { OrgRoles } from 'libs/org-roles/enums';
 import { TERMINAL_STATUSES } from '../migration/org-agent-migration.state-machine';
 
 type MigrationRow = org_agent_migrations;
@@ -226,5 +227,71 @@ export class OrgAgentMigrationRepository {
       this.prisma.status_list_allocation.count({ where: { orgId } })
     ]);
     return { oidcIssuers, oid4vpVerifiers, x509Certificates, credentialDefinitions, statusLists };
+  }
+
+  /**
+   * Appends an audit entry for something other than a state change. Never put secrets, URLs or tokens in `detail`.
+   */
+  async recordEvent(
+    migrationId: string,
+    entry: { action: string; actor: string | null; detail?: Prisma.InputJsonValue }
+  ): Promise<void> {
+    const migration = await this.prisma.org_agent_migrations.findUnique({
+      where: { id: migrationId },
+      select: { status: true }
+    });
+    if (!migration) {
+      return;
+    }
+    await this.prisma.org_agent_migration_events.create({
+      data: {
+        migrationId,
+        fromStatus: migration.status,
+        toStatus: migration.status,
+        actor: entry.actor,
+        action: entry.action,
+        ...(entry.detail === undefined ? {} : { detail: entry.detail })
+      }
+    });
+  }
+
+  /** How many times an audit action has been recorded for a migration. */
+  async countEvents(migrationId: string, action: string): Promise<number> {
+    return this.prisma.org_agent_migration_events.count({ where: { migrationId, action } });
+  }
+
+  async isOrgOwner(orgId: string, userId: string): Promise<boolean> {
+    const owner = await this.prisma.user_org_roles.findFirst({
+      where: { orgId, userId, orgRole: { name: OrgRoles.OWNER } },
+      select: { id: true }
+    });
+    return Boolean(owner);
+  }
+
+  async getOrgName(orgId: string): Promise<string | null> {
+    const organisation = await this.prisma.organisation.findUnique({ where: { id: orgId }, select: { name: true } });
+    return organisation?.name ?? null;
+  }
+
+  async getUserEmail(userId: string): Promise<string | null> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    return user?.email ?? null;
+  }
+
+  /** Who hears about a key export: the org's owners and every member of the platform-admin organisation. */
+  async getExportAlertRecipients(orgId: string, platformAdminOrgName: string): Promise<string[]> {
+    const memberships = await this.prisma.user_org_roles.findMany({
+      where: {
+        OR: [{ orgId, orgRole: { name: OrgRoles.OWNER } }, { organisation: { name: platformAdminOrgName } }]
+      },
+      select: { user: { select: { email: true } } }
+    });
+    return [
+      ...new Set(
+        memberships
+          .map(({ user }) => user?.email?.trim().toLowerCase())
+          .filter((email): email is string => Boolean(email))
+      )
+    ];
   }
 }

@@ -36,6 +36,7 @@ const buildRepository = (overrides: { updateCount?: number } = {}) => {
       findMany: jest.fn().mockResolvedValue([])
     }
   };
+  (prisma as Record<string, unknown>).org_agent_migration_events = { count: jest.fn().mockResolvedValue(3) };
   const repository = new OrgAgentMigrationRepository(prisma as never, { error: jest.fn() } as never);
   return { repository, prisma, tx, migrationCreate, migrationUpdateMany, eventCreate, findFirst };
 };
@@ -178,6 +179,18 @@ describe('OrgAgentMigrationRepository', () => {
         where: { id: ID, rehearsalStatus: 'RUNNING' },
         data: { rehearsalStartedAt: expect.any(Date) }
       });
+    });
+  });
+
+  describe('countEvents', () => {
+    it('counts the times an audit action was recorded for the migration', async () => {
+      const { repository, prisma } = buildRepository();
+
+      await expect(repository.countEvents(ID, 'PURGE_FAILED')).resolves.toBe(3);
+
+      expect(
+        (prisma as unknown as { org_agent_migration_events: { count: jest.Mock } }).org_agent_migration_events.count
+      ).toHaveBeenCalledWith({ where: { migrationId: ID, action: 'PURGE_FAILED' } });
     });
   });
 
