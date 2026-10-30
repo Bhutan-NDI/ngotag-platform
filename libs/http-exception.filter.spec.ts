@@ -5,6 +5,7 @@
 import { HttpException, HttpStatus, Logger, NotFoundException } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
+import { CommonService } from '@credebl/common';
 import { AllExceptionsFilter } from '@credebl/common/exception-handler';
 import { CustomExceptionFilter } from 'apps/api-gateway/common/exception-handler';
 import { HttpExceptionFilter } from './http-exception.filter';
@@ -55,6 +56,20 @@ describe('HttpExceptionFilter payload', () => {
       code: 409,
       message: 'already exists'
     });
+  });
+
+  it('does not forward an object error, such as the agent body CommonService.sendError puts there', async () => {
+    let thrown: unknown;
+    try {
+      new CommonService({} as never).sendError({
+        message: 'Request failed',
+        response: { status: 404, data: { message: 'Connection not found' } }
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(await emitted(thrown)).toEqual({ statusCode: 404, code: 404, message: 'Connection not found' });
   });
 
   it('answers 500 for a non-HTTP error, with the status in both fields', async () => {

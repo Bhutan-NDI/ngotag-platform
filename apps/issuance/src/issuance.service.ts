@@ -108,7 +108,8 @@ interface IAgentCallError {
 
 const agentCallError = (error: IAgentCallError): HttpException => {
   const status = resolveHttpStatus(error?.statusCode, error?.code);
-  return new HttpException({ statusCode: status, message: error?.message, error: error?.error }, status);
+  const name = ORG_AGENT_MIGRATING === error?.error ? ORG_AGENT_MIGRATING : error?.message;
+  return new HttpException({ statusCode: status, message: error?.message, error: name }, status);
 };
 
 @Injectable()
@@ -289,8 +290,8 @@ export class IssuanceService {
       // Start each recipient only when a local offer slot is available, so this
       // request does not exhaust its own short capacity-wait budget.
       const limit = pLimit(this.issuanceWork.offerConcurrency);
-      const issuancePromises = credentialData.map((credentials) =>
-        limit(async () => {
+      const issuancePromises = credentialData.map((credentials) => {
+        return limit(async () => {
           const { connectionId, attributes, credential, options } = credentials;
           let issueData;
 
@@ -337,8 +338,8 @@ export class IssuanceService {
           }
 
           return this._sendCredentialCreateOffer(issueData, url, orgId);
-        })
-      );
+        });
+      });
 
       const results = await Promise.allSettled(issuancePromises);
 
@@ -1448,10 +1449,11 @@ export class IssuanceService {
         let filteredData = parsedData;
         if (previewRequest.searchByText) {
           const searchTerm = previewRequest.searchByText.toLowerCase();
-          filteredData = parsedData.filter(
-            (item) =>
+          filteredData = parsedData.filter((item) => {
+            return (
               item.email_identifier.toLowerCase().includes(searchTerm) || item.name.toLowerCase().includes(searchTerm)
-          );
+            );
+          });
         }
 
         // Apply pagination to the filtered data
@@ -1805,8 +1807,13 @@ export class IssuanceService {
 
   async processIssuanceData(jobDetails: IQueuePayload): Promise<boolean> {
     try {
-      const succeeded = await this.issuanceWork.bulkRow(jobDetails.orgId, jobDetails.fileUploadId, jobDetails.id, () =>
-        this.processBulkRow(jobDetails)
+      const succeeded = await this.issuanceWork.bulkRow(
+        jobDetails.orgId,
+        jobDetails.fileUploadId,
+        jobDetails.id,
+        () => {
+          return this.processBulkRow(jobDetails);
+        }
       );
       await this.completeBulkRow(jobDetails, succeeded);
       return succeeded;
@@ -2106,8 +2113,8 @@ export class IssuanceService {
         const batchStartTime = Date.now();
 
         // Create an array of limited promises for the current batch
-        const saveFileDetailsPromises = batch.map((element) =>
-          limit(() => {
+        const saveFileDetailsPromises = batch.map((element) => {
+          return limit(() => {
             const credentialPayload = {
               credential_data: element,
               schemaId: parsedFileDetails.schemaLedgerId,
@@ -2119,8 +2126,8 @@ export class IssuanceService {
               credentialType: parsedFileDetails.credentialType
             };
             return this.issuanceRepository.saveFileDetails(credentialPayload, userId);
-          })
-        );
+          });
+        });
 
         this.logger.log(`Processing batch ${index + 1} with ${batch.length} elements...`);
 

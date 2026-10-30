@@ -23,7 +23,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
         httpStatus = resolveHttpStatus(exception.getStatus());
         const response = exception.getResponse();
         message = resolveMessage(response, exception.message) ?? 'Internal server error';
-        body = response && 'object' === typeof response && !Array.isArray(response) ? response : {};
+        const { error, ...rest } =
+          response && 'object' === typeof response && !Array.isArray(response) ? (response as { error?: unknown }) : {};
+        body = 'string' === typeof error ? { ...rest, error } : rest;
         break;
       }
       case RpcException: {

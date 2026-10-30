@@ -5,6 +5,9 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 import { IssueCredentialType } from '@credebl/enum/enum';
+import { CommonService } from '@credebl/common';
+import { HttpExceptionFilter } from '../../../libs/http-exception.filter';
+import { firstValueFrom } from 'rxjs';
 import { IssuanceService } from './issuance.service';
 
 jest.mock('socket.io-client', () => ({ io: jest.fn(() => ({ emit: jest.fn() })) }));
@@ -19,8 +22,8 @@ const FROZEN = {
   error: 'ORG_AGENT_MIGRATING'
 };
 
-const offer = (connectionIds: string[]): never =>
-  ({
+const offer = (connectionIds: string[]): never => {
+  return {
     orgId: 'org',
     credentialType: IssueCredentialType.INDY,
     credentialDefinitionId: 'definition',
@@ -29,7 +32,8 @@ const offer = (connectionIds: string[]): never =>
       connectionId,
       attributes: [{ name: 'name', value: 'synthetic' }]
     }))
-  }) as never;
+  } as never;
+};
 
 const fixture = (): { service: IssuanceService; send: jest.Mock } => {
   const send = jest.fn();
@@ -60,8 +64,9 @@ const fixture = (): { service: IssuanceService; send: jest.Mock } => {
   return { service, send };
 };
 
-const call = (service: IssuanceService): Promise<unknown> =>
-  service.natsCallAgent({ cmd: 'agent-send-credential-create-offer' } as never, {} as never);
+const call = (service: IssuanceService): Promise<unknown> => {
+  return service.natsCallAgent({ cmd: 'agent-send-credential-create-offer' } as never, {} as never);
+};
 
 describe('issuance: rewrapping an error from the agent service', () => {
   it('keeps the 423 status and the ORG_AGENT_MIGRATING code', async () => {
@@ -75,14 +80,18 @@ describe('issuance: rewrapping an error from the agent service', () => {
     expect(error.getResponse()).toEqual({ statusCode: 423, message: FROZEN.message, error: 'ORG_AGENT_MIGRATING' });
   });
 
-  it('keeps the status and error name of an ordinary forwarded exception', async () => {
+  it('keeps the status, and the message as text in error, of an ordinary forwarded exception', async () => {
     const { service, send } = fixture();
     send.mockRejectedValue({ statusCode: 404, message: 'Connection not found', error: 'Not Found' });
 
     const error = (await call(service).catch((e) => e)) as HttpException;
 
     expect(error.getStatus()).toBe(404);
-    expect(error.getResponse()).toEqual({ statusCode: 404, message: 'Connection not found', error: 'Not Found' });
+    expect(error.getResponse()).toEqual({
+      statusCode: 404,
+      message: 'Connection not found',
+      error: 'Connection not found'
+    });
   });
 
   it('reads the status from code when that is all the error carries', async () => {
@@ -127,6 +136,29 @@ describe('issuance: credential offer while the org is migrating', () => {
     expect(result.statusCode).toBe(HttpStatus.PARTIAL_CONTENT);
     expect(result.data[0].statusCode).toBe(HttpStatus.CREATED);
     expect(result.data[1]).toMatchObject({ statusCode: 423, error: 'ORG_AGENT_MIGRATING' });
+  });
+
+  it('keeps the agent message as text in a failed row, for an error built by CommonService.sendError', async () => {
+    const { service, send } = fixture();
+    let thrown: unknown;
+    try {
+      new CommonService({} as never).sendError({
+        message: 'Request failed',
+        response: { status: 404, data: { message: 'Connection not found' } }
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    const rpcError = (
+      (await firstValueFrom(new HttpExceptionFilter().catch(thrown)).catch((e) => e)) as RpcException
+    ).getError();
+    send.mockResolvedValueOnce({ threadId: 't1' }).mockRejectedValueOnce(rpcError);
+
+    const result = (await service.sendCredentialCreateOffer(offer(['c1', 'c2']))) as {
+      data: { statusCode: number; message: string; error: unknown }[];
+    };
+
+    expect(result.data[1]).toEqual({ statusCode: 404, message: 'Connection not found', error: 'Connection not found' });
   });
 
   it('still answers 400 with rows when every connection fails for another reason', async () => {
