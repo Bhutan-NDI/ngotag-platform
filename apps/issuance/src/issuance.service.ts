@@ -97,6 +97,21 @@ import { extractAttributeNames, unflattenCsvRow } from '../libs/helpers/attribut
 import { redisStore } from 'cache-manager-ioredis-yet';
 import { EmailService } from '@credebl/common/email.service';
 
+const ORG_AGENT_MIGRATING = 'ORG_AGENT_MIGRATING';
+
+interface IAgentCallError {
+  statusCode?: unknown;
+  code?: unknown;
+  message?: unknown;
+  error?: unknown;
+}
+
+const agentCallError = (error: IAgentCallError): HttpException => {
+  const status = resolveHttpStatus(error?.statusCode, error?.code);
+  const name = ORG_AGENT_MIGRATING === error?.error ? ORG_AGENT_MIGRATING : error?.message;
+  return new HttpException({ statusCode: status, message: error?.message, error: name }, status);
+};
+
 @Injectable()
 export class IssuanceService {
   private readonly logger = new Logger('IssueCredentialService');
@@ -327,6 +342,22 @@ export class IssuanceService {
       });
 
       const results = await Promise.allSettled(issuancePromises);
+
+      const migrationFrozen =
+        0 < results.length &&
+        results.every(
+          (result) => PromiseResult.REJECTED === result.status && ORG_AGENT_MIGRATING === result.reason?.response?.error
+        );
+      if (migrationFrozen) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.LOCKED,
+            message: ResponseMessages.agent.error.orgAgentMigrating,
+            error: ORG_AGENT_MIGRATING
+          },
+          HttpStatus.LOCKED
+        );
+      }
 
       const processedResults = results.map((result) => {
         if (PromiseResult.REJECTED === result.status) {
@@ -568,13 +599,7 @@ export class IssuanceService {
 
         .catch((error) => {
           this.logger.error(`catch: ${JSON.stringify(error)}`);
-          throw new HttpException(
-            {
-              status: error.statusCode,
-              error: error.message
-            },
-            error.error
-          );
+          throw agentCallError(error);
         });
       return createOffer;
     } catch (error) {
@@ -600,13 +625,7 @@ export class IssuanceService {
         .toPromise()
         .catch((error) => {
           this.logger.error(`catch: ${JSON.stringify(error)}`);
-          throw new HttpException(
-            {
-              status: error.statusCode,
-              error: error.message
-            },
-            error.error
-          );
+          throw agentCallError(error);
         });
     } catch (error) {
       this.logger.error(`[natsCall] - error in nats call : ${JSON.stringify(error)}`);
