@@ -335,6 +335,7 @@ export interface ISendProofRequestPayload {
   parentThreadId?: string;
   willConfirm?: boolean;
   protocolVersion?: string;
+  expiresInSeconds?: number;
 }
 
 export interface IAgentStatus {

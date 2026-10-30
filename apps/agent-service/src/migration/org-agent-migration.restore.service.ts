@@ -81,10 +81,9 @@ export class OrgAgentMigrationRestoreService {
       });
       await this.tellPeople(restored, adminUserId);
       return restored;
-    } catch (error) {
-      // Nothing is running any more, so an immediate retry must not be refused as busy.
+    } finally {
+      // A failed attempt is safe to repeat at once; only a live restore should keep another one out.
       await this.migrationRepository.releaseLease(migration.id).catch(() => undefined);
-      throw error;
     }
   }
 

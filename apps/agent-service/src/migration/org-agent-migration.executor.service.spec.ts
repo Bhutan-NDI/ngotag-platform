@@ -40,7 +40,8 @@ const infoOf = (endpoint: string) => ({
     autoAcceptProofs: 'contentApproved',
     inboundTransports: ['http'],
     outboundTransports: ['http', 'ws'],
-    cronPurgeEnabled: true
+    cronPurgeEnabled: true,
+    tenancy: 'https://shared.example.com' === endpoint
   }
 });
 
@@ -670,6 +671,17 @@ describe('move day: aborting before the switch', () => {
         })
     ],
     [
+      'the new agent turns out to be multi-tenant',
+      'VERIFICATION_FAILED:CONFIG',
+      (w) =>
+        w.agentClient.getAgentInfo.mockImplementation(async (e: string) => {
+          const info = infoOf('https://didcomm.org.example.com');
+          return e === DEDICATED.endpoint
+            ? { ...info, config: { ...info.config, tenancy: true } }
+            : infoOf('https://shared.example.com');
+        })
+    ],
+    [
       'the credential was not signed with the org DID',
       'VERIFICATION_FAILED:SIGN_VERIFY',
       (w) => w.agentClient.createSelfAttestedCredential.mockResolvedValue({ credential: { issuer: 'did:key:other' } })
@@ -1154,6 +1166,116 @@ describe('move day: after the switch', () => {
 
     expect(world.world.row.status).toBe(Status.STABILISING);
     expect(world.world.row.newInvitationDid).toBe('did:peer:2.new');
+  });
+
+  describe('when a step after the switch keeps failing', () => {
+    const stuck = async () => {
+      const world = buildWorld();
+      world.agentClient.createConnectionInvitation.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+      await world.executor.run(MIGRATION_ID, USER_ID);
+      return world;
+    };
+
+    it('says which step on the migration, so the owner and the admins can see why the org is paused', async () => {
+      const world = await stuck();
+
+      expect(world.world.row).toMatchObject({
+        status: Status.CUTOVER,
+        error: 'COMPLETION_STEP_FAILED:INVITATION'
+      });
+    });
+
+    it('tells the owners and platform admins, naming who confirmed the move', async () => {
+      const world = await stuck();
+
+      const stuckAlerts = world.alertService.alertKeyExport.mock.calls.filter(([, kind]) => 'MOVE_STUCK' === kind);
+      expect(stuckAlerts).toHaveLength(1);
+      expect(stuckAlerts[0][2]).toBe(USER_ID);
+    });
+
+    it('does not say it again on every retry', async () => {
+      const world = await stuck();
+
+      await world.executor.resumeCutover(MIGRATION_ID);
+      await world.executor.resumeCutover(MIGRATION_ID);
+
+      const stuckAlerts = world.alertService.alertKeyExport.mock.calls.filter(([, kind]) => 'MOVE_STUCK' === kind);
+      expect(stuckAlerts).toHaveLength(1);
+      expect(world.world.events.filter((event) => 'COMPLETION_STEP_FAILED' === event.action)).toHaveLength(1);
+    });
+
+    it('says it again when a different step is the one that fails', async () => {
+      const world = await stuck();
+      world.agentClient.createConnectionInvitation.mockResolvedValue({
+        invitationUrl: 'https://didcomm.org.example.com?oob=abc',
+        invitationDid: 'did:peer:2.new'
+      });
+      world.agentClient.putRelay.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+      world.world.row.newInvitationDid = null;
+
+      await world.executor.resumeCutover(MIGRATION_ID);
+
+      expect(world.world.row.error).toBe('COMPLETION_STEP_FAILED:RELAY_FORWARD');
+      expect(world.alertService.alertKeyExport.mock.calls.filter(([, kind]) => 'MOVE_STUCK' === kind)).toHaveLength(2);
+    });
+
+    it('clears the note once the move finishes', async () => {
+      const world = await stuck();
+      world.agentClient.createConnectionInvitation.mockResolvedValue({
+        invitationUrl: 'https://didcomm.org.example.com?oob=abc',
+        invitationDid: 'did:peer:2.new'
+      });
+
+      await world.executor.resumeCutover(MIGRATION_ID);
+
+      expect(world.world.row).toMatchObject({ status: Status.STABILISING, error: null });
+    });
+
+    it('carries on when the alert cannot be sent, and does not mark the step as reported', async () => {
+      const world = buildWorld();
+      world.agentClient.createConnectionInvitation.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+      world.alertService.alertKeyExport.mockImplementation(async (_m, kind) => {
+        if ('MOVE_STUCK' === kind) {
+          throw new Error('mail down');
+        }
+        return { recipients: 1, sent: 1 };
+      });
+
+      await world.executor.run(MIGRATION_ID, USER_ID);
+
+      expect(world.world.row.status).toBe(Status.CUTOVER);
+      expect(world.world.row.error).not.toBe('COMPLETION_STEP_FAILED:INVITATION');
+    });
+
+    it.each([
+      ['throws', () => Promise.reject(new Error('mail down'))],
+      ['reaches nobody', () => Promise.resolve({ recipients: 2, sent: 0 })]
+    ])('tries the alert again on the next resume when it %s, instead of staying silent', async (_name, failing) => {
+      const world = buildWorld();
+      world.agentClient.createConnectionInvitation.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+      const stuckKinds = () =>
+        world.alertService.alertKeyExport.mock.calls.filter(([, kind]) => 'MOVE_STUCK' === kind).length;
+      world.alertService.alertKeyExport.mockImplementation(async (_m, kind) =>
+        'MOVE_STUCK' === kind ? failing() : { recipients: 1, sent: 1 }
+      );
+      await world.executor.run(MIGRATION_ID, USER_ID);
+      expect(stuckKinds()).toBe(1);
+
+      world.alertService.alertKeyExport.mockImplementation(async () => ({ recipients: 1, sent: 1 }));
+      await world.executor.resumeCutover(MIGRATION_ID);
+
+      expect(stuckKinds()).toBe(2);
+      expect(world.world.row.error).toBe('COMPLETION_STEP_FAILED:INVITATION');
+    });
+
+    it('does not mark the migration when only the S3 cleanup fails, which never holds the org', async () => {
+      const world = buildWorld();
+      world.agentClient.deleteExport.mockRejectedValue(new MigrationAgentError('FAILED', 500));
+
+      await world.executor.run(MIGRATION_ID, USER_ID);
+
+      expect(world.world.row.error).toBeNull();
+    });
   });
 
   it('does not wait on the S3 cleanup to unfreeze the org', async () => {

@@ -12,7 +12,8 @@ export enum KeyExportAlertKind {
   MOVE_STARTED = 'MOVE_STARTED',
   REHEARSAL_EXPORT = 'REHEARSAL_EXPORT',
   MOVE_EXPORT = 'MOVE_EXPORT',
-  DISASTER_RESTORE = 'DISASTER_RESTORE'
+  DISASTER_RESTORE = 'DISASTER_RESTORE',
+  MOVE_STUCK = 'MOVE_STUCK'
 }
 
 /** Things the platform does or finds on its own during a move, which the same people should hear about once. */
@@ -31,6 +32,7 @@ interface IAlertDescription {
   subject: string;
   what: string;
   who?: string;
+  actorLabel?: string;
   targetLabel?: string;
 }
 
@@ -46,6 +48,14 @@ const DESCRIPTIONS: Record<KeyExportAlertKind, IAlertDescription> = {
   [KeyExportAlertKind.REHEARSAL_EXPORT]: {
     subject: 'The organisation’s signing keys were exported for a rehearsal',
     what: 'exported the organisation’s wallet, including its signing keys, for a rehearsal of the move'
+  },
+  [KeyExportAlertKind.MOVE_STUCK]: {
+    subject: 'A wallet move is stuck after the switch',
+    who: 'The platform',
+    what: 'switched the organisation to its new agent but could not finish the move. The organisation stays paused until the failing step succeeds, and it keeps retrying',
+    // The actor is the owner who confirmed the move, not whoever the platform's own retry acts for.
+    actorLabel: 'Move confirmed by',
+    targetLabel: 'The new agent'
   },
   [KeyExportAlertKind.DISASTER_RESTORE]: {
     subject: 'A wallet move was rolled back',
@@ -182,7 +192,7 @@ export class OrgAgentMigrationAlertService {
   ): [string, string][] {
     return [
       ['Organisation', orgName ?? migration.orgId],
-      ['Done by', actorEmail ?? 'an unknown user'],
+      [description.actorLabel ?? 'Done by', actorEmail ?? 'an unknown user'],
       [description.targetLabel ?? 'Keys are going to', hostOf(migration.targetAdminEndpoint)],
       ['Time', new Date().toISOString()]
     ];

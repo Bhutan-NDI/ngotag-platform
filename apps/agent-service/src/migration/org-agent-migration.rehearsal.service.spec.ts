@@ -308,6 +308,93 @@ describe('OrgAgentMigrationRehearsalService key export controls', () => {
   });
 });
 
+describe('OrgAgentMigrationRehearsalService leftover exports', () => {
+  it('remembers the export it started before importing it, so a crash can be cleaned up after', async () => {
+    const { execute, migrationRepository, agentClient } = build();
+    let rememberedBeforeImport = false;
+    agentClient.startImport.mockImplementation(async () => {
+      rememberedBeforeImport = migrationRepository.update.mock.calls.some(
+        ([, patch]) => 'export-1' === patch.exportJobId && undefined === patch.rehearsalStatus
+      );
+      return { jobId: 'import-1', status: 'pending' };
+    });
+
+    await execute();
+
+    expect(rememberedBeforeImport).toBe(true);
+  });
+
+  it('removes the export an earlier rehearsal left behind, before it makes a new one', async () => {
+    const { execute, agentClient, calls } = build();
+
+    await execute({ ...migrationRow(), exportJobId: 'left-over' } as never);
+
+    expect(agentClient.deleteExport).toHaveBeenNthCalledWith(1, SHARED.endpoint, SHARED.token, 'tenant-1', 'left-over');
+    expect(calls.indexOf('deleteExport')).toBeLessThan(calls.indexOf('startSealedExport'));
+  });
+
+  it('has nothing to remove on a first rehearsal', async () => {
+    const { execute, agentClient } = build();
+
+    await execute({ ...migrationRow(), exportJobId: null } as never);
+
+    expect(agentClient.deleteExport).toHaveBeenCalledTimes(1);
+    expect(agentClient.deleteExport).toHaveBeenCalledWith(SHARED.endpoint, SHARED.token, 'tenant-1', 'export-1');
+  });
+
+  it('clears the id once the export is deleted, so a later rehearsal has nothing stale to remove', async () => {
+    const { execute, migrationService } = build();
+
+    await execute();
+
+    expect(migrationService.advance.mock.calls[0][3]).toMatchObject({ exportJobId: null });
+  });
+
+  it('clears the id of a leftover that is deleted, before the new export is recorded', async () => {
+    const { execute, migrationRepository } = build();
+
+    await execute({ ...migrationRow(), exportJobId: 'left-over' } as never);
+
+    const patches = migrationRepository.update.mock.calls.map(([, patch]) => patch);
+    expect(patches.findIndex((patch) => null === patch.exportJobId)).toBeLessThan(
+      patches.findIndex((patch) => 'export-1' === patch.exportJobId)
+    );
+  });
+
+  it('treats a leftover the agent no longer knows as already deleted, and goes on', async () => {
+    const { execute, agentClient, migrationService } = build();
+    agentClient.deleteExport.mockRejectedValueOnce(new MigrationAgentError('NOT_FOUND', 404));
+
+    await execute({ ...migrationRow(), exportJobId: 'expired' } as never);
+
+    expect(agentClient.startSealedExport).toHaveBeenCalled();
+    expect(migrationService.advance).toHaveBeenCalled();
+  });
+
+  it('leaves the id null on a failure whose export was cleaned up', async () => {
+    const { execute, migrationRepository, agentClient } = build();
+    agentClient.startImport.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+    await execute();
+
+    expect(failureRecorded(migrationRepository)).toMatchObject({ exportJobId: null });
+  });
+
+  it('stops, keeping the leftover findable, when it cannot be removed, instead of starting a new export over it', async () => {
+    const { execute, agentClient, migrationService, migrationRepository } = build();
+    agentClient.deleteExport.mockRejectedValue(new MigrationAgentError('CONFLICT', 409));
+
+    await execute({ ...migrationRow(), exportJobId: 'left-over' } as never);
+
+    expect(migrationService.advance).not.toHaveBeenCalled();
+    expect(agentClient.startSealedExport).not.toHaveBeenCalled();
+    expect(failureRecorded(migrationRepository)).toMatchObject({
+      exportJobId: 'left-over',
+      rehearsal: expect.objectContaining({ code: 'EXPORT_CLEANUP_FAILED', exportCleanup: 'FAILED' })
+    });
+  });
+});
+
 describe('OrgAgentMigrationRehearsalService download method', () => {
   it('has the agent pull the export from S3 unless preflight found it cannot', async () => {
     const { execute, agentClient, migrationService } = build();
@@ -449,7 +536,7 @@ describe('OrgAgentMigrationRehearsalService rehearsal run', () => {
       USER_ID,
       expect.objectContaining({
         counts: completedImport.counts,
-        exportJobId: 'export-1',
+        exportJobId: null,
         importJobId: 'import-1',
         importKeyFingerprint: createHash('sha256').update(Buffer.from(PUBLIC_KEY, 'base64')).digest('hex'),
         storageVersion: '0.5',

@@ -16,6 +16,7 @@ const DEDICATED_ENDPOINT = 'https://admin.org.example.com';
 
 const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
   const world = {
+    leaseHeld: false,
     row: {
       id: MIGRATION_ID,
       orgId: ORG_ID,
@@ -44,12 +45,17 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
 
   const migrationRepository = {
     getActiveByOrgId: jest.fn(async () => (world.row ? { ...world.row } : null)),
+    // A lease stays held until it is given back, as the real one does until it runs out.
     tryAcquireLease: jest.fn(async () => {
       world.order.push('lease');
+      if (world.leaseHeld) {
+        return false;
+      }
+      world.leaseHeld = true;
       return true;
     }),
     releaseLease: jest.fn(async () => {
-      world.order.push('release');
+      world.leaseHeld = false;
     }),
     recordEvent: jest.fn(async (_id: string, entry: { action: string; actor: unknown; detail?: unknown }) => {
       world.events.push(entry);
@@ -302,13 +308,32 @@ describe('OrgAgentMigrationRestoreService', () => {
       });
     });
 
-    it('frees the lease when the restore fails, so an immediate retry is not refused as busy', async () => {
+    it('gives the lease back after a failed attempt, so a retry can start at once', async () => {
       const world = buildWorld();
       world.agentClient.restoreRelay.mockRejectedValueOnce(new MigrationAgentError('UNREACHABLE'));
 
-      await expect(world.service.restore(ORG_ID, ADMIN_ID)).rejects.toBeInstanceOf(ServiceUnavailableException);
+      await world.service.restore(ORG_ID, ADMIN_ID).catch(() => undefined);
 
       expect(world.migrationRepository.releaseLease).toHaveBeenCalledWith(MIGRATION_ID);
+      expect(world.world.leaseHeld).toBe(false);
+    });
+
+    it('gives the lease back after a restore that worked too', async () => {
+      const world = buildWorld();
+
+      await world.service.restore(ORG_ID, ADMIN_ID);
+
+      expect(world.migrationRepository.releaseLease).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not take the lease away from whoever holds it when it refuses', async () => {
+      const world = buildWorld();
+      world.world.leaseHeld = true;
+
+      await expect(world.service.restore(ORG_ID, ADMIN_ID)).rejects.toBeInstanceOf(ConflictException);
+
+      expect(world.migrationRepository.releaseLease).not.toHaveBeenCalled();
+      expect(world.world.leaseHeld).toBe(true);
     });
 
     it('answers busy, and frees the lease, while the agent is still handing queued messages back', async () => {

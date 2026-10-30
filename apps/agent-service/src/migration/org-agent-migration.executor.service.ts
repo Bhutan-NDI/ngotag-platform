@@ -445,11 +445,34 @@ export class OrgAgentMigrationExecutor {
         await this.repeat(run);
       } catch (error) {
         this.logger.error(`[move] ${ctx.migration.id}: ${name} failed after the switch: ${this.describe(error)}`);
-        await this.audit(ctx.migration.id, 'COMPLETION_STEP_FAILED', { step: name });
         if (required) {
+          await this.noteStuck(ctx, name);
           return;
         }
+        await this.audit(ctx.migration.id, 'COMPLETION_STEP_FAILED', { step: name });
       }
+    }
+  }
+
+  // The org stays frozen until a required step after the switch succeeds, and nobody else would notice: tell the owners
+  // and platform admins, once per step, not on every retry. The step is only marked as reported once an alert actually
+  // went out: it is the once-per-step key, so a failed send would otherwise never be tried again.
+  private async noteStuck(ctx: IMoveContext, step: string): Promise<void> {
+    const code = `COMPLETION_STEP_FAILED:${step}`;
+    try {
+      const current = await this.migrationRepository.getById(ctx.migration.id);
+      if (!current || current.error === code) {
+        return;
+      }
+      const alert = await this.alertService.alertKeyExport(current, KeyExportAlertKind.MOVE_STUCK, ctx.actor);
+      if (1 > alert.sent) {
+        this.logger.error(`[move] ${ctx.migration.id}: nobody could be told that ${step} is stuck; will try again`);
+        return;
+      }
+      await this.migrationRepository.update(ctx.migration.id, { error: code });
+      await this.audit(ctx.migration.id, 'COMPLETION_STEP_FAILED', { step });
+    } catch (error) {
+      this.logger.error(`[move] ${ctx.migration.id}: could not report the stuck step: ${this.describe(error)}`);
     }
   }
 
@@ -548,7 +571,8 @@ export class OrgAgentMigrationExecutor {
       // Preflight's probe does not count: the window's own check must show the webhook working now.
       webhookConfirmedAt: null,
       // The token now lives on the org's agent row; the migration no longer needs its own copy.
-      targetTokenEncrypted: null
+      targetTokenEncrypted: null,
+      error: null
     });
   }
 
