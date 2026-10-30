@@ -277,6 +277,7 @@ model org_agent_migrations {
   storageVersion         String?                      @db.VarChar
   rehearsalDurationMs    Int?
   predictedFreezeMs      Int?
+  scheduledFor           DateTime?                    @db.Timestamptz(6)
   freezeDeadline         DateTime?                    @db.Timestamptz(6)
   stabilisationEndsAt    DateTime?                    @db.Timestamptz(6)
   purgedAt               DateTime?                    @db.Timestamptz(6)

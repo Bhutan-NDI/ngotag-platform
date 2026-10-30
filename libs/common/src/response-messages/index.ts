@@ -454,6 +454,13 @@ export const ResponseMessages = {
       agentRowChanged: 'The organization agent changed while the token was being verified -- please retry',
       orgAgentMigrating: 'ORG_AGENT_MIGRATING: the organization agent is being migrated and is temporarily unavailable',
       agentRowChangedDuringMigration: 'The organization agent changed during the migration cutover',
+      migrationAlreadyActive: 'A migration is already in progress for this organization',
+      migrationNotFound: 'No migration found for this organization',
+      migrationInvalidTransition: 'This migration cannot move to the requested state from its current state',
+      migrationStateChanged: 'The migration changed state while the request was being handled -- please retry',
+      migrationOrgNotShared: 'Only an organization on the shared agent can be migrated to a dedicated agent',
+      migrationEndpointInvalid:
+        'The dedicated agent admin and DIDComm addresses must be distinct HTTPS URLs, and the DIDComm address must be public and carry no credentials',
       walletDoesNotExists: 'Organization wallet does not exists',
       requiredDomain: 'Domain is required for Web method',
       requiredNetwork: 'Network is required',

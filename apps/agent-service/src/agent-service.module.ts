@@ -19,6 +19,9 @@ import { GlobalConfigModule } from '@credebl/config/global-config.module';
 import { ContextInterceptorModule } from '@credebl/context/contextInterceptorModule';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { APP_INTERCEPTOR } from '@nestjs/core';
+import { OrgAgentMigrationController } from './migration/org-agent-migration.controller';
+import { OrgAgentMigrationService } from './migration/org-agent-migration.service';
+import { OrgAgentMigrationRepository } from './repositories/org-agent-migration.repository';
 
 @Module({
   imports: [
@@ -45,10 +48,12 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
     HttpModule,
     CacheModule.register()
   ],
-  controllers: [AgentServiceController],
+  controllers: [AgentServiceController, OrgAgentMigrationController],
   providers: [
     AgentServiceService,
     AgentServiceRepository,
+    OrgAgentMigrationService,
+    OrgAgentMigrationRepository,
     PrismaService,
     Logger,
     ConnectionService,
