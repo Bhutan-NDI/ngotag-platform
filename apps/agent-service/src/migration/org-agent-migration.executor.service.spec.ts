@@ -189,6 +189,10 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       log('startImport');
       return { jobId: 'import-1', status: 'pending' };
     }),
+    pushImport: jest.fn(async () => {
+      log('pushImport');
+      return { jobId: 'import-1', status: 'pending' };
+    }),
     getImportJob: jest.fn(async () => importedJob),
     deleteExport: jest.fn(async () => {
       log('deleteExport');
@@ -899,6 +903,80 @@ describe('move day: aborting before the switch', () => {
     await world.executor.run(MIGRATION_ID, USER_ID);
 
     expect(noSecrets(world.logger)).not.toMatch(/root-token|base-token|SECRET-SIGNATURE|ENCRYPTED-TOKEN/);
+  });
+});
+
+describe('move day: how the agent gets the export', () => {
+  it('has the agent pull it from S3 by default', async () => {
+    const { executor, agentClient } = buildWorld();
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(agentClient.startImport).toHaveBeenCalledTimes(1);
+    expect(agentClient.pushImport).not.toHaveBeenCalled();
+  });
+
+  it('sends it to the agent itself when preflight found the agent cannot reach S3', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH' });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(agentClient.startImport).not.toHaveBeenCalled();
+    expect(agentClient.pushImport).toHaveBeenCalledWith(
+      DEDICATED.endpoint,
+      DEDICATED.token,
+      {
+        downloadUrl: exportedJob.downloadUrl,
+        sessionId: 'session-1',
+        checksum: exportedJob.checksum,
+        sealedStoreKey: exportedJob.sealedStoreKey,
+        storageVersion: '0.5',
+        dryRun: false
+      },
+      expect.any(Number)
+    );
+    expect(world.row.status).toBe(Status.STABILISING);
+  });
+
+  it('gives the transfer no more time than the freeze budget has left', async () => {
+    const { executor, agentClient } = buildWorld({ downloadMethod: 'PUSH', predictedFreezeMs: 15 * MINUTE });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    const budget = agentClient.pushImport.mock.calls[0][3];
+    expect(budget).toBeGreaterThan(0);
+    expect(budget).toBeLessThanOrEqual(15 * MINUTE);
+  });
+
+  it('records a push cut off by the freeze budget as FREEZE_BUDGET_EXCEEDED, not as the agent being unreachable', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH', predictedFreezeMs: 5000 });
+    agentClient.pushImport.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5100));
+      throw new MigrationAgentError('UNREACHABLE');
+    });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row).toMatchObject({ status: Status.FAILED, error: 'FREEZE_BUDGET_EXCEEDED' });
+  }, 20000);
+
+  it('still records a failed push inside the budget as the agent being unreachable', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH', predictedFreezeMs: 15 * MINUTE });
+    agentClient.pushImport.mockRejectedValue(new MigrationAgentError('UNREACHABLE'));
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row).toMatchObject({ status: Status.FAILED, error: 'AGENT_UNREACHABLE' });
+  });
+
+  it('aborts losslessly with DOWNLOAD_FAILED when the platform cannot fetch the export', async () => {
+    const { executor, agentClient, world } = buildWorld({ downloadMethod: 'PUSH' });
+    agentClient.pushImport.mockRejectedValue(new MigrationAgentError('FAILED', undefined, 'DOWNLOAD_FAILED'));
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row).toMatchObject({ status: Status.FAILED, error: 'DOWNLOAD_FAILED' });
+    expect(world.relay).toBe('none');
   });
 });
 

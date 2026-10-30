@@ -1,8 +1,9 @@
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
+/* eslint-disable @typescript-eslint/explicit-function-return-type, prefer-destructuring */
 import { HttpService } from '@nestjs/axios';
 import * as http from 'http';
 import { AddressInfo } from 'net';
-import { of } from 'rxjs';
+import { Readable } from 'stream';
+import { of, throwError } from 'rxjs';
 import { MigrationAgentClient, MigrationAgentError } from './migration-agent.client';
 
 interface Seen {
@@ -254,6 +255,169 @@ describe('MigrationAgentClient against a real HTTP server', () => {
     for (const failure of failures) {
       expect(`${failure.message} ${JSON.stringify(failure)} ${failure.stack}`).not.toMatch(/SECRET/);
     }
+  });
+});
+
+describe('MigrationAgentClient.getExportBucket', () => {
+  it('asks the agent whether it can reach its export bucket, with the root token', async () => {
+    const request = jest.fn().mockReturnValue(of({ data: { configured: true, reachable: false, reason: 'DNS' } }));
+    const client = new MigrationAgentClient({ request } as never);
+
+    await expect(client.getExportBucket('https://admin.org.example.com/', 'root-token')).resolves.toEqual({
+      configured: true,
+      reachable: false,
+      reason: 'DNS'
+    });
+
+    expect(request.mock.calls[0][0]).toMatchObject({
+      method: 'get',
+      url: 'https://admin.org.example.com/agent/wallet/export-bucket',
+      headers: expect.objectContaining({ authorization: 'root-token' })
+    });
+  });
+});
+
+describe('MigrationAgentClient.pushImport', () => {
+  const SIGNED = 'https://exports.s3.amazonaws.com/artifact?X-Amz-Signature=SIGNED-SECRET';
+  const input = {
+    downloadUrl: SIGNED,
+    sessionId: 'session-1',
+    checksum: 'a'.repeat(64),
+    sealedStoreKey: 'c2VhbGVk',
+    storageVersion: '0.5',
+    dryRun: false
+  };
+
+  const build = (overrides: { get?: jest.Mock; post?: jest.Mock } = {}) => {
+    const artifact = Readable.from(['sealed ', 'bytes']);
+    const get = overrides.get ?? jest.fn().mockReturnValue(of({ data: artifact, headers: { 'content-length': '12' } }));
+    const post = overrides.post ?? jest.fn().mockReturnValue(of({ data: { jobId: 'job-1', status: 'pending' } }));
+    return { client: new MigrationAgentClient({ get, post } as never), get, post, artifact };
+  };
+
+  it('fetches the export and streams it, unread, into the agent upload route', async () => {
+    const { client, get, post, artifact } = build();
+
+    await expect(client.pushImport('https://admin.org.example.com', 'root-token', input)).resolves.toEqual({
+      jobId: 'job-1',
+      status: 'pending'
+    });
+
+    expect(get.mock.calls[0][0]).toBe(SIGNED);
+    expect(get.mock.calls[0][1]).toMatchObject({ responseType: 'stream', maxRedirects: 0 });
+    const [url, body, config] = post.mock.calls[0];
+    expect(url).toBe('https://admin.org.example.com/agent/wallet/import/upload');
+    expect(body).toBe(artifact);
+    expect(config.headers).toMatchObject({
+      authorization: 'root-token',
+      'content-type': 'application/octet-stream',
+      'x-session-id': 'session-1',
+      'x-checksum': 'a'.repeat(64),
+      'x-sealed-store-key': 'c2VhbGVk',
+      'x-storage-version': '0.5',
+      'content-length': '12'
+    });
+    expect(config.headers).not.toHaveProperty('x-dry-run');
+    expect(config.maxBodyLength).toBe(Infinity);
+  });
+
+  it('does not follow redirects on the upload, which would make axios keep the whole body in memory', async () => {
+    const { client, post } = build();
+
+    await client.pushImport('https://admin.org.example.com', 'root-token', input);
+
+    expect(post.mock.calls[0][2].maxRedirects).toBe(0);
+  });
+
+  it('never gives the transfer longer than the budget it was given', async () => {
+    const { client, get, post } = build();
+
+    await client.pushImport('https://admin.org.example.com', 'root-token', input, 20000);
+
+    expect(get.mock.calls[0][1].timeout).toBe(20000);
+    expect(post.mock.calls[0][2].timeout).toBe(20000);
+  });
+
+  it('reports a download that breaks part way as DOWNLOAD_FAILED, not as the agent being unreachable', async () => {
+    const artifact = new Readable({ read: () => undefined });
+    const post = jest.fn().mockImplementation(() => {
+      artifact.emit('error', new Error('socket hang up'));
+      return throwError(() => ({}));
+    });
+    const get = jest.fn().mockReturnValue(of({ data: artifact, headers: {} }));
+    const client = new MigrationAgentClient({ get, post } as never);
+
+    const error = await client.pushImport('https://admin.org.example.com', 'tok', input).catch((e) => e);
+
+    expect(error).toMatchObject({ kind: 'FAILED', agentCode: 'DOWNLOAD_FAILED' });
+  });
+
+  it('frees the connection of a refused download instead of holding it until the idle timeout', async () => {
+    const body = { destroy: jest.fn() };
+    const get = jest.fn().mockReturnValue(throwError(() => ({ response: { status: 403, data: body } })));
+    const client = new MigrationAgentClient({ get, post: jest.fn() } as never);
+
+    const error = await client.pushImport('https://admin.org.example.com', 'tok', input).catch((e) => e);
+
+    expect(error).toMatchObject({ agentCode: 'DOWNLOAD_FAILED' });
+    expect(body.destroy).toHaveBeenCalled();
+  });
+
+  it('marks a dry run, as the rehearsal does', async () => {
+    const { client, post } = build();
+
+    await client.pushImport('https://admin.org.example.com', 'root-token', { ...input, dryRun: true });
+
+    expect(post.mock.calls[0][2].headers['x-dry-run']).toBe('true');
+  });
+
+  it.each(['http://exports.example.com/artifact', 'file:///etc/passwd', 'not a url'])(
+    'refuses to fetch %s, and contacts no one',
+    async (downloadUrl) => {
+      const { client, get, post } = build();
+
+      const error = await client
+        .pushImport('https://admin.org.example.com', 'tok', { ...input, downloadUrl })
+        .catch((e) => e);
+
+      expect(error).toMatchObject({ kind: 'FAILED', agentCode: 'DOWNLOAD_FAILED' });
+      expect(get).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+    }
+  );
+
+  it('reports a failed download as DOWNLOAD_FAILED and never lets the signed URL into the error', async () => {
+    const failure = Object.assign(new Error(`connect ECONNREFUSED ${SIGNED}`), { config: { url: SIGNED } });
+    const { client, post } = build({ get: jest.fn().mockReturnValue(throwError(() => failure)) });
+
+    const error = await client.pushImport('https://admin.org.example.com', 'tok', input).catch((e) => e);
+
+    expect(error).toMatchObject({ kind: 'FAILED', agentCode: 'DOWNLOAD_FAILED' });
+    expect(`${error.message} ${JSON.stringify(error)} ${error.stack}`).not.toMatch(/SIGNED-SECRET|X-Amz/);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ response: { status: 409, data: { message: 'TARGET_NOT_PRISTINE' } } }, 'CONFLICT', 'TARGET_NOT_PRISTINE'],
+    [{ response: { status: 404, data: { message: 'Import session not found or expired.' } } }, 'NOT_FOUND', undefined],
+    [{ response: { status: 401 } }, 'REJECTED', undefined],
+    [{ response: { status: 400, data: { message: 'bad checksum' } } }, 'FAILED', 'bad checksum'],
+    [{}, 'UNREACHABLE', undefined]
+  ])('maps the agent refusing the upload (%j) to %s', async (failure, kind, agentCode) => {
+    const { client, artifact } = build({ post: jest.fn().mockReturnValue(throwError(() => failure)) });
+
+    const error = await client.pushImport('https://admin.org.example.com', 'tok', input).catch((e) => e);
+
+    expect(error).toMatchObject({ kind, agentCode });
+    expect(artifact.destroyed).toBe(true);
+  });
+
+  it('never lets the token into an error', async () => {
+    const { client } = build({ post: jest.fn().mockReturnValue(throwError(() => ({ response: { status: 403 } }))) });
+
+    const error = await client.pushImport('https://admin.org.example.com', 'SECRET-TOKEN', input).catch((e) => e);
+
+    expect(`${error.message} ${JSON.stringify(error)} ${error.stack}`).not.toMatch(/SECRET/);
   });
 });
 

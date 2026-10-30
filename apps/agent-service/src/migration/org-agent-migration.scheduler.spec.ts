@@ -89,7 +89,7 @@ describe('OrgAgentMigrationScheduler: starting moves', () => {
     await scheduler.tick();
 
     expect(migrationRepository.tryAcquireLease).toHaveBeenCalledWith('m1', expect.any(Number));
-    expect(preflightService.run).toHaveBeenCalledWith('m1', {}, null);
+    expect(preflightService.run).toHaveBeenCalledWith('m1', { keepDownloadMethod: true }, null);
     expect(executor.run).toHaveBeenCalledWith('m1', 'owner-1');
     expect(preflightService.run.mock.invocationCallOrder[0]).toBeLessThan(executor.run.mock.invocationCallOrder[0]);
   });

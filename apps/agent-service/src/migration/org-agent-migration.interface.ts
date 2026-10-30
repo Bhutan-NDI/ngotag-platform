@@ -48,6 +48,9 @@ export interface IScheduleOrgAgentMigration {
   scheduledFor?: string | Date;
 }
 
+// How the dedicated agent gets the sealed export: it pulls it from S3, or the platform pushes it.
+export type DownloadMethod = 'PULL' | 'PUSH';
+
 export enum PreflightCheckId {
   ORG_IS_SHARED = 'ORG_IS_SHARED',
   AGENT_REACHABLE = 'AGENT_REACHABLE',
@@ -59,6 +62,7 @@ export enum PreflightCheckId {
   DIDCOMM_REACHABLE = 'DIDCOMM_REACHABLE',
   NO_BULK_JOB = 'NO_BULK_JOB',
   WEBHOOK_DELIVERS = 'WEBHOOK_DELIVERS',
+  DOWNLOAD_METHOD = 'DOWNLOAD_METHOD',
   NO_OUT_OF_SCOPE_ARTEFACTS = 'NO_OUT_OF_SCOPE_ARTEFACTS',
   NO_WEBSOCKET_ENDPOINTS = 'NO_WEBSOCKET_ENDPOINTS',
   SHARED_REDIS = 'SHARED_REDIS',
@@ -85,7 +89,7 @@ export interface IPreflightReport {
 export interface IRehearsalRecord {
   step?: 'EXPORT' | 'IMPORT';
   code?: string;
-  downloadMethod?: 'PULL';
+  downloadMethod?: DownloadMethod;
   exportMs?: number;
   importMs?: number;
   exportCleanup?: 'DELETED' | 'FAILED';
@@ -127,7 +131,8 @@ export const PUBLIC_MIGRATION_FIELDS = [
   'rehearsalStartedAt',
   'rehearsal',
   'rotation',
-  'webhookConfirmedAt'
+  'webhookConfirmedAt',
+  'downloadMethod'
 ] as const;
 
 export type IOrgAgentMigration = Pick<org_agent_migrations, (typeof PUBLIC_MIGRATION_FIELDS)[number]>;

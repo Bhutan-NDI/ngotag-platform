@@ -142,7 +142,7 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
 
   private async failedCheck(migration: org_agent_migrations): Promise<string | undefined> {
     try {
-      const { report } = await this.preflightService.run(migration.id, {}, null);
+      const { report } = await this.preflightService.run(migration.id, { keepDownloadMethod: true }, null);
       return report.passed
         ? undefined
         : report.checks.find((check) => 'PASS' !== check.status && 'SKIPPED' !== check.status)?.id;
