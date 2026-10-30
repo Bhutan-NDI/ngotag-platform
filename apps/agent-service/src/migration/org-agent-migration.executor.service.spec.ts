@@ -489,6 +489,15 @@ describe('move day: the whole move', () => {
     expect(world.row.targetTokenEncrypted).toBeNull();
   });
 
+  it('forgets the webhook confirmation preflight left, so the window checks the webhook for itself', async () => {
+    const { executor, world } = buildWorld({ webhookConfirmedAt: new Date('2026-10-01T00:00:00Z') });
+
+    await executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.row.status).toBe(Status.STABILISING);
+    expect(world.row.webhookConfirmedAt).toBeNull();
+  });
+
   it('allows a window of zero hours', async () => {
     process.env.ORG_MIGRATION_STABILISATION_HOURS = '0';
     const { executor, world } = buildWorld();

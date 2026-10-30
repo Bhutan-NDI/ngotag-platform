@@ -49,7 +49,8 @@ describe('wallet move routes', () => {
     cancel: jest.fn(),
     disasterRestore: jest.fn(),
     get: jest.fn(),
-    list: jest.fn()
+    list: jest.fn(),
+    confirmWebhook: jest.fn()
   };
 
   beforeAll(async () => {
@@ -457,6 +458,50 @@ describe('wallet move routes', () => {
 
       expect(response.status).toBe(400);
       expect(service.list).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /wh/:orgId/probe', () => {
+    const PROBE_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+
+    it('needs no sign-in, and answers 200 for the live probe of that org', async () => {
+      currentUser = undefined;
+      service.confirmWebhook.mockResolvedValue({ confirmed: true });
+
+      const response = await request(app.getHttpServer())
+        .post(`/wh/${ORG_ID}/probe`)
+        .send({ type: 'WebhookProbe', probeId: PROBE_ID });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ confirmed: true });
+      expect(service.confirmWebhook).toHaveBeenCalledWith(ORG_ID, PROBE_ID);
+    });
+
+    it('answers 404 with nothing more for any other probe', async () => {
+      service.confirmWebhook.mockResolvedValue({ confirmed: false });
+
+      const response = await request(app.getHttpServer()).post(`/wh/${ORG_ID}/probe`).send({ probeId: PROBE_ID });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ confirmed: false });
+    });
+
+    it.each([
+      ['no probe id', {}],
+      ['a probe id that is not a UUID', { probeId: 'guess' }],
+      ['a probe id that is not a string', { probeId: 5 }]
+    ])('rejects %s with 400 and asks nothing', async (_name, body) => {
+      const response = await request(app.getHttpServer()).post(`/wh/${ORG_ID}/probe`).send(body);
+
+      expect(response.status).toBe(400);
+      expect(service.confirmWebhook).not.toHaveBeenCalled();
+    });
+
+    it('rejects an org id that is not a UUID with 400', async () => {
+      const response = await request(app.getHttpServer()).post('/wh/not-a-uuid/probe').send({ probeId: PROBE_ID });
+
+      expect(response.status).toBe(400);
+      expect(service.confirmWebhook).not.toHaveBeenCalled();
     });
   });
 });

@@ -522,6 +522,8 @@ export class OrgAgentMigrationExecutor {
   private async unfreeze(ctx: IMoveContext): Promise<void> {
     await this.migrationService.advance(ctx.migration.id, OrgAgentMigrationStatus.STABILISING, null, {
       stabilisationEndsAt: new Date(Date.now() + stabilisationMs()),
+      // Preflight's probe does not count: the window's own check must show the webhook working now.
+      webhookConfirmedAt: null,
       // The token now lives on the org's agent row; the migration no longer needs its own copy.
       targetTokenEncrypted: null
     });

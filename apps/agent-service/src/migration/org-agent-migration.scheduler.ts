@@ -71,6 +71,7 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
     try {
       await this.guarded('recovery', () => this.recoverStalledMoves());
       await this.guarded('start', () => this.startDueMoves());
+      await this.guarded('webhooks', () => this.confirmWebhooks());
       await this.guarded('switch-over', () => this.switchOverEndedWindows());
       await this.guarded('rotation', () => this.driveRotations());
     } finally {
@@ -188,6 +189,23 @@ export class OrgAgentMigrationScheduler implements OnModuleInit, OnModuleDestroy
 
   private startWindowMs(): number {
     return envMs('ORG_MIGRATION_START_WINDOW_MS', 30 * MINUTE_MS);
+  }
+
+  // While a window is open, keep checking until the new agent's webhooks are seen to arrive. Tries are spaced by their
+  // own timestamp, not the lease, so a restore is never refused as busy because of them.
+  private async confirmWebhooks(): Promise<void> {
+    const now = new Date();
+    const retryBefore = new Date(now.getTime() - envMs('ORG_MIGRATION_WEBHOOK_RETRY_MS', 10 * MINUTE_MS));
+    for (const migration of await this.migrationRepository.findAwaitingWebhook(now, retryBefore, BATCH)) {
+      try {
+        if (!(await this.migrationRepository.tryBeginWebhookCheck(migration.id, now, retryBefore))) {
+          continue;
+        }
+        await this.switchOverService.checkWebhook(migration.id);
+      } catch (error) {
+        this.logger.error(`[migration-scheduler] ${migration.id}: webhook check failed: ${this.describe(error)}`);
+      }
+    }
   }
 
   // The window has ended: switch the org over for good, if it is safe, and carry straight on into the rotation.

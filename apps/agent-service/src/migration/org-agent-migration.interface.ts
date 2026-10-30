@@ -58,6 +58,7 @@ export enum PreflightCheckId {
   TARGET_PRISTINE = 'TARGET_PRISTINE',
   DIDCOMM_REACHABLE = 'DIDCOMM_REACHABLE',
   NO_BULK_JOB = 'NO_BULK_JOB',
+  WEBHOOK_DELIVERS = 'WEBHOOK_DELIVERS',
   NO_OUT_OF_SCOPE_ARTEFACTS = 'NO_OUT_OF_SCOPE_ARTEFACTS',
   NO_WEBSOCKET_ENDPOINTS = 'NO_WEBSOCKET_ENDPOINTS',
   SHARED_REDIS = 'SHARED_REDIS',
@@ -125,7 +126,8 @@ export const PUBLIC_MIGRATION_FIELDS = [
   'rehearsalStatus',
   'rehearsalStartedAt',
   'rehearsal',
-  'rotation'
+  'rotation',
+  'webhookConfirmedAt'
 ] as const;
 
 export type IOrgAgentMigration = Pick<org_agent_migrations, (typeof PUBLIC_MIGRATION_FIELDS)[number]>;

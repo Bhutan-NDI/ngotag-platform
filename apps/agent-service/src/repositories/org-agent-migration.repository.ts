@@ -277,6 +277,71 @@ export class OrgAgentMigrationRepository {
     await this.prisma.org_agent_migrations.updateMany({ where: { id }, data: { leaseUntil: null } });
   }
 
+  /**
+   * Takes the migration's one webhook probe slot, unless a probe that has not expired is already out.
+   * @returns false when another probe is in flight
+   */
+  async tryBeginWebhookProbe(id: string, probeHash: string, expiresAt: Date, now: Date = new Date()): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, OR: [{ webhookProbeHash: null }, { webhookProbeExpiresAt: { lt: now } }] },
+      data: { webhookProbeHash: probeHash, webhookProbeExpiresAt: expiresAt }
+    });
+    return 1 === count;
+  }
+
+  /**
+   * The dedicated agent's webhook has reached the platform: consumes the probe, once, if it is the live probe of this
+   * org's unfinished migration.
+   * @returns false for anything else, which the caller must not distinguish
+   */
+  async confirmWebhookProbe(orgId: string, probeHash: string, now: Date = new Date()): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: {
+        orgId,
+        status: { notIn: [...TERMINAL_STATUSES] },
+        webhookProbeHash: probeHash,
+        webhookProbeExpiresAt: { gt: now }
+      },
+      data: { webhookProbeHash: null, webhookProbeExpiresAt: null, webhookConfirmedAt: now }
+    });
+    return 1 === count;
+  }
+
+  /** Frees the probe slot if the probe is still the one that took it. */
+  async endWebhookProbe(id: string, probeHash: string): Promise<void> {
+    await this.prisma.org_agent_migrations.updateMany({
+      where: { id, webhookProbeHash: probeHash },
+      data: { webhookProbeHash: null, webhookProbeExpiresAt: null }
+    });
+  }
+
+  /** Migrations in an open stabilisation window whose webhook has not been confirmed and is due another try. */
+  async findAwaitingWebhook(now: Date, retryBefore: Date, take: number): Promise<MigrationRow[]> {
+    return this.prisma.org_agent_migrations.findMany({
+      where: {
+        status: OrgAgentMigrationStatus.STABILISING,
+        webhookConfirmedAt: null,
+        stabilisationEndsAt: { gt: now },
+        OR: [{ webhookCheckedAt: null }, { webhookCheckedAt: { lt: retryBefore } }]
+      },
+      orderBy: { stabilisationEndsAt: 'asc' },
+      take
+    });
+  }
+
+  /**
+   * Takes this try at the window's webhook check, unless another replica took it within the retry spacing. Kept apart
+   * from the lease so that a failing check never holds up a disaster restore.
+   * @returns false when someone else has the try
+   */
+  async tryBeginWebhookCheck(id: string, now: Date, retryBefore: Date): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, OR: [{ webhookCheckedAt: null }, { webhookCheckedAt: { lt: retryBefore } }] },
+      data: { webhookCheckedAt: now }
+    });
+    return 1 === count;
+  }
+
   /** Keeps other ticks and replicas away from a migration for `leaseMs`, which is how a failing step backs off. */
   async holdLease(id: string, leaseMs: number): Promise<void> {
     await this.prisma.org_agent_migrations.updateMany({
@@ -466,6 +531,18 @@ export class OrgAgentMigrationRepository {
   }
 
   /**
+   * Records facts on a migration only while it is still in `status`, for a step that ran alongside others.
+   * @returns false when the migration has moved on
+   */
+  async updateIfStatus(id: string, status: OrgAgentMigrationStatus, patch: OrgAgentMigrationPatch): Promise<boolean> {
+    const { count } = await this.prisma.org_agent_migrations.updateMany({
+      where: { id, status },
+      data: { ...patch, lastChangedDateTime: new Date() }
+    });
+    return 1 === count;
+  }
+
+  /**
    * Records facts on a migration that is not changing state (a preflight run, a rehearsal outcome). With
    * `onlyWhileIn`, it writes only while the migration is still in one of those statuses, so a step that overlapped a
    * cancel or an abort cannot write onto the finished row.
@@ -572,6 +649,16 @@ export class OrgAgentMigrationRepository {
         ...(entry.detail === undefined ? {} : { detail: entry.detail })
       }
     });
+  }
+
+  /** The detail of the latest audit entry of an action for a migration, if there is one. */
+  async getEventDetail(migrationId: string, action: string): Promise<Record<string, unknown> | null> {
+    const event = await this.prisma.org_agent_migration_events.findFirst({
+      where: { migrationId, action },
+      orderBy: { createDateTime: 'desc' },
+      select: { detail: true }
+    });
+    return (event?.detail as Record<string, unknown> | null | undefined) ?? null;
   }
 
   /** How many times an audit action has been recorded for a migration. */

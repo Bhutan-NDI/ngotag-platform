@@ -79,4 +79,8 @@ export class OrgAgentMigrationService extends BaseService {
       pageSize: query.pageSize
     });
   }
+
+  confirmWebhook(orgId: string, probeId: string): Promise<{ confirmed: boolean }> {
+    return this.natsClient.sendNatsMessage(this.agentServiceProxy, 'confirm-org-agent-webhook', { orgId, probeId });
+  }
 }

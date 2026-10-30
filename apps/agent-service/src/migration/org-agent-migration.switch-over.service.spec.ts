@@ -42,6 +42,7 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       orgId: ORG_ID,
       status: Status.STABILISING as string,
       tenantId: 'tenant-1',
+      preflight: { passed: true, checks: [{ id: 'WEBHOOK_DELIVERS', status: 'PASS' }] },
       stabilisationEndsAt: new Date(Date.now() - MINUTE),
       purgedAt: null as Date | null,
       rotationJobId: null as string | null,
@@ -63,11 +64,22 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
       Object.assign(world.row, patch);
       return clone();
     }),
+    updateIfStatus: jest.fn(async (_id: string, status: string, patch: Record<string, unknown>) => {
+      if (world.row.status !== status) {
+        return false;
+      }
+      Object.assign(world.row, patch);
+      return true;
+    }),
     recordEvent: jest.fn(async (_id: string, entry: { action: string; detail?: unknown }) => {
       world.events.push({ action: entry.action, detail: entry.detail });
     }),
     countEvents: jest.fn(async (_id: string, action: string) => world.events.filter((e) => e.action === action).length),
-    holdLease: jest.fn<Promise<void>, [string, number]>(async () => undefined)
+    holdLease: jest.fn<Promise<void>, [string, number]>(async () => undefined),
+    getEventDetail: jest.fn(async (_id: string, action: string) => {
+      const found = [...world.events].reverse().find((e) => e.action === action);
+      return (found?.detail as Record<string, unknown> | undefined) ?? null;
+    })
   };
   const alertService = { notify: jest.fn(async () => ({ recipients: 2, sent: 2 })) };
   const migrationService = {
@@ -99,6 +111,7 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
     startRotation: jest.fn(async () => world.rotationStatus),
     getRotationStatus: jest.fn(async () => world.rotationStatus)
   } as Record<string, jest.Mock>;
+  const webhookService = { check: jest.fn(async () => ({ confirmed: true }) as { confirmed: boolean; code?: string }) };
   const logger = { error: jest.fn(), warn: jest.fn(), log: jest.fn() };
   const service = new OrgAgentMigrationSwitchOverService(
     migrationRepository as never,
@@ -106,9 +119,20 @@ const buildWorld = (rowOverrides: Record<string, unknown> = {}) => {
     access as never,
     agentClient as never,
     alertService as never,
+    webhookService as never,
     logger as never
   );
-  return { world, service, migrationRepository, migrationService, access, agentClient, alertService, logger };
+  return {
+    world,
+    service,
+    migrationRepository,
+    migrationService,
+    access,
+    agentClient,
+    alertService,
+    webhookService,
+    logger
+  };
 };
 
 const times = async (count: number, run: () => Promise<unknown>): Promise<void> => {
@@ -244,6 +268,16 @@ describe('what keeps the shared copy from being deleted', () => {
       'the dedicated agent is not initialised',
       'DEDICATED_AGENT_NOT_READY',
       (w) => w.agentClient.getAgentInfo.mockResolvedValue({ isInitialized: false, endpoints: [] })
+    ],
+    [
+      "the new agent's webhooks cannot reach the platform",
+      'WEBHOOK_UNREACHABLE',
+      (w) => w.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_UNREACHABLE' })
+    ],
+    [
+      'another webhook check is still running',
+      'WEBHOOK_CHECK_BUSY',
+      (w) => w.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_CHECK_BUSY' })
     ]
   ];
 
@@ -301,6 +335,256 @@ describe('what keeps the shared copy from being deleted', () => {
     world.migrationRepository.recordEvent.mockRejectedValue(new Error('db down'));
 
     await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('DEFERRED');
+  });
+});
+
+describe('the webhook gate', () => {
+  it('checks the new agent with a fresh probe before it lets the purge go ahead', async () => {
+    const world = buildWorld();
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+
+    expect(world.webhookService.check).toHaveBeenCalledWith(expect.objectContaining({ id: MIGRATION_ID }), DEDICATED);
+  });
+
+  it.each([
+    ['a preflight from before the webhook check existed', { checks: [{ id: 'RELEASE_MATCHES', status: 'PASS' }] }],
+    ['no preflight report at all', null]
+  ])('does not hold %s to the probe, since its own agent may not answer it', async (_name, preflight) => {
+    const world = buildWorld({ preflight });
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
+  });
+
+  it('does not probe while the window is still open', async () => {
+    const world = buildWorld({ stabilisationEndsAt: new Date(Date.now() + MINUTE) });
+
+    await world.service.beginSwitchOver(MIGRATION_ID);
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
+  });
+});
+
+describe('a webhook that stays broken', () => {
+  const HOUR = 60 * MINUTE;
+  const broken = { confirmed: false, code: 'WEBHOOK_UNREACHABLE' };
+  const endedAgo = (ms: number) => ({ stabilisationEndsAt: new Date(Date.now() - ms) });
+
+  afterEach(() => {
+    delete process.env.ORG_MIGRATION_WEBHOOK_DEFER_CAP_MS;
+  });
+
+  it('defers the switch-over inside the cap, and tells the people who would notice once, not on every retry', async () => {
+    const world = buildWorld(endedAgo(HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+
+    await times(3, async () => expect(await world.service.beginSwitchOver(MIGRATION_ID)).toBe('DEFERRED'));
+
+    expect(world.world.row.status).toBe(Status.STABILISING);
+    expect(world.alertService.notify).toHaveBeenCalledTimes(1);
+    expect(world.alertService.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MIGRATION_ID }),
+      'WEBHOOK_DEFERRED'
+    );
+    expect(world.agentClient.purgeProfile).not.toHaveBeenCalled();
+  });
+
+  it('goes ahead once 24 hours have passed since the window ended, keeps the webhook code, audits it and says so once', async () => {
+    const world = buildWorld(endedAgo(25 * HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+
+    expect(world.world.row).toMatchObject({ status: Status.ROTATING, error: 'WEBHOOK_UNREACHABLE' });
+    expect(actions(world.world)).toContain('SWITCHOVER_WEBHOOK_UNCONFIRMED');
+    expect(world.world.events.find((e) => 'SWITCHOVER_WEBHOOK_UNCONFIRMED' === e.action)?.detail).toEqual({
+      reason: 'WEBHOOK_UNREACHABLE'
+    });
+    expect(world.alertService.notify).toHaveBeenCalledTimes(1);
+    expect(world.alertService.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MIGRATION_ID }),
+      'WEBHOOK_GOING_AHEAD'
+    );
+  });
+
+  it('keeps the webhook code on the migration while the purge, the rotation and the completion clear everything else', async () => {
+    const world = buildWorld(endedAgo(25 * HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+    await world.service.beginSwitchOver(MIGRATION_ID);
+
+    await world.service.advanceRotation(MIGRATION_ID);
+    expect(world.world.row.error).toBe('WEBHOOK_UNREACHABLE');
+    world.world.rotationStatus = rotation('completed');
+    await world.service.advanceRotation(MIGRATION_ID);
+
+    expect(world.world.row).toMatchObject({ status: Status.COMPLETED, error: 'WEBHOOK_UNREACHABLE' });
+  });
+
+  it('does not use up the one-time email on a check that is only busy', async () => {
+    const world = buildWorld(endedAgo(HOUR));
+    world.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_CHECK_BUSY' });
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('DEFERRED');
+    expect(world.alertService.notify).not.toHaveBeenCalled();
+
+    world.webhookService.check.mockResolvedValue(broken);
+    await world.service.beginSwitchOver(MIGRATION_ID);
+    expect(world.alertService.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the webhook code even when a later issue replaces it on the row, and puts it back once that clears', async () => {
+    const world = buildWorld(endedAgo(25 * HOUR));
+    world.webhookService.check.mockResolvedValue(broken);
+    await world.service.beginSwitchOver(MIGRATION_ID);
+    world.agentClient.purgeProfile.mockRejectedValueOnce(new MigrationAgentError('UNREACHABLE'));
+
+    await world.service.advanceRotation(MIGRATION_ID);
+    expect(world.world.row.error).toBe('PURGE_FAILED');
+    await world.service.advanceRotation(MIGRATION_ID);
+    world.world.rotationStatus = rotation('completed');
+    await world.service.advanceRotation(MIGRATION_ID);
+
+    expect(world.world.row).toMatchObject({ status: Status.COMPLETED, error: 'WEBHOOK_UNREACHABLE' });
+  });
+
+  it('reads the cap from the environment', async () => {
+    process.env.ORG_MIGRATION_WEBHOOK_DEFER_CAP_MS = String(MINUTE);
+    const world = buildWorld(endedAgo(2 * MINUTE));
+    world.webhookService.check.mockResolvedValue(broken);
+
+    await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('STARTED');
+  });
+
+  it.each([
+    ['the relay is not forwarding', (w: ReturnType<typeof buildWorld>) => (w.world.relay = { mode: 'HOLD' })],
+    [
+      'the dedicated agent cannot be reached',
+      (w: ReturnType<typeof buildWorld>) =>
+        w.agentClient.getAgentInfo.mockRejectedValue(new MigrationAgentError('UNREACHABLE'))
+    ],
+    [
+      'the dedicated agent is not ready',
+      (w: ReturnType<typeof buildWorld>) =>
+        w.agentClient.getAgentInfo.mockResolvedValue({ isInitialized: false, endpoints: [] })
+    ],
+    [
+      'the probe could not run at all',
+      (w: ReturnType<typeof buildWorld>) =>
+        w.webhookService.check.mockResolvedValue({ confirmed: false, code: 'AGENT_UNAVAILABLE' })
+    ]
+  ])(
+    'keeps blocking past the cap when %s, since purging then would leave the org with no working wallet',
+    async (_name, arrange) => {
+      const world = buildWorld(endedAgo(30 * HOUR));
+      arrange(world);
+
+      await expect(world.service.beginSwitchOver(MIGRATION_ID)).resolves.toBe('DEFERRED');
+
+      expect(world.world.row.status).toBe(Status.STABILISING);
+      expect(world.alertService.notify).not.toHaveBeenCalledWith(expect.anything(), 'WEBHOOK_GOING_AHEAD');
+    }
+  );
+});
+
+describe('checking webhooks while the window is open', () => {
+  const open = () => buildWorld({ stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE) });
+
+  it('records that it arrived and audits it, leaving a clean row clean', async () => {
+    const world = open();
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.world.row.error).toBeNull();
+    expect(actions(world.world)).toEqual(['WEBHOOK_CONFIRMED']);
+    expect(world.webhookService.check).toHaveBeenCalledWith(expect.objectContaining({ id: MIGRATION_ID }), DEDICATED);
+  });
+
+  it('clears an earlier webhook problem once it arrives, but not an unrelated one', async () => {
+    const earlier = open();
+    earlier.world.row.error = 'WEBHOOK_UNREACHABLE';
+    await earlier.service.checkWebhook(MIGRATION_ID);
+    expect(earlier.world.row.error).toBeNull();
+
+    const unrelated = open();
+    unrelated.world.row.error = 'SHARED_AGENT_UNAVAILABLE';
+    await unrelated.service.checkWebhook(MIGRATION_ID);
+    expect(unrelated.world.row.error).toBe('SHARED_AGENT_UNAVAILABLE');
+  });
+
+  it('puts the reason on the migration, once, when it does not arrive', async () => {
+    const world = open();
+    world.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_NOT_CONFIGURED' });
+
+    await world.service.checkWebhook(MIGRATION_ID);
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.world.row.error).toBe('WEBHOOK_NOT_CONFIGURED');
+    expect(actions(world.world)).toEqual(['WEBHOOK_UNCONFIRMED']);
+  });
+
+  it.each([
+    ['arrives', { confirmed: true }, null],
+    ['does not arrive', { confirmed: false, code: 'WEBHOOK_UNREACHABLE' }, null]
+  ])(
+    'writes and audits nothing when a restore finished the migration while the check %s',
+    async (_name, outcome, error) => {
+      const world = open();
+      world.webhookService.check.mockImplementation(async () => {
+        world.world.row.status = Status.DISASTER_RESTORED;
+        return outcome;
+      });
+
+      await world.service.checkWebhook(MIGRATION_ID);
+
+      expect(world.world.row.error).toBe(error);
+      expect(actions(world.world)).toEqual([]);
+    }
+  );
+
+  it('says nothing about a check that could not run, since that is not a webhook problem', async () => {
+    const world = open();
+    world.webhookService.check.mockResolvedValue({ confirmed: false, code: 'AGENT_UNAVAILABLE' });
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.world.row.error).toBeNull();
+    expect(actions(world.world)).toEqual([]);
+  });
+
+  it.each([
+    ['it has already been confirmed', { webhookConfirmedAt: new Date() }],
+    ['the migration is not stabilising', { status: Status.ROTATING }]
+  ])('does nothing when %s', async (_name, overrides) => {
+    const world = buildWorld({ stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE), ...overrides });
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
+  });
+
+  it('does not probe a move whose preflight predates the webhook check, so it is not told it has a webhook problem', async () => {
+    const world = buildWorld({
+      stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE),
+      preflight: { checks: [{ id: 'RELEASE_MATCHES', status: 'PASS' }] }
+    });
+    world.webhookService.check.mockResolvedValue({ confirmed: false, code: 'WEBHOOK_PROBE_UNSUPPORTED' });
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
+    expect(world.world.row.error).toBeNull();
+    expect(actions(world.world)).toEqual([]);
+  });
+
+  it('does nothing without a dedicated agent to ask', async () => {
+    const world = open();
+    world.access.dedicatedOfOrg.mockResolvedValue(undefined);
+
+    await world.service.checkWebhook(MIGRATION_ID);
+
+    expect(world.webhookService.check).not.toHaveBeenCalled();
   });
 });
 

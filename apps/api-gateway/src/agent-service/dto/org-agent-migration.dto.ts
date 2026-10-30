@@ -130,3 +130,13 @@ export class ListOrgAgentMigrationsDto {
   @Max(100, { message: 'Page size must be 100 or less' })
   pageSize?: number;
 }
+
+// What the dedicated agent posts to <platform>/wh/<orgId>/probe. The org comes from the path.
+export class WebhookProbeDto {
+  @IsUUID('4', { message: 'probeId must be a UUID.' })
+  probeId: string;
+
+  @IsOptional()
+  @IsString()
+  type?: string;
+}

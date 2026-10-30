@@ -18,6 +18,7 @@ import {
   pass
 } from './migration-agent-checks';
 import { IPreflightReport, PreflightCheckId } from './org-agent-migration.interface';
+import { OrgAgentMigrationWebhookService } from './org-agent-migration.webhook.service';
 
 type Check = AgentCheck;
 
@@ -38,6 +39,7 @@ export class OrgAgentMigrationPreflightService {
     private readonly migrationRepository: OrgAgentMigrationRepository,
     private readonly agentClient: MigrationAgentClient,
     private readonly access: MigrationAgentAccess,
+    private readonly webhookService: OrgAgentMigrationWebhookService,
     private readonly logger: Logger
   ) {}
 
@@ -88,7 +90,8 @@ export class OrgAgentMigrationPreflightService {
       this.checkSharedRedis(shared, record),
       this.checkEndpointSchemes(migration, shared, record),
       this.checkBulkJobs(migration, record),
-      this.checkArtefacts(migration, record)
+      this.checkArtefacts(migration, record),
+      this.checkWebhook(migration, token, dedicatedInfo, record)
     ]);
 
     const report = this.buildReport(checks);
@@ -230,6 +233,19 @@ export class OrgAgentMigrationPreflightService {
           : fail(this.agentFailureCode(error))
       );
     }
+  }
+
+  private async checkWebhook(
+    migration: org_agent_migrations,
+    token: string | undefined,
+    info: IAgentInfo | undefined,
+    record: (id: PreflightCheckId, check: Check) => void
+  ): Promise<void> {
+    if (!token || !info) {
+      return;
+    }
+    const result = await this.webhookService.check(migration, { endpoint: migration.targetAdminEndpoint, token });
+    record(PreflightCheckId.WEBHOOK_DELIVERS, result.confirmed ? pass() : fail(result.code));
   }
 
   private async checkDidcommReachable(

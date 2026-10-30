@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiExcludeEndpoint,
   ApiForbiddenResponse,
   ApiOperation,
   ApiResponse,
@@ -40,7 +41,8 @@ import {
   DisasterRestoreDto,
   ListOrgAgentMigrationsDto,
   PreflightOrgAgentMigrationDto,
-  ScheduleOrgAgentMigrationDto
+  ScheduleOrgAgentMigrationDto,
+  WebhookProbeDto
 } from './dto/org-agent-migration.dto';
 import { OrgAgentMigrationService } from './org-agent-migration.service';
 
@@ -278,5 +280,20 @@ export class OrgAgentMigrationController {
       data
     };
     return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  /**
+   * The dedicated agent's webhook test event. Open like the other webhook routes, so it answers only for the live
+   * one-time probe of this organisation's unfinished move, and with nothing more for anything else.
+   */
+  @Post('/wh/:orgId/probe')
+  @ApiExcludeEndpoint()
+  async confirmWebhookProbe(
+    @Param('orgId', ...orgIdPipes) orgId: string,
+    @Body() body: WebhookProbeDto,
+    @Res() res: Response
+  ): Promise<Response> {
+    const { confirmed } = await this.migrationService.confirmWebhook(orgId, body.probeId);
+    return res.status(confirmed ? HttpStatus.OK : HttpStatus.NOT_FOUND).json({ confirmed });
   }
 }

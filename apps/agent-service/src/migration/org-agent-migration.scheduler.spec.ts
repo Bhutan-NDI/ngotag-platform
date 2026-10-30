@@ -21,9 +21,11 @@ const build = () => {
   const migrationRepository = {
     findDueForStart: jest.fn().mockResolvedValue([]),
     findStalled: jest.fn().mockResolvedValue([]),
+    findAwaitingWebhook: jest.fn().mockResolvedValue([]),
     findWindowEnded: jest.fn().mockResolvedValue([]),
     findRotating: jest.fn().mockResolvedValue([]),
     countInFlight: jest.fn().mockResolvedValue(0),
+    tryBeginWebhookCheck: jest.fn().mockResolvedValue(true),
     tryAcquireLease: jest.fn().mockResolvedValue(true),
     getConfirmingActor: jest.fn().mockResolvedValue('owner-1'),
     recordEvent: jest.fn().mockResolvedValue(undefined)
@@ -37,7 +39,8 @@ const build = () => {
   };
   const switchOverService = {
     beginSwitchOver: jest.fn().mockResolvedValue('STARTED'),
-    advanceRotation: jest.fn().mockResolvedValue(undefined)
+    advanceRotation: jest.fn().mockResolvedValue(undefined),
+    checkWebhook: jest.fn().mockResolvedValue(undefined)
   };
   const logger = { error: jest.fn(), warn: jest.fn(), log: jest.fn() };
   const scheduler = new OrgAgentMigrationScheduler(
@@ -513,6 +516,79 @@ describe('OrgAgentMigrationScheduler: ending the stabilisation window', () => {
     await scheduler.tick();
 
     expect(executor.abortInterrupted).toHaveBeenCalledWith('m1');
+  });
+});
+
+describe('OrgAgentMigrationScheduler: confirming webhooks during the window', () => {
+  const waiting = (id = 'm1') => ({
+    id,
+    status: Status.STABILISING,
+    stabilisationEndsAt: new Date(Date.now() + 60 * MINUTE)
+  });
+
+  it('checks the webhook of a migration whose window is open and whose webhook is not yet confirmed', async () => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting()]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.tryBeginWebhookCheck).toHaveBeenCalledWith('m1', expect.any(Date), expect.any(Date));
+    expect(switchOverService.checkWebhook).toHaveBeenCalledWith('m1');
+  });
+
+  it('never takes the lease for it, so a disaster restore is not refused as busy', async () => {
+    const { scheduler, migrationRepository } = build();
+    migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting()]);
+
+    await scheduler.tick();
+
+    expect(migrationRepository.tryAcquireLease).not.toHaveBeenCalled();
+  });
+
+  it('spaces its tries by a configurable time, ten minutes by default', async () => {
+    const { scheduler, migrationRepository } = build();
+    await scheduler.tick();
+    const [now, retryBefore] = migrationRepository.findAwaitingWebhook.mock.calls[0];
+    expect(now.getTime() - retryBefore.getTime()).toBe(10 * MINUTE);
+
+    process.env.ORG_MIGRATION_WEBHOOK_RETRY_MS = String(2 * MINUTE);
+    migrationRepository.findAwaitingWebhook.mockClear();
+    await scheduler.tick();
+    const [later, laterRetryBefore] = migrationRepository.findAwaitingWebhook.mock.calls[0];
+    expect(later.getTime() - laterRetryBefore.getTime()).toBe(2 * MINUTE);
+  });
+
+  it('leaves a migration alone when another replica took this try', async () => {
+    const { scheduler, switchOverService, migrationRepository } = build();
+    migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting()]);
+    migrationRepository.tryBeginWebhookCheck.mockResolvedValue(false);
+
+    await scheduler.tick();
+
+    expect(switchOverService.checkWebhook).not.toHaveBeenCalled();
+  });
+
+  it('carries on to the next migration, and the rest of the pass, when one check fails', async () => {
+    const { scheduler, switchOverService, migrationRepository, logger } = build();
+    migrationRepository.findAwaitingWebhook.mockResolvedValue([waiting('m1'), waiting('m2')]);
+    switchOverService.checkWebhook.mockRejectedValueOnce(new Error('db down'));
+    migrationRepository.findWindowEnded.mockResolvedValue([
+      { id: 'm3', status: Status.STABILISING, stabilisationEndsAt: new Date(Date.now() - MINUTE) }
+    ]);
+
+    await scheduler.tick();
+
+    expect(switchOverService.checkWebhook).toHaveBeenCalledWith('m2');
+    expect(switchOverService.beginSwitchOver).toHaveBeenCalledWith('m3');
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('survives the lookup failing', async () => {
+    const { scheduler, migrationRepository, switchOverService } = build();
+    migrationRepository.findAwaitingWebhook.mockRejectedValue(new Error('db down'));
+
+    await expect(scheduler.tick()).resolves.toBeUndefined();
+    expect(switchOverService.checkWebhook).not.toHaveBeenCalled();
   });
 });
 
