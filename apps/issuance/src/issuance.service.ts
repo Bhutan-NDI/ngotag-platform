@@ -97,6 +97,20 @@ import { extractAttributeNames, unflattenCsvRow } from '../libs/helpers/attribut
 import { redisStore } from 'cache-manager-ioredis-yet';
 import { EmailService } from '@credebl/common/email.service';
 
+const ORG_AGENT_MIGRATING = 'ORG_AGENT_MIGRATING';
+
+interface IAgentCallError {
+  statusCode?: unknown;
+  code?: unknown;
+  message?: unknown;
+  error?: unknown;
+}
+
+const agentCallError = (error: IAgentCallError): HttpException => {
+  const status = resolveHttpStatus(error?.statusCode, error?.code);
+  return new HttpException({ statusCode: status, message: error?.message, error: error?.error }, status);
+};
+
 @Injectable()
 export class IssuanceService {
   private readonly logger = new Logger('IssueCredentialService');
@@ -275,8 +289,8 @@ export class IssuanceService {
       // Start each recipient only when a local offer slot is available, so this
       // request does not exhaust its own short capacity-wait budget.
       const limit = pLimit(this.issuanceWork.offerConcurrency);
-      const issuancePromises = credentialData.map((credentials) => {
-        return limit(async () => {
+      const issuancePromises = credentialData.map((credentials) =>
+        limit(async () => {
           const { connectionId, attributes, credential, options } = credentials;
           let issueData;
 
@@ -323,10 +337,26 @@ export class IssuanceService {
           }
 
           return this._sendCredentialCreateOffer(issueData, url, orgId);
-        });
-      });
+        })
+      );
 
       const results = await Promise.allSettled(issuancePromises);
+
+      const migrationFrozen =
+        0 < results.length &&
+        results.every(
+          (result) => PromiseResult.REJECTED === result.status && ORG_AGENT_MIGRATING === result.reason?.response?.error
+        );
+      if (migrationFrozen) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.LOCKED,
+            message: ResponseMessages.agent.error.orgAgentMigrating,
+            error: ORG_AGENT_MIGRATING
+          },
+          HttpStatus.LOCKED
+        );
+      }
 
       const processedResults = results.map((result) => {
         if (PromiseResult.REJECTED === result.status) {
@@ -568,13 +598,7 @@ export class IssuanceService {
 
         .catch((error) => {
           this.logger.error(`catch: ${JSON.stringify(error)}`);
-          throw new HttpException(
-            {
-              status: error.statusCode,
-              error: error.message
-            },
-            error.error
-          );
+          throw agentCallError(error);
         });
       return createOffer;
     } catch (error) {
@@ -600,13 +624,7 @@ export class IssuanceService {
         .toPromise()
         .catch((error) => {
           this.logger.error(`catch: ${JSON.stringify(error)}`);
-          throw new HttpException(
-            {
-              status: error.statusCode,
-              error: error.message
-            },
-            error.error
-          );
+          throw agentCallError(error);
         });
     } catch (error) {
       this.logger.error(`[natsCall] - error in nats call : ${JSON.stringify(error)}`);
@@ -1430,11 +1448,10 @@ export class IssuanceService {
         let filteredData = parsedData;
         if (previewRequest.searchByText) {
           const searchTerm = previewRequest.searchByText.toLowerCase();
-          filteredData = parsedData.filter((item) => {
-            return (
+          filteredData = parsedData.filter(
+            (item) =>
               item.email_identifier.toLowerCase().includes(searchTerm) || item.name.toLowerCase().includes(searchTerm)
-            );
-          });
+          );
         }
 
         // Apply pagination to the filtered data
@@ -1788,13 +1805,8 @@ export class IssuanceService {
 
   async processIssuanceData(jobDetails: IQueuePayload): Promise<boolean> {
     try {
-      const succeeded = await this.issuanceWork.bulkRow(
-        jobDetails.orgId,
-        jobDetails.fileUploadId,
-        jobDetails.id,
-        () => {
-          return this.processBulkRow(jobDetails);
-        }
+      const succeeded = await this.issuanceWork.bulkRow(jobDetails.orgId, jobDetails.fileUploadId, jobDetails.id, () =>
+        this.processBulkRow(jobDetails)
       );
       await this.completeBulkRow(jobDetails, succeeded);
       return succeeded;
@@ -2094,8 +2106,8 @@ export class IssuanceService {
         const batchStartTime = Date.now();
 
         // Create an array of limited promises for the current batch
-        const saveFileDetailsPromises = batch.map((element) => {
-          return limit(() => {
+        const saveFileDetailsPromises = batch.map((element) =>
+          limit(() => {
             const credentialPayload = {
               credential_data: element,
               schemaId: parsedFileDetails.schemaLedgerId,
@@ -2107,8 +2119,8 @@ export class IssuanceService {
               credentialType: parsedFileDetails.credentialType
             };
             return this.issuanceRepository.saveFileDetails(credentialPayload, userId);
-          });
-        });
+          })
+        );
 
         this.logger.log(`Processing batch ${index + 1} with ${batch.length} elements...`);
 

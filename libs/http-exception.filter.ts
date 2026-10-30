@@ -17,11 +17,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     let httpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = '';
+    let body: object = {};
     switch (exception.constructor) {
-      case HttpException:
+      case HttpException: {
         httpStatus = resolveHttpStatus(exception.getStatus());
-        message = resolveMessage(exception.getResponse(), exception.message) ?? 'Internal server error';
+        const response = exception.getResponse();
+        message = resolveMessage(response, exception.message) ?? 'Internal server error';
+        body = response && 'object' === typeof response && !Array.isArray(response) ? response : {};
         break;
+      }
       case RpcException: {
         // Already classified upstream; forward unchanged, but record the hop so it isn't silent.
         const rpcError = exception.getError() as { code?: unknown; statusCode?: unknown; status?: unknown };
@@ -80,7 +84,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
           'Internal server error';
     }
     this.log(exception, httpStatus, this.describe(exception, message));
-    return throwError(() => new RpcException({ message, code: httpStatus }));
+    return throwError(() => new RpcException({ ...body, message, code: httpStatus, statusCode: httpStatus }));
   }
 
   /** Logged once per exception, at a level derived from httpStatus, so a 4xx isn't recorded as an error. */
