@@ -11,12 +11,15 @@ import {
 import { ProofTemplateQueryDto } from './dto/proof-template-query.dto';
 import { getNextPrevPages, getSkipTake, parseStoredPayload } from '../common/functions';
 import { PrismaError } from '../common/constants';
-import { assertRole } from '../common/keycloak-roles.util';
+import { MobileVerifierAccess } from '../common/mobile-verifier-access.service';
 import { OrgRoles } from 'libs/org-roles/enums';
 
 @Injectable()
 export class ProofTemplateService {
-  constructor(private readonly proofTemplateRepo: ProofTemplateRepo) {}
+  constructor(
+    private readonly proofTemplateRepo: ProofTemplateRepo,
+    private readonly mobileVerifierAccess: MobileVerifierAccess
+  ) {}
 
   // A template may only be mapped to roles of its own organization; otherwise it would show up in
   // another organization's role view.
@@ -35,7 +38,7 @@ export class ProofTemplateService {
     loginOrgId: string,
     authorization: string
   ): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_PROOF_TEMPLATE);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_PROOF_TEMPLATE);
     await this.assertRolesBelongToOrg(proofTemplateDto.verifierRoleIds, loginOrgId);
 
     try {
@@ -84,7 +87,7 @@ export class ProofTemplateService {
     loginOrgId: string,
     authorization: string
   ): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_PROOF_TEMPLATE);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_PROOF_TEMPLATE);
     await this.assertRolesBelongToOrg(proofTemplateDto.verifierRoleIds, loginOrgId);
 
     const { payload, verifierRoleIds, ...proofDetails } = proofTemplateDto;
