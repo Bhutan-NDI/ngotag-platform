@@ -41,6 +41,14 @@ export class OrgRolesGuard implements CanActivate {
         throw new BadRequestException(ResponseMessages.organisation.error.invalidOrgId);
       }
 
+      // A platform admin has every role in every organisation, member or not. The role is held
+      // in user_org_roles, never in the token's resource_access, so it is checked here first.
+      if (this.isPlatformAdmin(user)) {
+        user.selectedOrg = this.findOrgMembership(user, orgId) ?? { orgId, orgRoles: [] };
+        user.selectedOrg.orgRoles = [OrgRoles.PLATFORM_ADMIN];
+        return true;
+      }
+
       if (user.hasOwnProperty('resource_access') && user.resource_access[orgId]) {
         const orgRoles: string[] = user.resource_access[orgId].roles;
         const roleAccess = requiredRoles.some((role) => orgRoles.includes(role));
@@ -54,12 +62,7 @@ export class OrgRolesGuard implements CanActivate {
         return roleAccess;
       }
 
-      const specificOrg = user.userOrgRoles.find((orgDetails) => {
-        if (!orgDetails.orgId) {
-          return false;
-        }
-        return orgDetails.orgId.toString().trim() === orgId.toString().trim();
-      });
+      const specificOrg = this.findOrgMembership(user, orgId);
 
       if (!specificOrg) {
         throw new ForbiddenException(ResponseMessages.organisation.error.orgNotMatch, {
@@ -76,18 +79,7 @@ export class OrgRolesGuard implements CanActivate {
         }
       });
     } else if (requiredRolesNames.includes(OrgRoles.PLATFORM_ADMIN)) {
-      // eslint-disable-next-line array-callback-return
-      const isPlatformAdmin = user.userOrgRoles.find((orgDetails) => {
-        if (orgDetails.orgRole.name === OrgRoles.PLATFORM_ADMIN) {
-          return true;
-        }
-      });
-
-      if (isPlatformAdmin) {
-        return true;
-      }
-
-      return false;
+      return this.isPlatformAdmin(user);
     } else {
       throw new BadRequestException('Please provide valid orgId');
     }
@@ -102,5 +94,18 @@ export class OrgRolesGuard implements CanActivate {
     }
 
     return roleAccess;
+  }
+
+  private isPlatformAdmin(user): boolean {
+    return Boolean(user?.userOrgRoles?.some((orgDetails) => OrgRoles.PLATFORM_ADMIN === orgDetails?.orgRole?.name));
+  }
+
+  private findOrgMembership(user, orgId: string): { orgId: string; orgRoles?: string[] } | undefined {
+    return user.userOrgRoles.find((orgDetails) => {
+      if (!orgDetails.orgId) {
+        return false;
+      }
+      return orgDetails.orgId.toString().trim() === orgId.toString().trim();
+    });
   }
 }
