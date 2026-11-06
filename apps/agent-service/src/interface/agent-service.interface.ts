@@ -40,6 +40,19 @@ export interface IAgentConfigure {
   network?: string;
 }
 
+export interface ISetDedicatedAgentToken {
+  targetOrgId: string;
+  agentToken: string;
+  agentEndPoint: string;
+  userId: string;
+}
+
+export interface IDedicatedAgentTokenResult {
+  orgId: string;
+  agentEndPoint: string;
+  role: string;
+}
+
 export interface IOutOfBandCredentialOffer {
   emailId: string;
   attributes: IAttributes[];
@@ -51,6 +64,8 @@ export interface IOutOfBandCredentialOffer {
   parentThreadId?: string;
   willConfirm?: boolean;
   label?: string;
+  invitationDid?: string;
+  additionalInvitationDids?: string[];
 }
 
 export interface ITenantDto {
@@ -322,6 +337,9 @@ export interface ISendProofRequestPayload {
   parentThreadId?: string;
   willConfirm?: boolean;
   protocolVersion?: string;
+  invitationDid?: string;
+  additionalInvitationDids?: string[];
+  expiresInSeconds?: number;
 }
 
 export interface IAgentStatus {
@@ -580,6 +598,8 @@ export interface ICreateConnectionInvitation {
   routing?: object;
   appendedAttachments?: object[];
   orgId?: string;
+  invitationDid?: string;
+  additionalInvitationDids?: string[];
 }
 
 export interface AgentHealthData {

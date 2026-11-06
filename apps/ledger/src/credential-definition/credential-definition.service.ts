@@ -14,6 +14,7 @@ import {
 } from './interfaces/create-credential-definition.interface';
 import { credential_definition } from '@prisma/client';
 import { ResponseMessages } from '@credebl/common/response-messages';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import {
   CreateCredDefAgentRedirection,
   CredDefSchema,
@@ -419,12 +420,13 @@ export class CredentialDefinitionService extends BaseService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }

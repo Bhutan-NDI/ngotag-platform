@@ -13,7 +13,6 @@ import { IssueCredentials, IssuedCredentialStatus } from '../enum/issuance.enum'
 // eslint-disable-next-line camelcase
 import {
   Prisma,
-  agent_invitations,
   credentials,
   file_data,
   file_upload,
@@ -29,6 +28,7 @@ import { IDeletedIssuanceRecords } from '@credebl/common/interfaces/issuance.int
 import { IIssuedCredentialSearchParams } from 'apps/api-gateway/src/issuance/interfaces';
 import { IUserRequest } from '@credebl/user-request/user-request.interface';
 import { PrismaService } from '@credebl/prisma-service';
+import { findReuseInvitationDids, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import { ResponseMessages } from '@credebl/common/response-messages';
 
 @Injectable()
@@ -93,29 +93,8 @@ export class IssuanceRepository {
     }
   }
 
-  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations> {
-    try {
-      return this.prisma.agent_invitations.findFirst({
-        where: {
-          AND: [
-            {
-              orgId
-            },
-            {
-              invitationDid: {
-                not: null
-              }
-            }
-          ]
-        },
-        orderBy: {
-          createDateTime: 'asc'
-        }
-      });
-    } catch (error) {
-      this.logger.error(`Error in getInvitationDid in issuance repository: ${error.message}`);
-      throw error;
-    }
+  getReuseInvitationDids(orgId: string): Promise<ReuseInvitationDids> {
+    return findReuseInvitationDids(this.prisma, orgId);
   }
 
   async getAllIssuedCredentials(
@@ -387,6 +366,14 @@ export class IssuanceRepository {
     return schemaDetails;
   }
 
+  async getLedgerIdByNamespace(indyNamespace: string): Promise<string | null> {
+    const ledger = await this.prisma.ledgers.findFirst({
+      where: { indyNamespace },
+      select: { id: true }
+    });
+    return ledger?.id ?? null;
+  }
+
   async saveFileUploadDetails(fileUploadPayload: FileUpload, userId: string): Promise<file_upload> {
     try {
       const { name, status, upload_type, orgId, credentialType, templateId } = fileUploadPayload;
@@ -423,6 +410,18 @@ export class IssuanceRepository {
       this.logger.error(`[updateFileUploadDetails] - error: ${JSON.stringify(error)}`);
       throw error;
     }
+  }
+
+  async interruptFileUpload(fileId: string, orgId: string): Promise<boolean> {
+    const result = await this.prisma.file_upload.updateMany({
+      where: {
+        id: fileId,
+        orgId,
+        status: { in: [FileUploadStatus.started, FileUploadStatus.retry] }
+      },
+      data: { status: FileUploadStatus.interrupted }
+    });
+    return 0 < result.count;
   }
 
   async countErrorsForFile(fileUploadId: string): Promise<number> {
@@ -549,6 +548,13 @@ export class IssuanceRepository {
       this.logger.error(`[getFileDetailsByFileId] - error: ${JSON.stringify(error)}`);
       throw error;
     }
+  }
+
+  async getFileDataForProcessing(id: string, fileUploadId: string, orgId: string): Promise<{ status: boolean } | null> {
+    return this.prisma.file_data.findFirst({
+      where: { id, fileUploadId, fileUpload: { orgId } },
+      select: { status: true }
+    });
   }
 
   async updateFileUploadData(fileUploadData: FileUploadData): Promise<file_data> {

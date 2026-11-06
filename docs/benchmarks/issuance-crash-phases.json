@@ -1,0 +1,23 @@
+[
+  {
+    "phase": "crash",
+    "stalledJobFailed": true,
+    "automaticReplays": 0,
+    "orphanPermitRetained": true,
+    "unsafeRetryBlocked": true
+  },
+  {
+    "phase": "crash-prepare",
+    "stalledJobFailed": true,
+    "automaticReplays": 0,
+    "orphanPermitRetained": false,
+    "unsafeRetryBlocked": true
+  },
+  {
+    "phase": "crash-persist",
+    "stalledJobFailed": true,
+    "automaticReplays": 0,
+    "orphanPermitRetained": false,
+    "unsafeRetryBlocked": true
+  }
+]

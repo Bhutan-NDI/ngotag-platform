@@ -91,10 +91,58 @@ export enum schemaRequestType {
   INDY = 'indy'
 }
 
+// Mirrors agent-controller's AgentRole. The role a minted token carries decides which routes the
+// agent will accept it on, so the platform has to assert it before storing one.
+export enum AgentRole {
+  RestRootAgentWithTenants = 'RestRootAgentWithTenants',
+  RestRootAgent = 'RestRootAgent',
+  RestTenantAgent = 'RestTenantAgent'
+}
+
 export enum OrgAgentType {
   DEDICATED = 'DEDICATED',
   SHARED = 'SHARED'
 }
+
+export enum OrgAgentMigrationStatus {
+  CREATED = 'CREATED',
+  REHEARSED = 'REHEARSED',
+  SCHEDULED = 'SCHEDULED',
+  FROZEN = 'FROZEN',
+  EXPORTING = 'EXPORTING',
+  IMPORTING = 'IMPORTING',
+  VERIFYING = 'VERIFYING',
+  CUTOVER = 'CUTOVER',
+  STABILISING = 'STABILISING',
+  ROTATING = 'ROTATING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+  CANCELLED = 'CANCELLED',
+  DISASTER_RESTORED = 'DISASTER_RESTORED'
+}
+
+export const ORG_AGENT_MIGRATION_TERMINAL_STATUSES: readonly OrgAgentMigrationStatus[] = [
+  OrgAgentMigrationStatus.COMPLETED,
+  OrgAgentMigrationStatus.FAILED,
+  OrgAgentMigrationStatus.CANCELLED,
+  OrgAgentMigrationStatus.DISASTER_RESTORED
+];
+
+export const ORG_AGENT_MIGRATION_FROZEN_STATUSES: readonly OrgAgentMigrationStatus[] = [
+  OrgAgentMigrationStatus.FROZEN,
+  OrgAgentMigrationStatus.EXPORTING,
+  OrgAgentMigrationStatus.IMPORTING,
+  OrgAgentMigrationStatus.VERIFYING,
+  OrgAgentMigrationStatus.CUTOVER
+];
+
+// Once the org row points at the dedicated agent: new reuse requests use the invitation created there.
+export const ORG_AGENT_MIGRATION_POST_CUTOVER_STATUSES: readonly OrgAgentMigrationStatus[] = [
+  OrgAgentMigrationStatus.CUTOVER,
+  OrgAgentMigrationStatus.STABILISING,
+  OrgAgentMigrationStatus.ROTATING,
+  OrgAgentMigrationStatus.COMPLETED
+];
 
 export enum AgentSpinUpStatus {
   PENDING = 0,

@@ -1,4 +1,4 @@
-import { AgentSpinUpStatus, AgentType, PrismaTables } from '@credebl/enum/enum';
+import { AgentSpinUpStatus, AgentType, ORG_AGENT_MIGRATION_FROZEN_STATUSES, PrismaTables } from '@credebl/enum/enum';
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import {
   ICreateOrgAgent,
@@ -25,6 +25,7 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '@credebl/prisma-service';
+import { ResponseMessages } from '@credebl/common/response-messages';
 
 @Injectable()
 export class AgentServiceRepository {
@@ -630,7 +631,6 @@ export class AgentServiceRepository {
     }
   }
 
-
   async deleteOrgAgentByOrg(orgId: string): Promise<{
     orgDid: Prisma.BatchPayload;
     agentInvitation: Prisma.BatchPayload;
@@ -718,6 +718,95 @@ export class AgentServiceRepository {
       return updatedAgent;
     } catch (error) {
       this.logger.error(`[updateTenantToken] - Update tenant records details: ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Compare-and-set write for setDedicatedAgentToken: only persists the verified token if the row
+   * still matches the endpoint/type it was verified against, so a concurrent storeOrgAgentDetails
+   * cannot land a token verified against the old agent on the new one.
+   * @throws ConflictException if no row matched (the row changed, or orgId does not exist)
+   */
+  async updateVerifiedTenantToken(
+    orgId: string,
+    expectedAgentEndPoint: string,
+    expectedOrgAgentTypeId: string,
+    token: string,
+    lastChangedBy: string
+  ): Promise<void> {
+    try {
+      const { count } = await this.prisma.org_agents.updateMany({
+        where: {
+          orgId,
+          agentEndPoint: expectedAgentEndPoint,
+          orgAgentTypeId: expectedOrgAgentTypeId
+        },
+        data: {
+          apiKey: token,
+          lastChangedBy,
+          lastChangedDateTime: new Date()
+        }
+      });
+
+      if (1 !== count) {
+        throw new ConflictException(ResponseMessages.agent.error.agentRowChanged);
+      }
+    } catch (error) {
+      // Never JSON.stringify the raw error: token is not on this path, but keep the convention.
+      this.logger.error(`[updateVerifiedTenantToken] - ${error instanceof Error ? error.message : 'update failed'}`);
+      throw error;
+    }
+  }
+
+  async isOrgAgentMigrationFrozen(orgId: string): Promise<boolean> {
+    const frozen = await this.prisma.org_agent_migrations.findFirst({
+      where: { orgId, status: { in: [...ORG_AGENT_MIGRATION_FROZEN_STATUSES] } },
+      select: { id: true }
+    });
+    return Boolean(frozen);
+  }
+
+  /**
+   * Compare-and-set cutover of the same org_agents row from SHARED to DEDICATED (ADR-WM-009). Matches on
+   * the shared row it was prepared against, so a concurrent change can never be overwritten.
+   * @throws ConflictException if no row matched
+   */
+  async migrateOrgAgentToDedicated(params: {
+    orgId: string;
+    expectedAgentEndPoint: string;
+    expectedTenantId: string;
+    sharedOrgAgentTypeId: string;
+    dedicatedOrgAgentTypeId: string;
+    agentEndPoint: string;
+    encryptedToken: string;
+    walletName: string;
+    lastChangedBy: string;
+  }): Promise<void> {
+    try {
+      const { count } = await this.prisma.org_agents.updateMany({
+        where: {
+          orgId: params.orgId,
+          orgAgentTypeId: params.sharedOrgAgentTypeId,
+          agentEndPoint: params.expectedAgentEndPoint,
+          tenantId: params.expectedTenantId
+        },
+        data: {
+          orgAgentTypeId: params.dedicatedOrgAgentTypeId,
+          agentEndPoint: params.agentEndPoint,
+          apiKey: params.encryptedToken,
+          tenantId: null,
+          walletName: params.walletName,
+          lastChangedBy: params.lastChangedBy,
+          lastChangedDateTime: new Date()
+        }
+      });
+
+      if (1 !== count) {
+        throw new ConflictException(ResponseMessages.agent.error.agentRowChangedDuringMigration);
+      }
+    } catch (error) {
+      this.logger.error(`[migrateOrgAgentToDedicated] - ${error instanceof Error ? error.message : 'update failed'}`);
       throw error;
     }
   }

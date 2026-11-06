@@ -32,11 +32,6 @@ export interface IRequestProof {
   willConfirm?: boolean;
 }
 
-export interface IGetAllProofPresentations {
-  url: string;
-  apiKey: string;
-}
-
 export interface IGetProofPresentationById {
   url: string;
   apiKey?: string;
@@ -144,6 +139,7 @@ export interface ISendPresentationExchangeProofRequestPayload {
   proofFormats: IPresentationExchangeProofFormats;
   autoAcceptProof: string;
   label?: string;
+  expiresInSeconds?: number;
 }
 export interface IPresentationExchangeProofRequestPayload {
   url: string;
@@ -173,6 +169,9 @@ export interface ISendProofRequestPayload {
   reuseConnection?: boolean;
   recipientKey?: string;
   invitationDid?: string;
+  additionalInvitationDids?: string[];
+  redirectUri?: string;
+  expiresInSeconds?: number | null;
 }
 
 export interface IWSendProofRequestPayload {
@@ -249,6 +248,7 @@ export interface IInvitation {
   proofRecordThId?: string;
   invitationUrl?: string;
   deepLinkURL?: string;
+  returnUrl?: string;
 }
 
 export interface IProofRequestData {
@@ -265,6 +265,7 @@ export interface IProofRequestData {
   presentationDefinition?: IProofRequestPresentationDefinition;
   comment: string;
   autoAcceptProof: AutoAccept;
+  expiresInSeconds?: number | null;
 }
 export interface IProofFormat {
   indy: Indy;
@@ -308,4 +309,14 @@ export enum ProofRequestState {
   done = 'Verified',
   abandoned = 'Declined',
   presentationReceived = 'Presentation Received'
+}
+
+export interface IProofPresentationByThread {
+  threadId: string;
+  presentationId: string;
+  connectionId?: string;
+  state: string;
+  isVerified: boolean;
+  // Raw proof format data from the agent, the same shape as the webhook's `proofData`.
+  proofData: object;
 }

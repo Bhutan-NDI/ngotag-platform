@@ -45,6 +45,7 @@ import { CreateWalletDto } from './dto/create-wallet.dto';
 import { CreateNewDidDto } from './dto/create-new-did.dto';
 import { AgentSpinupValidator, TrimStringParamPipe } from '@credebl/common/cast.helper';
 import { AgentConfigureDto } from './dto/agent-configure.dto';
+import { SetDedicatedAgentTokenDto } from './dto/dedicated-agent-token.dto';
 import { UnauthorizedErrorDto } from '../dtos/unauthorized-error.dto';
 
 const seedLength = 32;
@@ -466,6 +467,40 @@ export class AgentController {
     };
 
     return res.status(HttpStatus.CREATED).json(finalResponse);
+  }
+
+  /**
+   * Store a token minted outside the platform for an organization with a dedicated agent.
+   * @param setDedicatedAgentTokenDto The target organization, the minted token, and the expected endpoint
+   * @param res The response object
+   * @returns Success message
+   */
+  @Post('/agent-service/dedicated-agent-token')
+  @ApiOperation({
+    summary: 'Store an externally-minted agent token',
+    description:
+      'Stores a token minted on a dedicated agent via POST /agent/token using that agent own API_KEY. Dedicated agents are operated externally and the platform holds no key for them, so it cannot mint on their behalf. The token is verified against the agent before it is stored.'
+  })
+  @UseGuards(AuthGuard('jwt'), OrgRolesGuard)
+  @Roles(OrgRoles.PLATFORM_ADMIN)
+  @ApiResponse({ status: HttpStatus.OK, description: 'Success', type: ApiResponseDto })
+  async setDedicatedAgentToken(
+    @Body() setDedicatedAgentTokenDto: SetDedicatedAgentTokenDto,
+    @User() user: user,
+    @Res() res: Response
+  ): Promise<Response> {
+    // Deliberately not logging the DTO: it carries the token.
+    this.logger.log(`**** Storing agent token for orgId: ${setDedicatedAgentTokenDto.targetOrgId}`);
+
+    const agentDetails = await this.agentService.setDedicatedAgentToken(setDedicatedAgentTokenDto, user);
+
+    const finalResponse: IResponseType = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.agent.success.dedicatedAgentToken,
+      data: agentDetails
+    };
+
+    return res.status(HttpStatus.OK).json(finalResponse);
   }
 
   /**

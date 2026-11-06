@@ -24,6 +24,7 @@ import {
   W3CMigrateSchema
 } from './interfaces/schema-payload.interface';
 import { ResponseMessages } from '@credebl/common/response-messages';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import {
   ICreateSchema,
   ICreateW3CSchema,
@@ -836,12 +837,13 @@ export class SchemaService extends BaseService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }

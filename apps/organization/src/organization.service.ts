@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
 import { CommonService } from '@credebl/common';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import { OrganizationRepository } from '../repositories/organization.repository';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { OrgRolesService } from '@credebl/org-roles';
@@ -26,7 +27,7 @@ import { EmailDto } from '@credebl/common/dtos/email.dto';
 import { CreateOrganizationDto } from '../dtos/create-organization.dto';
 import { BulkSendInvitationDto } from '../dtos/send-invitation.dto';
 import { UpdateInvitationDto } from '../dtos/update-invitation.dt';
-import { DidMethod, Invitation, Ledgers, PrismaTables, SessionType, TokenType, transition } from '@credebl/enum/enum';
+import { Invitation, Ledgers, PrismaTables, SessionType, TokenType, transition } from '@credebl/enum/enum';
 import {
   IGetOrgById,
   IGetOrganization,
@@ -58,7 +59,7 @@ import { ClientCredentialTokenPayloadDto } from '@credebl/client-registration/dt
 import { IAccessTokenData } from '@credebl/common/interfaces/interface';
 import { IClientRoles } from '@credebl/client-registration/interfaces/client.interface';
 import { toNumber } from '@credebl/common/cast.helper';
-import { networkNamespace } from '@credebl/common/common.utils';
+import { didLedgerNamespace } from '@credebl/common/common.utils';
 import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { DeleteOrgInvitationsEmail } from '../templates/delete-organization-invitations.template';
 import { IOrgRoles } from 'libs/org-roles/interfaces/org-roles.interface';
@@ -255,28 +256,7 @@ export class OrganizationService {
       const dids = await this.organizationRepository.getDids(orgId);
       const noPrimaryDid = dids.every((orgDids) => false === orgDids.isPrimaryDid);
 
-      const didParts = did.split(':');
-      let nameSpace: string | null = null;
-
-      // This condition will handle the multi-ledger support
-      if (DidMethod.INDY === didParts[1]) {
-        nameSpace = `${didParts[2]}:${didParts[3]}`;
-      } else if (DidMethod.POLYGON === didParts[1]) {
-        nameSpace = `${didParts[1]}:${didParts[2]}`;
-      } else if (DidMethod.ETHEREUM === didParts[1]) {
-        // Same helper schema.service.ts's updateW3CSchemas already uses to resolve a did:ethr
-        // publisherDid to its ledger row -- without this branch, every did:ethr DID fell through
-        // to the `else` below, forcing org_agents.ledgerId to the Not_Applicable placeholder
-        // regardless of the DID's real network. That silently diverges from the schema's own
-        // ledgerId (resolved the same way, via networkNamespace), which the pre-existing
-        // ledger-mismatch guard in issuance.service.ts then rejects on the next issuance attempt.
-        // Confirmed in production: switching an org's primary DID between did:ethr and did:polygon
-        // and back (e.g. following the v2.2.0 runbook's DAT-1 multi-primary-DID remediation step)
-        // deterministically corrupts org_agents.ledgerId every time the ethr DID is set primary.
-        nameSpace = networkNamespace(did);
-      } else {
-        nameSpace = null;
-      }
+      const nameSpace = didLedgerNamespace(did);
 
       // Resolved (and, for a namespaced DID, validated via getNetworkByNameSpace's own
       // findFirstOrThrow) BEFORE the previous primary DID is demoted below -- getNetworkByNameSpace
@@ -422,7 +402,18 @@ export class OrganizationService {
     );
     const orgDetails = await this.clientRegistrationService.createClient(orgName, orgId, token);
 
-    const orgRolesList = [OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER, OrgRoles.VERIFIER, OrgRoles.MEMBER];
+    // ALLOW_PROOF_TEMPLATE/ALLOW_VERIFIER are created here (like every other role) so they can
+    // be assigned/revoked later via the existing updateUserRoles flow; they are not granted to
+    // the creating user automatically.
+    const orgRolesList = [
+      OrgRoles.OWNER,
+      OrgRoles.ADMIN,
+      OrgRoles.ISSUER,
+      OrgRoles.VERIFIER,
+      OrgRoles.MEMBER,
+      OrgRoles.ALLOW_PROOF_TEMPLATE,
+      OrgRoles.ALLOW_VERIFIER
+    ];
 
     for (const role of orgRolesList) {
       await this.clientRegistrationService.createClientRole(orgDetails.idpId, token, role, role);
@@ -1483,6 +1474,12 @@ export class OrganizationService {
       }
     );
 
+    // A client role with no org_roles row would make the mapping below throw — after the user's
+    // existing roles were already deleted. Refuse up front, before anything is touched.
+    if (rolesPayload.some((role) => null === role)) {
+      throw new NotFoundException(ResponseMessages.organisation.error.orgRoleIdNotFound);
+    }
+
     const userData = await this.getUserUserId(userId);
 
     const [, deletedUserRoleRecords] = await Promise.all([
@@ -1923,12 +1920,13 @@ export class OrganizationService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }

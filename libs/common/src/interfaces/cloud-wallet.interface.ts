@@ -505,6 +505,7 @@ export interface IExportCloudWallet {
   passKey: string;
   userId: string;
   email: string;
+  walletID?: string;
 }
 
 // Export/import against agent-controller's native WalletPortabilityService are async jobs:

@@ -5,6 +5,8 @@ import { Logger, Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { getNatsOptions } from '@credebl/common/nats.config';
+import { GlobalConfigModule } from '@credebl/config/global-config.module';
+import { LoggerModule } from '@credebl/logger/logger.module';
 import { PrismaService } from '@credebl/prisma-service';
 import { EntitlementService } from './services/entitlement.service';
 import { MarketplaceController } from './marketplace.controller';
@@ -19,6 +21,8 @@ import { WebhookService } from './services/webhook.service';
 @Module({
   imports: [
     ConfigModule.forRoot(),
+    GlobalConfigModule,
+    LoggerModule,
     HttpModule,
     ScheduleModule.forRoot(),
     ClientsModule.register([

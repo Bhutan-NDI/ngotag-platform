@@ -161,6 +161,16 @@ services:
       - ./.env
     networks: *platform-networks
 
+  mobile-verifier:
+    depends_on:
+      - api-gateway
+    build:
+      context: ./
+      dockerfile: Dockerfiles/Dockerfile.mobile-verifier
+    env_file:
+      - ./.env
+    networks: *platform-networks
+
   marketplace:
     depends_on:
       - api-gateway

@@ -274,6 +274,8 @@ export enum CommonConstants {
   // eslint-disable-next-line @typescript-eslint/no-duplicate-enum-values
   URL_AGENT_STATUS = '/agent',
 
+  AGENT_TOKEN_PROBE_TIMEOUT_MS = 10000,
+
   // Tenant Status
   PENDING_STATE = 0,
   REJECT_STATE = 2,
@@ -460,6 +462,7 @@ export enum CommonConstants {
   OIDC4VC_VERIFICATION_SERVICE = 'oid4vc-verification',
   OID4VP_VERIFICATION_SESSION = 'oid4vp-verification-session',
   X509_SERVICE = 'x509-service',
+  MOBILE_VERIFIER_SERVICE = 'mobile-verifier',
 
   ACCEPT_OFFER = '/didcomm/credentials/accept-offer',
   SEED_LENGTH = 32,

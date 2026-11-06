@@ -128,9 +128,9 @@ export class CloudWalletService extends BaseService {
   async deleteCloudWallet(
     cloudWalletDetails: IDeleteCloudWallet
     // eslint-disable-next-line camelcase
-  ): Promise<cloud_wallet_user_info> {
+  ): Promise<cloud_wallet_user_info | null> {
     // eslint-disable-next-line camelcase
-    const res: cloud_wallet_user_info = await this.natsClient.sendNatsMessage(
+    const res: cloud_wallet_user_info | null = await this.natsClient.sendNatsMessage(
       this.cloudWalletServiceProxy,
       'delete-cloud-wallet',
       cloudWalletDetails
@@ -190,7 +190,9 @@ export class CloudWalletService extends BaseService {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'get-import-wallet-status', jobStatus);
   }
 
-  getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {
+  getDidList(
+    walletDetails: IWalletDetailsForDidList
+  ): Promise<IProofRequestRes[] | (Record<string, unknown> & { hashTenantID: string })> {
     return this.natsClient.sendNatsMessage(this.cloudWalletServiceProxy, 'cloud-wallet-did-list', walletDetails);
   }
 

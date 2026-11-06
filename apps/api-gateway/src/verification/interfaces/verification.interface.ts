@@ -82,3 +82,21 @@ interface IRequestedRestriction {
   issuer_did?: string;
   schema_version?: string;
 }
+
+export interface IProofCallbackResult {
+  status: 'pending' | 'completed' | 'failed' | 'expired';
+  threadId?: string;
+  result?: {
+    state: string;
+    presentationId?: string;
+  };
+}
+
+export interface IProofPresentationByThread {
+  threadId: string;
+  presentationId: string;
+  connectionId?: string;
+  state: string;
+  isVerified: boolean;
+  proofData: object;
+}

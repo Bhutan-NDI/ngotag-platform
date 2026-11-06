@@ -70,6 +70,23 @@ export const networkNamespace = (did: string): string => {
   return segments[1];
 };
 
+/** The `ledgers.indyNamespace` a DID names, or null when it names none (did:web, did:key, unqualified). */
+export const didLedgerNamespace = (did?: string | null): string | null => {
+  const segments = did?.split(':') ?? [];
+  if ('did' !== segments[0] || 3 > segments.length) {
+    return null;
+  }
+  switch (segments[1]) {
+    case CommonConstants.POLYGON:
+    case CommonConstants.ETHR:
+      return networkNamespace(did);
+    case 'indy':
+      return 5 <= segments.length ? `${segments[2]}:${segments[3]}` : null;
+    default:
+      return null;
+  }
+};
+
 //TODO: Remove this util method because we can have some better way to manage agent URLs
 export const getAgentUrl = (agentEndPoint: string, urlFlag: string, paramId?: string): string => {
   if (!agentEndPoint) {

@@ -1,8 +1,10 @@
 /* eslint-disable camelcase */
+import { createHash } from 'crypto';
 import { CommonService } from '@credebl/common';
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   HttpStatus,
   Injectable,
   InternalServerErrorException,
@@ -698,7 +700,9 @@ export class CloudWalletService {
    * @param walletDetails
    * @returns DID list
    */
-  async getDidList(walletDetails: IWalletDetailsForDidList): Promise<IProofRequestRes[]> {
+  async getDidList(
+    walletDetails: IWalletDetailsForDidList
+  ): Promise<IProofRequestRes[] | (Record<string, unknown> & { hashTenantID: string })> {
     try {
       const { userId, isDefault } = walletDetails;
 
@@ -715,6 +719,15 @@ export class CloudWalletService {
         : `${agentEndpoint}${CommonConstants.URL_AGENT_GET_DID}`;
 
       const didList = (await this.commonService.httpGet(url, { headers: { authorization: decryptedApiKey } })) ?? [];
+      // Reshaped to a single object: an array can't carry a named property (hashTenantID) across a JSON hop.
+      if (isDefault) {
+        const [defaultDid] = didList;
+        if (!defaultDid) {
+          throw new NotFoundException(ResponseMessages.cloudWallet.error.defaultDidNotFound);
+        }
+        const { tenantId } = await this.cloudWalletRepository.getCloudSubWallet(userId);
+        return { ...defaultDid, hashTenantID: createHash('md5').update(tenantId).digest('hex') };
+      }
       return didList;
     } catch (error) {
       await this.commonService.handleError(error);
@@ -887,7 +900,7 @@ export class CloudWalletService {
    */
   async exportCloudWallet(exportWallet: IExportCloudWallet): Promise<Response> {
     try {
-      const { userId, passKey } = exportWallet;
+      const { userId, passKey, walletID } = exportWallet;
 
       const checkUserExist = await this.cloudWalletRepository.checkUserExist(userId, CloudWalletType.SUB_WALLET);
       if (!checkUserExist) {
@@ -913,7 +926,7 @@ export class CloudWalletService {
 
       const exportWalletResponse = await this.commonService.httpPost(
         url,
-        { passKey },
+        { passKey, walletID },
         {
           headers: { authorization: baseWalletApiKey }
         }
@@ -1012,11 +1025,16 @@ export class CloudWalletService {
    * @returns deleted cloud wallet record
    */
   // eslint-disable-next-line camelcase
-  async deleteCloudWallet(deleteCloudWalletPayload: IDeleteCloudWallet): Promise<cloud_wallet_user_info> {
+  async deleteCloudWallet(deleteCloudWalletPayload: IDeleteCloudWallet): Promise<cloud_wallet_user_info | null> {
     try {
-      const { userId } = deleteCloudWalletPayload;
+      const { userId, deleteHolder } = deleteCloudWalletPayload;
       const cloudSubWalletDetails = await this.cloudWalletRepository.getCloudSubWallet(userId);
       if (!cloudSubWalletDetails || !cloudSubWalletDetails.tenantId) {
+        if (deleteHolder) {
+          // A retry after the wallet is already gone: let the caller go on to delete the holder.
+          this.logger.warn(`[deleteCloudWallet] - no cloud wallet left for user ${userId}, nothing to delete`);
+          return null;
+        }
         throw new NotFoundException(ResponseMessages.cloudWallet.error.walletRecordNotFound);
       }
 
@@ -1034,13 +1052,24 @@ export class CloudWalletService {
       const decryptedApiKey = await this.commonService.decryptPassword(baseWalletDetails.agentApiKey);
       const url = `${baseWalletDetails.agentEndpoint}${CommonConstants.CLOUD_WALLET_DELETE_BY_TENANT_ID}${cloudSubWalletDetails.tenantId}`;
 
-      const deleteTenantResponse = await this.commonService.httpDelete(url, {
-        headers: { authorization: decryptedApiKey }
-      });
+      let tenantAlreadyDeleted = false;
+      let deleteTenantResponse;
+      try {
+        deleteTenantResponse = await this.commonService.httpDelete(url, {
+          headers: { authorization: decryptedApiKey }
+        });
+      } catch (error) {
+        if (!this.isTenantNotFoundOnAgent(error)) {
+          throw error;
+        }
+        // Deleted on the agent by an earlier attempt that failed before removing the row: finish the cleanup.
+        tenantAlreadyDeleted = true;
+      }
 
       if (
-        !deleteTenantResponse ||
-        (HttpStatus.OK !== deleteTenantResponse.status && HttpStatus.NO_CONTENT !== deleteTenantResponse.status)
+        !tenantAlreadyDeleted &&
+        (!deleteTenantResponse ||
+          (HttpStatus.OK !== deleteTenantResponse.status && HttpStatus.NO_CONTENT !== deleteTenantResponse.status))
       ) {
         throw new InternalServerErrorException(ResponseMessages.cloudWallet.error.deleteCloudWallet, {
           cause: new Error(),
@@ -1064,6 +1093,16 @@ export class CloudWalletService {
       await this.commonService.handleError(error);
       throw error;
     }
+  }
+
+  // A 404 carrying agent-controller's `{ reason }` body. An unreachable agent is also mapped to 404 by
+  // CommonService, but its body is a plain message string, so it is not mistaken for a deleted tenant.
+  private isTenantNotFoundOnAgent(error: unknown): boolean {
+    if (!(error instanceof HttpException) || HttpStatus.NOT_FOUND !== error.getStatus()) {
+      return false;
+    }
+    const body = error.getResponse() as { error?: { reason?: unknown } } | string;
+    return 'object' === typeof body && 'string' === typeof body.error?.reason;
   }
 
   /**

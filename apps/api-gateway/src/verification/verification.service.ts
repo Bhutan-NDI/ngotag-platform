@@ -8,7 +8,13 @@ import {
   IProofPresentationList,
   IVerificationRecords
 } from '@credebl/common/interfaces/verification.interface';
-import { IPresentation, IProofRequest, IProofRequestSearchCriteria } from './interfaces/verification.interface';
+import {
+  IPresentation,
+  IProofCallbackResult,
+  IProofPresentationByThread,
+  IProofRequest,
+  IProofRequestSearchCriteria
+} from './interfaces/verification.interface';
 import { IProofPresentation } from './interfaces/verification.interface';
 // To do make a similar interface in API-gateway
 import { user } from '@prisma/client';
@@ -139,6 +145,26 @@ export class VerificationService extends BaseService {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
       throw error;
     }
+  }
+
+  getProofPresentationByThreadId(orgId: string, threadId: string): Promise<IProofPresentationByThread> {
+    const payload = { orgId, threadId };
+    return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-proof-presentation-by-thread', payload);
+  }
+
+  getProofCallbackResult(responseCode: string): Promise<IProofCallbackResult> {
+    const payload = { responseCode };
+    return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-proof-callback-result', payload);
+  }
+
+  setRedirectUris(orgId: string, redirectUris: string[], userId: string): Promise<string[]> {
+    const payload = { orgId, redirectUris, userId };
+    return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'set-verification-redirect-uris', payload);
+  }
+
+  getRedirectUris(orgId: string): Promise<string[]> {
+    const payload = { orgId };
+    return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-verification-redirect-uris', payload);
   }
 
   async deleteVerificationRecords(orgId: string, userDetails: user): Promise<IVerificationRecords> {

@@ -27,7 +27,7 @@ import { IConnectionDetailsById } from 'apps/api-gateway/src/interfaces/IConnect
 import { IBasicMessage, IQuestionPayload } from './interfaces/messaging.interfaces';
 import { RecordType, user } from '@prisma/client';
 import { UserActivityRepository } from 'libs/user-activity/repositories';
-import { agent_invitations } from '@prisma/client';
+import { additionalInvitationDidsField, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { getAgentUrl } from '@credebl/common/common.utils';
 @Injectable()
@@ -498,13 +498,14 @@ export class ConnectionService {
         throw new NotFoundException(ResponseMessages.connection.error.agentEndPointNotFound);
       }
 
-      let legacyinvitationDid;
-      if (IsReuseConnection) {
-        const invitation: agent_invitations = await this.connectionRepository.getInvitationDidByOrgId(orgId);
-        legacyinvitationDid = invitation?.invitationDid ?? undefined;
-        this.logger.log('legacyinvitationDid:', legacyinvitationDid);
+      // A caller-named invitation DID is used as it is. Otherwise a reuse request takes the org's own, which for an
+      // org that has moved to a dedicated agent also brings the DID it used before the move.
+      let reuseDids: ReuseInvitationDids = {};
+      if (IsReuseConnection && !invitationDid) {
+        reuseDids = await this.connectionRepository.getReuseInvitationDids(orgId);
+        this.logger.log('reuse invitation DIDs:', JSON.stringify(reuseDids));
       }
-      const connectionInvitationDid = invitationDid ? invitationDid : legacyinvitationDid;
+      const connectionInvitationDid = invitationDid ? invitationDid : reuseDids.invitationDid;
 
       this.logger.log('connectionInvitationDid:', connectionInvitationDid);
 
@@ -523,7 +524,8 @@ export class ConnectionService {
         routing: routing || undefined,
         messages: messages || undefined,
         recipientKey: recipientKey || undefined,
-        invitationDid: connectionInvitationDid || undefined
+        invitationDid: connectionInvitationDid || undefined,
+        ...additionalInvitationDidsField(reuseDids)
       };
       const url = getAgentUrl(agentEndPoint, CommonConstants.CONNECTION_INVITATION);
       const createConnectionInvitation = await this._createOutOfBandConnectionInvitation(connectionPayload, url, orgId);

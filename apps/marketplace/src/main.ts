@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { getNatsOptions } from '@credebl/common/nats.config';
 import { HttpExceptionFilter } from 'libs/http-exception.filter';
+import NestjsLoggerServiceAdapter from '@credebl/logger/nestjsLoggerServiceAdapter';
 import { MarketplaceModule } from './marketplace.module';
 
 const logger = new Logger();
@@ -14,6 +15,8 @@ async function bootstrap(): Promise<void> {
     options: getNatsOptions(CommonConstants.MARKETPLACE_SERVICE, process.env.MARKETPLACE_NKEY_SEED)
   });
 
+  // Without this the filter's records go to Nest's default console logger, bypassing winston.
+  app.useLogger(app.get(NestjsLoggerServiceAdapter));
   app.useGlobalFilters(new HttpExceptionFilter());
 
   await app.listen();

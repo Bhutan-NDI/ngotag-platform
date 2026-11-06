@@ -23,6 +23,7 @@ import { KeycloakConfigModule } from '@credebl/keycloak-config';
 import { IssuanceModule } from './issuance/issuance.module';
 import { LoggerModule } from '@credebl/logger/logger.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
+import { MobileVerifierModule } from './mobile-verifier/mobile-verifier.module';
 import { NotificationModule } from './notification/notification.module';
 import { Oid4vcIssuanceModule } from './oid4vc-issuance/oid4vc-issuance.module';
 import { Oid4vpModule } from './oid4vc-verification/oid4vc-verification.module';
@@ -72,6 +73,7 @@ import { shouldLoadOidcModules } from '@credebl/common/common.utils';
     IssuanceModule,
     UtilitiesModule,
     WebhookModule,
+    MobileVerifierModule,
     NotificationModule,
     EcosystemModule,
     GlobalConfigModule,

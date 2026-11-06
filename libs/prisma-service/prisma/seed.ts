@@ -10,6 +10,7 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { exec } from 'child_process';
 
 import { Country, State, City } from 'country-state-city';
+import { syncBhutanAddress } from './bhutan-address';
 const execPromise = util.promisify(exec);
 
 const prisma = new PrismaClient({
@@ -95,9 +96,14 @@ const createOrgRoles = async (): Promise<void> => {
       }
     });
 
-    if (0 === existOrgRole.length) {
+    // Insert only the roles that are missing, so roles added to the master data later (e.g. the
+    // mobile-verifier ALLOW_* roles) also reach databases that were seeded before they existed.
+    const existingNames = new Set(existOrgRole.map((role) => role.name));
+    const missingOrgRoles = orgRoleData.filter((role) => !existingNames.has(role.name));
+
+    if (0 < missingOrgRoles.length) {
       const orgRoles = await prisma.org_roles.createMany({
-        data: orgRoleData
+        data: missingOrgRoles
       });
 
       logger.log(orgRoles);
@@ -495,13 +501,6 @@ const addSchemaType = async (): Promise<void> => {
   }
 };
 
-// ---------------------------------------------------------------------------
-// Geo-location data patches — entries missing from country-state-city package
-// ---------------------------------------------------------------------------
-const GEO_STATE_PATCHES: Record<string, { name: string; isoCode: string; countryCode: string }[]> = {
-  BT: [{ name: 'Trashiyangtse District', isoCode: 'TY', countryCode: 'BT' }]
-};
-
 const SEED_BATCH_SIZE = 2000;
 
 const seedGeoLocationData = async (): Promise<void> => {
@@ -537,14 +536,9 @@ const seedGeoLocationData = async (): Promise<void> => {
     const statesBuffer: { name: string; countryId: number; countryCode: string; isoCode: string }[] = [];
 
     for (const country of insertedCountries) {
-      const pkgStates = State.getStatesOfCountry(country.isoCode);
-      const patches = GEO_STATE_PATCHES[country.isoCode] || [];
-      const patchIsoCodes = new Set(patches.map((p) => p.isoCode));
-      const merged = [...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)), ...patches].sort((a, b) =>
-        a.name.localeCompare(b.name)
-      );
+      const pkgStates = State.getStatesOfCountry(country.isoCode).sort((a, b) => a.name.localeCompare(b.name));
 
-      for (const state of merged) {
+      for (const state of pkgStates) {
         statesBuffer.push({
           name: state.name,
           countryId: country.id,
@@ -580,12 +574,7 @@ const seedGeoLocationData = async (): Promise<void> => {
     let totalCities = 0;
 
     for (const country of insertedCountries) {
-      const pkgStates = State.getStatesOfCountry(country.isoCode);
-      const patches = GEO_STATE_PATCHES[country.isoCode] || [];
-      const patchIsoCodes = new Set(patches.map((p) => p.isoCode));
-      const allStates = [...pkgStates.filter((s) => !patchIsoCodes.has(s.isoCode)), ...patches];
-
-      for (const state of allStates) {
+      for (const state of State.getStatesOfCountry(country.isoCode)) {
         const stateId = stateKeyToId.get(`${country.id}|${state.isoCode}`);
         if (!stateId) {
           continue;
@@ -858,7 +847,8 @@ export async function createKeycloakUser(): Promise<void> {
     throw new Error('Missing environment variable: CRYPTO_PRIVATE_KEY');
   }
 
-  const platformAdminPassword = PLATFORM_ADMIN_PASSWORD ?? decryptSeedPassword(platformAdminData.password, CRYPTO_PRIVATE_KEY);
+  const platformAdminPassword =
+    PLATFORM_ADMIN_PASSWORD ?? decryptSeedPassword(platformAdminData.password, CRYPTO_PRIVATE_KEY);
   const token = await getKeycloakToken();
   const user = {
     username: cachedConfig.platformEmail,
@@ -1118,6 +1108,7 @@ async function main(): Promise<void> {
   await migrateOrgAgentDids();
   await addSchemaType();
   await seedGeoLocationData();
+  await syncBhutanAddress(prisma);
   await updateClientCredential();
   await createPlatformConfig();
 

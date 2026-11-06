@@ -8,7 +8,11 @@ export class URLUserEmailTemplate {
     clientAlias?: string,
     invitationId?: string
   ): string {
-    const baseDomain = `${process.env.FRONT_END_URL}`;
+    const baseDomain =
+      process.env.MOBILE_VERIFIER_PLATFORM_NAME &&
+      process.env.MOBILE_VERIFIER_PLATFORM_NAME.toLowerCase() === platformName?.toLowerCase()
+        ? process.env.MOBILE_VERIFIER_FRONT_END_URL || process.env.FRONT_END_URL
+        : process.env.FRONT_END_URL;
     const apiUrl = new URL('/verify-email-success', baseDomain);
 
     apiUrl.searchParams.append('verificationCode', verificationCode);

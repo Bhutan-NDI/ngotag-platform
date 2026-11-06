@@ -7,6 +7,12 @@ import * as nats from 'nats';
 import { firstValueFrom } from 'rxjs';
 import ContextStorageService, { ContextStorageServiceKey } from '../../context/src/contextStorageService.interface';
 import { v4 } from 'uuid';
+import {
+  issuanceDeadline,
+  ISSUANCE_COMMANDS,
+  ISSUANCE_DEADLINE_KEY,
+  ISSUANCE_DEADLINE_HEADER
+} from '../../context/src/issuanceDeadline';
 
 @Injectable()
 export class NATSClient {
@@ -18,6 +24,13 @@ export class NATSClient {
     this.logger = new Logger('NATSClient');
   }
 
+  private addIssuanceDeadline(headers: nats.MsgHdrs, cmd: string): void {
+    if (ISSUANCE_COMMANDS.has(cmd)) {
+      const deadline = issuanceDeadline(this.contextStorageService.get(ISSUANCE_DEADLINE_KEY));
+      headers.set(ISSUANCE_DEADLINE_HEADER, String(deadline));
+    }
+  }
+
   // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types
   sendNats(serviceProxy: Pick<ClientProxy, 'send'>, cmd: string, payload: any): Promise<any> {
     this.logger.log(`Inside NATSClient for sendNats()`);
@@ -25,6 +38,7 @@ export class NATSClient {
     const contextId = this.contextStorageService.getContextId() ?? v4();
     const headers = nats.headers();
     headers.set('contextId', contextId);
+    this.addIssuanceDeadline(headers, cmd);
     const record = new NatsRecordBuilder(payload).setHeaders(headers).build();
 
     return firstValueFrom(
@@ -47,6 +61,7 @@ export class NATSClient {
     const contextId = this.contextStorageService.getContextId() ?? v4();
     const headers = nats.headers();
     headers.set('contextId', contextId);
+    this.addIssuanceDeadline(headers, cmd);
     const record = new NatsRecordBuilder(payload).setHeaders(headers).build();
 
     const result = serviceProxy.send<string>(pattern, record);

@@ -8,11 +8,12 @@ import {
 import { IProofPresentationsListCount, IVerificationRecords } from '@credebl/common/interfaces/verification.interface';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 // eslint-disable-next-line camelcase
-import { Prisma, agent_invitations, org_agents, organisation, platform_config, presentations } from '@prisma/client';
+import { Prisma, org_agents, organisation, platform_config, presentations } from '@prisma/client';
 
 import { CommonService } from '@credebl/common';
 import { IUserRequest } from '@credebl/user-request/user-request.interface';
 import { PrismaService } from '@credebl/prisma-service';
+import { findReuseInvitationDids, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { SortValue } from '@credebl/enum/enum';
 
@@ -291,30 +292,8 @@ export class VerificationRepository {
     }
   }
 
-  // eslint-disable-next-line camelcase
-  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations> {
-    try {
-      return this.prisma.agent_invitations.findFirst({
-        where: {
-          AND: [
-            {
-              orgId
-            },
-            {
-              invitationDid: {
-                not: null
-              }
-            }
-          ]
-        },
-        orderBy: {
-          createDateTime: 'asc' // or 'desc' for descending order
-        }
-      });
-    } catch (error) {
-      this.logger.error(`Error in getInvitationDid in verification repository: ${error.message}`);
-      throw error;
-    }
+  getReuseInvitationDids(orgId: string): Promise<ReuseInvitationDids> {
+    return findReuseInvitationDids(this.prisma, orgId);
   }
 
   async deleteVerificationRecordsByOrgId(orgId: string): Promise<IVerificationRecords> {
@@ -332,6 +311,36 @@ export class VerificationRepository {
       });
     } catch (error) {
       this.logger.error(`Error in deleting verification records: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // eslint-disable-next-line camelcase
+  async updateRedirectUriAllowlist(orgId: string, redirectUriAllowlist: string, userId: string): Promise<org_agents> {
+    try {
+      return await this.prisma.org_agents.update({
+        where: { orgId },
+        data: { redirectUriAllowlist, lastChangedBy: userId }
+      });
+    } catch (error) {
+      this.logger.error(`[updateRedirectUriAllowlist] - error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async getPresentationByThreadId(
+    threadId: string
+  ): Promise<Pick<
+    presentations,
+    'threadId' | 'orgId' | 'state' | 'isVerified' | 'presentationId' | 'connectionId'
+  > | null> {
+    try {
+      return await this.prisma.presentations.findUnique({
+        where: { threadId },
+        select: { threadId: true, orgId: true, state: true, isVerified: true, presentationId: true, connectionId: true }
+      });
+    } catch (error) {
+      this.logger.error(`[getPresentationByThreadId] - error: ${error.message}`);
       throw error;
     }
   }

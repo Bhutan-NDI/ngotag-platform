@@ -6,6 +6,8 @@ import { CommonService } from '../../../../libs/common/src/common.service';
 import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './agent-service.controller';
 import { AgentService } from './agent-service.service';
+import { OrgAgentMigrationController } from './org-agent-migration.controller';
+import { OrgAgentMigrationService } from './org-agent-migration.service';
 import { getNatsOptions } from '@credebl/common/nats.config';
 import { CommonConstants } from '@credebl/common/common.constant';
 import { NATSClient } from '@credebl/common/NATSClient';
@@ -27,7 +29,7 @@ import { NATSClient } from '@credebl/common/NATSClient';
       CommonModule
     ])
   ],
-  controllers: [AgentController],
-  providers: [AgentService, CommonService, NATSClient]
+  controllers: [AgentController, OrgAgentMigrationController],
+  providers: [AgentService, OrgAgentMigrationService, CommonService, NATSClient]
 })
 export class AgentModule {}

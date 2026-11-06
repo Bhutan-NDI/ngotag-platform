@@ -2,6 +2,7 @@ import {
   IProofPresentation,
   IProofPresentationData,
   IProofRequestData,
+  IProofPresentationByThread,
   IProofRequests,
   ISendProofRequestPayload
 } from './interfaces/verification.interface';
@@ -16,6 +17,7 @@ import { Controller } from '@nestjs/common';
 import { IUserRequest } from '@credebl/user-request/user-request.interface';
 import { MessagePattern } from '@nestjs/microservices';
 import { VerificationService } from './verification.service';
+import { IProofCallbackResult } from './response-code/response-code.interface';
 
 @Controller()
 export class VerificationController {
@@ -104,6 +106,30 @@ export class VerificationController {
   async getVerifiedProofdetails(payload: IProofPresentationData): Promise<IProofPresentationDetails[]> {
     const { proofId, orgId } = payload;
     return this.verificationService.getVerifiedProofdetails(proofId, orgId);
+  }
+
+  @MessagePattern({ cmd: 'get-proof-presentation-by-thread' })
+  async getProofPresentationByThreadId(payload: {
+    orgId: string;
+    threadId: string;
+  }): Promise<IProofPresentationByThread> {
+    return this.verificationService.getProofPresentationByThreadId(payload.orgId, payload.threadId);
+  }
+
+  @MessagePattern({ cmd: 'get-proof-callback-result' })
+  async getProofCallbackResult(payload: { responseCode: string }): Promise<IProofCallbackResult> {
+    return this.verificationService.getProofCallbackResult(payload.responseCode);
+  }
+
+  @MessagePattern({ cmd: 'set-verification-redirect-uris' })
+  async setRedirectUris(payload: { orgId: string; redirectUris: string[]; userId: string }): Promise<string[]> {
+    const { orgId, redirectUris, userId } = payload;
+    return this.verificationService.setRedirectUris(orgId, redirectUris, userId);
+  }
+
+  @MessagePattern({ cmd: 'get-verification-redirect-uris' })
+  async getRedirectUris(payload: { orgId: string }): Promise<string[]> {
+    return this.verificationService.getRedirectUris(payload.orgId);
   }
 
   @MessagePattern({ cmd: 'delete-verification-records' })

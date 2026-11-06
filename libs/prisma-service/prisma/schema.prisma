@@ -246,10 +246,87 @@ model org_agents {
   org_agent_type      org_agents_type?    @relation(fields: [orgAgentTypeId], references: [id])
   organisation        organisation?       @relation(fields: [orgId], references: [id])
   webhookUrl          String?             @db.VarChar
+  redirectUriAllowlist String?            @db.VarChar
   org_dids            org_dids[]
   oidc_issuer         oidc_issuer[]
   x509_certificates   x509_certificates[]
   oid4vp_verifiers    oid4vp_verifier[]
+}
+
+model org_agent_migrations {
+  id                     String                       @id @default(uuid()) @db.Uuid
+  createDateTime         DateTime                     @default(now()) @db.Timestamptz(6)
+  lastChangedDateTime    DateTime                     @default(now()) @db.Timestamptz(6)
+  orgId                  String                       @db.Uuid
+  status                 String                       @default("CREATED") @db.VarChar(32)
+  startedBy              String                       @db.Uuid
+  sourceOrgAgentSnapshot Json?
+  tenantId               String?
+  targetAdminEndpoint    String?                      @db.VarChar
+  targetDidcommEndpoint  String?                      @db.VarChar
+  newInvitationDid       String?                      @db.VarChar
+  legacyInvitationDid    String?                      @db.VarChar
+  exportJobId            String?                      @db.VarChar
+  importJobId            String?                      @db.VarChar
+  rotationJobId          String?                      @db.VarChar
+  counts                 Json?
+  checksum               String?                      @db.VarChar
+  importKeyFingerprint   String?                      @db.VarChar
+  releaseVersion         String?                      @db.VarChar
+  storageVersion         String?                      @db.VarChar
+  rehearsalDurationMs    Int?
+  predictedFreezeMs      Int?
+  scheduledFor           DateTime?                    @db.Timestamptz(6)
+  freezeDeadline         DateTime?                    @db.Timestamptz(6)
+  stabilisationEndsAt    DateTime?                    @db.Timestamptz(6)
+  purgedAt               DateTime?                    @db.Timestamptz(6)
+  error                  String?                      @db.VarChar
+  // The dedicated agent's root token (AES-encrypted), kept from preflight until cutover writes it to org_agents.
+  // Never returned to callers.
+  targetTokenEncrypted   String?                      @db.VarChar
+  backupsConfirmedAt     DateTime?                    @db.Timestamptz(6)
+  preflight              Json?
+  rehearsalStatus        String?                      @db.VarChar(16)
+  rehearsalStartedAt     DateTime?                    @db.Timestamptz(6)
+  rehearsal              Json?
+  // Held by whichever agent-service replica is starting or recovering this migration, so two do not do it at once.
+  leaseUntil             DateTime?                    @db.Timestamptz(6)
+  // Progress of the connection rotation after the switch: the agent's job and its counts, as last polled.
+  rotation               Json?
+  // A one-time check that the dedicated agent's webhook URL reaches the platform: only the hash of the probe id is kept.
+  webhookProbeHash       String?                      @db.VarChar
+  webhookProbeExpiresAt  DateTime?                    @db.Timestamptz(6)
+  webhookConfirmedAt     DateTime?                    @db.Timestamptz(6)
+  // When the window's webhook check last ran, so tries are spaced without holding the migration's lease.
+  webhookCheckedAt       DateTime?                    @db.Timestamptz(6)
+  // PULL or PUSH, set by preflight: whether the dedicated agent can reach S3 for the export.
+  downloadMethod         String?                      @db.VarChar(8)
+  // When the move reached COMPLETED.
+  completedAt            DateTime?                    @db.Timestamptz(6)
+  // No relation to `organisation`: the audit trail is permanent and must outlive the organisation (SAD §5.2).
+  events                 org_agent_migration_events[]
+
+  // At most one non-terminal migration per org: a partial unique index on (orgId) WHERE status NOT IN
+  // ('COMPLETED','FAILED','CANCELLED','DISASTER_RESTORED'), created in the raw migration; Prisma's DSL can't express it.
+  @@index([orgId])
+  @@index([status])
+}
+
+model org_agent_migration_events {
+  id             String               @id @default(uuid()) @db.Uuid
+  createDateTime DateTime             @default(now()) @db.Timestamptz(6)
+  migrationId    String               @db.Uuid
+  fromStatus     String?              @db.VarChar(32)
+  toStatus       String               @db.VarChar(32)
+  actor          String?              @db.VarChar
+  // Null on a state change. On any other audited action (a preflight run, a rehearsal, a refused attempt) it names
+  // the action and fromStatus equals toStatus.
+  action         String?              @db.VarChar(48)
+  // Facts about the action. Never secrets, URLs or tokens.
+  detail         Json?
+  migration      org_agent_migrations @relation(fields: [migrationId], references: [id], onDelete: Restrict)
+
+  @@index([migrationId])
 }
 
 model org_dids {
@@ -1133,4 +1210,67 @@ model marketplace_operation {
 
   @@unique([operationId, marketplaceSubscriptionId])
   @@index([action])
+}
+
+// --- mobile-verifier tables -------------------------------------------------
+// Owned by apps/mobile-verifier, fully moved onto this shared platform DB —
+// mobile-verifier no longer has a standalone database/PrismaService of its own.
+// The mobile_verifier_ prefix identifies them as belonging to that service.
+
+// Org identity/permissions are resolved via ngotag's own organisation + Keycloak client
+// roles (ALLOW_PROOF_TEMPLATE / ALLOW_VERIFIER, see libs/org-roles/enums/index.ts) decoded
+// from the caller's JWT — mobile-verifier keeps no organization table of its own.
+model mobile_verifier_role {
+  id                           String                                   @id @default(uuid())
+  role                         String
+  orgId                        String
+  createdByOrgId               String
+  verifierRoleToProofTemplates mobile_verifier_role_to_proof_template[]
+
+  @@index([orgId])
+}
+
+model mobile_verifier_proof_template {
+  id                           String                                   @id @default(uuid())
+  templateId                   String                                   @unique
+  orgId                        String
+  name                         String
+  description                  String?
+  version                      String                                   @default("1")
+  payload                      Json
+  createdByOrgId               String
+  createdAt                    DateTime                                 @default(now())
+  updatedAt                    DateTime                                 @updatedAt
+  verifierRoleToProofTemplates mobile_verifier_role_to_proof_template[]
+
+  @@index([orgId])
+}
+
+model mobile_verifier_role_to_proof_template {
+  verifierRoleId  String
+  proofTemplateId String
+
+  verifierRole  mobile_verifier_role           @relation(fields: [verifierRoleId], references: [id])
+  proofTemplate mobile_verifier_proof_template @relation(fields: [proofTemplateId], references: [id])
+
+  @@id([verifierRoleId, proofTemplateId])
+}
+
+// Mobile-verifier's own webhook registration — deliberately separate from org_agents'
+// webhookUrl/webhookSecret (used by the platform's generic connection/credential/proof
+// webhook system, apps/webhook). Keeps mobile-verifier's outbound notifications independent
+// of that unrelated system, consistent with it keeping no other org-level tables of its own.
+model mobile_verifier_webhook_config {
+  id          String   @id @default(uuid())
+  orgId       String
+  webhookId   String
+  webhookUrl  String
+  authType    String // 'OAuth2' (only supported type today)
+  authVersion String // 'v1' | 'v2'
+  authData    Json // version-specific auth fields; secrets (clientSecret/token) encrypted at rest
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([orgId, webhookId])
+  @@index([orgId])
 }
