@@ -72,7 +72,12 @@ async function bootstrap(): Promise<void> {
 
   const options = new DocumentBuilder()
     .setTitle(`${process.env.PLATFORM_NAME}`)
-    .setDescription(`${process.env.PLATFORM_NAME} Platform APIs`)
+    .setDescription(
+      `${process.env.PLATFORM_NAME} Platform APIs\n\n` +
+        '**423 ORG_AGENT_MIGRATING:** an organisation whose wallet is being moved to its own agent answers calls that ' +
+        'use its agent with `423` and `error: "ORG_AGENT_MIGRATING"`. This is a planned pause, not a failure: retry ' +
+        'the request after the move.'
+    )
     .setVersion('1.0')
     .addBearerAuth()
     .addServer('/')

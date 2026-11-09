@@ -1130,8 +1130,8 @@ export class VerificationService {
   }
 
   verificationErrorHandling(error): void {
-    if (!error && !error?.status && !error?.status?.message && !error?.status?.message?.error) {
-      throw new RpcException(error.response ? error.response : error);
+    if (!error?.status?.message) {
+      throw new RpcException(error?.response ? error.response : error);
     } else {
       throw new RpcException({
         message: error?.status?.message?.error?.reason
