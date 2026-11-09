@@ -1052,6 +1052,24 @@ describe('move day: signing check', () => {
     }
   );
 
+  it('signs a did:ethr with the secp256k1 suite, as polygon', async () => {
+    // QA move 9 Nov: did:ethr was sent Ed25519Signature2018, which no key of a did:ethr can sign.
+    const orgDid = 'did:ethr:sepolia:0x025685d7548c6e21bfa56249594aba0ee7f9cfe810e3909d0c0e8a8bbb86244f9c';
+    const world = buildWorld({
+      sourceOrgAgentSnapshot: { agentEndPoint: SHARED.endpoint, walletName: 'org-wallet', orgDid }
+    });
+    world.agentClient.createSelfAttestedCredential.mockResolvedValue({ credential: { issuer: orgDid } });
+
+    await world.executor.run(MIGRATION_ID, USER_ID);
+
+    expect(world.agentClient.createSelfAttestedCredential).toHaveBeenCalledWith(
+      DEDICATED.endpoint,
+      DEDICATED.token,
+      expect.objectContaining({ proofType: 'EcdsaSecp256k1Signature2019', did: orgDid })
+    );
+    expect(world.world.row.status).toBe(Status.STABILISING);
+  });
+
   it('accepts an issuer given as an object', async () => {
     const world = buildWorld();
     world.agentClient.createSelfAttestedCredential.mockResolvedValue({ credential: { issuer: { id: ORG_DID } } });

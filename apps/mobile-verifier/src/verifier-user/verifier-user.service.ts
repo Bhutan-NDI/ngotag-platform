@@ -8,6 +8,7 @@ import { ClientProxy } from '@nestjs/microservices';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { CommonService } from '@credebl/common';
 import { decryptClientCredential } from '@credebl/common/cast.helper';
+import { jsonLdProofTypeForDid } from '@credebl/common/common.utils';
 import { PrismaService } from '@credebl/prisma-service';
 import { randomBytes } from 'crypto';
 import { decryptIfEncrypted } from '../common/functions';
@@ -541,9 +542,8 @@ export class VerifierUserService {
               'Organization ID': loginOrgId
             }
           },
-          // Ed25519Signature2018 / assertionMethod — ProofType.no_ledger in
-          // ngotag-studio/src/common/enums.ts, for did:key / did:web issuers.
-          options: { proofType: 'Ed25519Signature2018', proofPurpose: 'assertionMethod' }
+          // The org's primary DID signs: secp256k1 for polygon/did:ethr, Ed25519 for key/web.
+          options: { proofType: jsonLdProofTypeForDid(primaryDid.did), proofPurpose: 'assertionMethod' }
         }
       ]
     };
