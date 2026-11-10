@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import * as dotenv from 'dotenv';
 import { ResponseMessages } from './response-messages';
 import { CommonConstants } from './common.constant';
+import { DidMethod, ProofType } from '@credebl/enum/enum';
 dotenv.config();
 /* eslint-disable camelcase */
 // eslint-disable-next-line @typescript-eslint/explicit-module-boundary-types, @typescript-eslint/explicit-function-return-type
@@ -68,6 +69,22 @@ export const networkNamespace = (did: string): string => {
   }
 
   return segments[1];
+};
+
+/**
+ * The JSON-LD proof type an org DID signs with, from its method: polygon and did:ethr keys are
+ * secp256k1, every other method the platform creates (key, web) is Ed25519. Same mapping as
+ * ngotag-studio's issuance forms; a secp256k1 DID asked for an Ed25519 proof cannot sign.
+ */
+export const jsonLdProofTypeForDid = (did?: string | null): ProofType => {
+  switch (did?.split(':')[1]) {
+    case DidMethod.POLYGON:
+    // did:ethr keys are secp256k1 as well, so the same EcdsaSecp256k1Signature2019 suite signs them.
+    case DidMethod.ETHEREUM:
+      return ProofType.POLYGON_PROOFTYPE;
+    default:
+      return ProofType.NO_LEDGER_PROOFTYPE;
+  }
 };
 
 /** The `ledgers.indyNamespace` a DID names, or null when it names none (did:web, did:key, unqualified). */
