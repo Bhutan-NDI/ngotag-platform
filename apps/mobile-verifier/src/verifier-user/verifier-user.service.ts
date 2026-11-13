@@ -2,7 +2,7 @@ import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { ResponseType } from '../common/response';
 import { CreateVerifierUser } from './dto/create-verifier-user.dto';
 import { UpdateVerifierUser } from './dto/update-verifier-user.dto';
-import { assertRole } from '../common/keycloak-roles.util';
+import { MobileVerifierAccess } from '../common/mobile-verifier-access.service';
 import { OrgRoles } from 'libs/org-roles/enums';
 import { ClientProxy } from '@nestjs/microservices';
 import { NATSClient } from '@credebl/common/NATSClient';
@@ -49,7 +49,8 @@ export class VerifierUserService {
     private readonly natsClient: NATSClient,
     private readonly commonService: CommonService,
     private readonly verifierWebhookRepository: VerifierWebhookRepository,
-    private readonly verifierRoleRepository: VerifierRoleRepository
+    private readonly verifierRoleRepository: VerifierRoleRepository,
+    private readonly mobileVerifierAccess: MobileVerifierAccess
   ) {}
 
   // The client system stores the role name alongside the id (verifierRoleName is required on its
@@ -69,7 +70,7 @@ export class VerifierUserService {
     loginOrgId: string,
     authorization: string
   ): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
     const role = await this.findOrgRole(userPayload.verifierRoleId, loginOrgId);
     if (!role) {
@@ -238,7 +239,7 @@ export class VerifierUserService {
   }
 
   async inviteVerifierUser(email: string, loginOrgId: string, authorization: string): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
     const webhook = await this.verifierWebhookRepository.getWebhook(loginOrgId);
 
@@ -286,7 +287,7 @@ export class VerifierUserService {
     loginOrgId: string,
     authorization: string
   ): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
     const webhook = await this.verifierWebhookRepository.getWebhook(loginOrgId);
 
@@ -377,7 +378,7 @@ export class VerifierUserService {
     loginOrgId: string,
     authorization: string
   ): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
     const role = await this.findOrgRole(userPayload.verifierRoleId, loginOrgId);
     if (!role) {
@@ -433,7 +434,7 @@ export class VerifierUserService {
   }
 
   async sendCredentialIssuance(id: string, loginOrgId: string, authorization: string): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
     // JSON-LD schema of the Mobile Verifier credential; differs per environment (dev/stage/prod).
     const schemaUrl = process.env.MOBILE_VERIFIER_SCHEMA_URL;
