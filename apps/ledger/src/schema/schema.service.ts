@@ -58,6 +58,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { networkNamespace } from '@credebl/common/common.utils';
 import { checkDidLedgerAndNetwork } from '@credebl/common/cast.helper';
 import { NATSClient } from '@credebl/common/NATSClient';
+import { checkSchemaIntegrity, ISchemaVerificationResult } from '@credebl/common/schema-integrity';
 import { from } from 'rxjs';
 import { w3cSchemaBuilder } from 'apps/ledger/libs/helpers/w3c.schema.builder';
 
@@ -353,6 +354,7 @@ export class SchemaService extends BaseService {
         const createSchemaPayload = await this._createW3CSchema(W3cSchemaPayload);
         createSchema = createSchemaPayload.response;
         createSchema.type = schemaPayload.schemaType;
+        await this.checkW3CSchemaIntegrity(orgId, createSchema.did, createSchema.schemaId, createSchema.schemaUrl);
       } else {
         const createSchemaPayload = await this._createW3CledgerAgnostic(schemaObject, schemaResourceId);
         if (!createSchemaPayload) {
@@ -429,6 +431,7 @@ export class SchemaService extends BaseService {
       };
 
       await this._migrateW3CSchema(W3cSchemaPayload);
+      await this.checkW3CSchemaIntegrity(orgId, agentDetails.orgDid, schemaId, schemaUrl);
 
       const updateSchemaDetails: IUpdateSchemaLedgerDetails = {
         id: schema.id,
@@ -450,6 +453,25 @@ export class SchemaService extends BaseService {
       this.logger.error(`[migrateW3CSchema] - outer Error: ${JSON.stringify(error)}`);
       throw error;
     }
+  }
+
+  private async checkW3CSchemaIntegrity(
+    orgId: string,
+    did: string,
+    schemaId: string,
+    schemaUrl: string
+  ): Promise<void> {
+    await checkSchemaIntegrity(
+      { did, schemaId, schemaUrl },
+      (verifyRequest) => {
+        const pattern = { cmd: 'agent-verify-w3c-schema' };
+        return this.natsClient.send<ISchemaVerificationResult>(this.schemaServiceProxy, pattern, {
+          orgId,
+          verifyRequest
+        });
+      },
+      this.logger
+    );
   }
 
   private async storeW3CSchemas(schemaDetails, user, orgId, attributes, alias, schemaVersion: string): Promise<schema> {
