@@ -93,6 +93,7 @@ import { validateW3CSchemaAttributes } from '../libs/helpers/attributes.validato
 import { ISchemaDetail } from '@credebl/common/interfaces/schema.interface';
 import ContextStorageService, { ContextStorageServiceKey } from '@credebl/context/contextStorageService.interface';
 import { NATSClient } from '@credebl/common/NATSClient';
+import { checkSchemaIntegrity, ISchemaVerificationResult, schemaIdFromUrl } from '@credebl/common/schema-integrity';
 import { extractAttributeNames, unflattenCsvRow } from '../libs/helpers/attributes.extractor';
 import { redisStore } from 'cache-manager-ioredis-yet';
 import { EmailService } from '@credebl/common/email.service';
@@ -218,7 +219,8 @@ export class IssuanceService {
     }
   }
 
-  async getW3CSchemaAttributes(schemaUrl: string): Promise<ISchemaAttributes[]> {
+  /** With `orgId`, also checks the schema against its on-chain checksum via that org's agent. */
+  async getW3CSchemaAttributes(schemaUrl: string, orgId?: string): Promise<ISchemaAttributes[]> {
     this.logger.debug('Getting w3c schema attributes from schemaUrl', schemaUrl);
     const schemaRequest = await this.commonService.httpGet(schemaUrl).then(async (response) => response);
     if (!schemaRequest) {
@@ -232,6 +234,20 @@ export class IssuanceService {
 
     if (!getSchemaDetails) {
       throw new NotFoundException(ResponseMessages.schema.error.notFound);
+    }
+
+    if (orgId) {
+      await checkSchemaIntegrity(
+        { did: getSchemaDetails.publisherDid, schemaId: schemaIdFromUrl(schemaUrl), schemaUrl },
+        (verifyRequest) => {
+          const pattern = { cmd: 'agent-verify-w3c-schema' };
+          return this.natsClient.send<ISchemaVerificationResult>(this.issuanceServiceProxy, pattern, {
+            orgId,
+            verifyRequest
+          });
+        },
+        this.logger
+      );
     }
 
     const schemaAttributes = JSON.parse(getSchemaDetails?.attributes);
@@ -330,7 +346,7 @@ export class IssuanceService {
 
             const schemaServerUrl = issueData?.credentialFormats?.jsonld?.credential?.['@context']?.[1];
 
-            const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl);
+            const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl, orgId);
 
             if (isValidateSchema) {
               validateW3CSchemaAttributes(filteredIssuanceAttributes, schemaUrlAttributes, this.logger);
@@ -540,7 +556,7 @@ export class IssuanceService {
 
         const schemaServerUrl = issueData?.credentialFormats?.jsonld?.credential?.['@context']?.[1];
 
-        const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl);
+        const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl, orgId);
 
         if (isValidateSchema) {
           validateW3CSchemaAttributes(filteredIssuanceAttributes, schemaUrlAttributes, this.logger);
@@ -1082,7 +1098,7 @@ export class IssuanceService {
 
         const schemaServerUrl = outOfBandIssuancePayload?.credentialFormats?.jsonld?.credential?.['@context']?.[1];
 
-        const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl);
+        const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl, orgId);
 
         if (isValidateSchema) {
           validateW3CSchemaAttributes(filteredIssuanceAttributes, schemaUrlAttributes, this.logger);

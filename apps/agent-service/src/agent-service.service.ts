@@ -73,6 +73,7 @@ import { AgentServiceRepository } from './repositories/agent-service.repository'
 import { Prisma, RecordType, ledgers, org_agents, organisation, platform_config, user } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import { CommonConstants } from '@credebl/common/common.constant';
+import { ISchemaVerificationRequest, ISchemaVerificationResult } from '@credebl/common/schema-integrity';
 import { CommonService } from '@credebl/common';
 import { GetSchemaAgentRedirection } from 'apps/ledger/src/schema/schema.interface';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -2432,6 +2433,21 @@ export class AgentServiceService {
       return schemaRequest;
     } catch (error) {
       this.logger.error(`Error in migrateW3CSchema request in agent service : ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  async verifyW3CSchema(orgId: string, verifyRequest: ISchemaVerificationRequest): Promise<ISchemaVerificationResult> {
+    try {
+      const agentDetails = await this.agentServiceRepository.getAgentDetailsByOrgId(orgId);
+      if (!agentDetails?.agentEndPoint) {
+        throw new NotFoundException(ResponseMessages.agent.error.agentNotExists);
+      }
+      const url = `${agentDetails.agentEndPoint}${CommonConstants.VERIFY_ETHEREUM_W3C_SCHEMA}`;
+      const getApiKey = await this.getOrgAgentApiKey(orgId);
+      return await this.commonService.httpPost(url, verifyRequest, { headers: { authorization: getApiKey } });
+    } catch (error) {
+      this.logger.error(`Error in verifyW3CSchema request in agent service : ${JSON.stringify(error)}`);
       throw error;
     }
   }
