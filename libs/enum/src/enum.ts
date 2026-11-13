@@ -265,7 +265,7 @@ export enum IssuanceProcessState {
   PROPOSAL_RECEIVED = 'proposal-received',
   OFFER_SENT = 'offer-sent',
   OFFER_RECEIVED = 'offer-received',
-  DECLIEND = 'decliend',
+  DECLINED = 'declined',
   REQUEST_SENT = 'request-sent',
   REQUEST_RECEIVED = 'request-received',
   CREDENTIAL_ISSUED = 'credential-issued',
@@ -281,7 +281,7 @@ export enum VerificationProcessState {
   REQUEST_RECEIVED = 'request-received',
   PRESENTATION_SENT = 'presentation-sent',
   PRESENTATION_RECEIVED = 'presentation-received',
-  DECLIEND = 'declined',
+  DECLINED = 'declined',
   ABANDONED = 'abandoned',
   DONE = 'done'
 }
@@ -291,7 +291,7 @@ export enum ConnectionProcessState {
   INVITATION_SENT = 'invitation-sent',
   INVITATION_RECEIVED = 'invitation-received',
   REQUEST_SENT = 'request-sent',
-  DECLIEND = 'decliend',
+  DECLINED = 'declined',
   REQUEST_RECEIVED = 'request-received',
   RESPONSE_SENT = 'response-sent',
   RESPONSE_RECEIVED = 'response-received',

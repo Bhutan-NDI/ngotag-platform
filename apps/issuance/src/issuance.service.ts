@@ -2175,7 +2175,7 @@ export class IssuanceService {
         [IssuanceProcessState.OFFER_SENT]: 0,
         [IssuanceProcessState.OFFER_RECEIVED]: 0,
         [IssuanceProcessState.DONE]: 0,
-        [IssuanceProcessState.DECLIEND]: 0,
+        [IssuanceProcessState.DECLINED]: 0,
         [IssuanceProcessState.CREDENTIAL_RECEIVED]: 0,
         [IssuanceProcessState.CREDENTIAL_ISSUED]: 0,
         [IssuanceProcessState.ABANDONED]: 0

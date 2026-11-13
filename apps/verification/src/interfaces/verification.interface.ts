@@ -294,7 +294,7 @@ export interface IEmailResponse {
 export enum ProofRequest {
   presentationReceived = 'presentation-received',
   offerReceived = 'offer-received',
-  declined = 'decliend',
+  declined = 'declined',
   requestSent = 'request-sent',
   requestReceived = 'request-received',
   credentialIssued = 'credential-issued',
@@ -308,8 +308,17 @@ export enum ProofRequestState {
   requestReceived = 'Received',
   done = 'Verified',
   abandoned = 'Declined',
+  expired = 'Expired',
   presentationReceived = 'Presentation Received'
 }
+
+/**
+ * How an expired proof request reaches the verifier as errorMessage. The holder's wallet sends a problem report with
+ * description "request-expired", but Credo always sets its code to "abandoned", and the verifier's agent stores
+ * `${code}: ${description}`. This prefix is the only thing that tells an expired request from a genuine decline: both
+ * end as abandoned.
+ */
+export const REQUEST_EXPIRED_ERROR_PREFIX = 'abandoned: request-expired';
 
 export interface IProofPresentationByThread {
   threadId: string;
