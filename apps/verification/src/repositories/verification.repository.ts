@@ -4,7 +4,7 @@ import {
   IProofRequestSearchCriteria,
   ProofRequest,
   ProofRequestState,
-  REQUEST_EXPIRED_PROBLEM_CODE
+  REQUEST_EXPIRED_ERROR_PREFIX
 } from '../interfaces/verification.interface';
 import { IProofPresentationsListCount, IVerificationRecords } from '@credebl/common/interfaces/verification.interface';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
@@ -90,12 +90,12 @@ export class VerificationRepository {
   }
 
   /**
-   * "Expired" and "Declined" both mean state abandoned; only the holder's problem-report code tells them apart, so
+   * "Expired" and "Declined" both mean state abandoned; only the errorMessage the holder's problem report leaves behind tells them apart, so
    * they get their own filter instead of the free-text search. Returns null for any other search.
    */
   private statusOnlyFilter(orgId: string, search: string): Prisma.presentationsWhereInput | null {
     const term = search.trim().toLowerCase();
-    const expired = { startsWith: REQUEST_EXPIRED_PROBLEM_CODE };
+    const expired = { startsWith: REQUEST_EXPIRED_ERROR_PREFIX };
     if (ProofRequestState.expired.toLowerCase() === term) {
       return { orgId, state: ProofRequest.abandoned, errorMessage: expired };
     }

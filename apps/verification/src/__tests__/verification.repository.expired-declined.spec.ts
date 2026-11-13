@@ -31,7 +31,7 @@ describe('VerificationRepository.getAllProofRequests — Expired vs Declined', (
     expect(result.where).toEqual({
       orgId: ORG_ID,
       state: 'abandoned',
-      errorMessage: { startsWith: 'request-expired' }
+      errorMessage: { startsWith: 'abandoned: request-expired' }
     });
   });
 
@@ -41,7 +41,7 @@ describe('VerificationRepository.getAllProofRequests — Expired vs Declined', (
     expect(result.where).toEqual({
       orgId: ORG_ID,
       state: 'abandoned',
-      OR: [{ errorMessage: null }, { NOT: { errorMessage: { startsWith: 'request-expired' } } }]
+      OR: [{ errorMessage: null }, { NOT: { errorMessage: { startsWith: 'abandoned: request-expired' } } }]
     });
   });
 

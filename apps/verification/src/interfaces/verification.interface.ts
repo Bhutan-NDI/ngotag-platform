@@ -313,11 +313,12 @@ export enum ProofRequestState {
 }
 
 /**
- * Problem-report code the holder's wallet sends when a proof request runs out unanswered. Credo stores it on the
- * verifier's record as errorMessage ("request-expired: ..."), and it is the only thing that tells an expired request
- * from a genuine decline: both end as abandoned.
+ * How an expired proof request reaches the verifier as errorMessage. The holder's wallet sends a problem report with
+ * description "request-expired", but Credo always sets its code to "abandoned", and the verifier's agent stores
+ * `${code}: ${description}`. This prefix is the only thing that tells an expired request from a genuine decline: both
+ * end as abandoned.
  */
-export const REQUEST_EXPIRED_PROBLEM_CODE = 'request-expired';
+export const REQUEST_EXPIRED_ERROR_PREFIX = 'abandoned: request-expired';
 
 export interface IProofPresentationByThread {
   threadId: string;
