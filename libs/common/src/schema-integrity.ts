@@ -22,12 +22,36 @@ export interface ISchemaVerificationResult {
   writerChecked: boolean;
 }
 
+export interface ISchemaIntegrityOptions {
+  /** False after an irreversible write (schema creation, migration): a failure can only be logged. */
+  canBlock?: boolean;
+}
+
+const DEFAULT_TIMEOUT_MS = 5000;
+let invalidModeWarned = false;
+
 /** SCHEMA_INTEGRITY_CHECK: off (default) | warn | enforce. */
-export function getSchemaIntegrityMode(): SchemaIntegrityMode {
+export function getSchemaIntegrityMode(logger?: Logger): SchemaIntegrityMode {
   const value = process.env.SCHEMA_INTEGRITY_CHECK?.trim().toLowerCase();
-  return Object.values(SchemaIntegrityMode).includes(value as SchemaIntegrityMode)
-    ? (value as SchemaIntegrityMode)
-    : SchemaIntegrityMode.OFF;
+  if (!value) {
+    return SchemaIntegrityMode.OFF;
+  }
+  if (Object.values(SchemaIntegrityMode).includes(value as SchemaIntegrityMode)) {
+    return value as SchemaIntegrityMode;
+  }
+  if (!invalidModeWarned) {
+    invalidModeWarned = true;
+    logger?.warn(
+      `[schema-integrity] invalid SCHEMA_INTEGRITY_CHECK "${value}"; expected off, warn or enforce. Check is off.`
+    );
+  }
+  return SchemaIntegrityMode.OFF;
+}
+
+/** SCHEMA_INTEGRITY_TIMEOUT_MS, default 5000. */
+export function getSchemaIntegrityTimeoutMs(): number {
+  const parsed = Number(process.env.SCHEMA_INTEGRITY_TIMEOUT_MS);
+  return Number.isFinite(parsed) && 0 < parsed ? parsed : DEFAULT_TIMEOUT_MS;
 }
 
 /** Only Ethereum W3C schemas carry a verifiable on-chain checksum. */
@@ -39,23 +63,36 @@ export function schemaIdFromUrl(schemaUrl: string): string {
   return new URL(schemaUrl).pathname.split('/').filter(Boolean).pop() ?? '';
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
- * Runs `verify` per the configured mode. Only a `failed` result in enforce mode throws;
- * legacy records and verification errors (RPC or file server unreachable) log a warning.
+ * Runs `verify` per the configured mode. Only a `failed` result in enforce mode with `canBlock`
+ * throws; legacy records, errors and timeouts (agent, RPC or file server) log a warning.
  */
 export async function checkSchemaIntegrity(
   request: ISchemaVerificationRequest,
   verify: (request: ISchemaVerificationRequest) => Promise<ISchemaVerificationResult>,
-  logger: Logger
+  logger: Logger,
+  { canBlock = true }: ISchemaIntegrityOptions = {}
 ): Promise<ISchemaVerificationResult | undefined> {
-  const mode = getSchemaIntegrityMode();
+  const mode = getSchemaIntegrityMode(logger);
   if (SchemaIntegrityMode.OFF === mode || !isSchemaIntegrityCheckable(request.did)) {
     return undefined;
   }
 
   let result: ISchemaVerificationResult;
   try {
-    result = await verify(request);
+    result = await withTimeout(verify(request), getSchemaIntegrityTimeoutMs());
   } catch (error) {
     logger.warn(`[schema-integrity] could not verify ${request.schemaUrl}: ${error?.message ?? JSON.stringify(error)}`);
     return undefined;
@@ -67,7 +104,7 @@ export async function checkSchemaIntegrity(
     logger.warn(`[schema-integrity] legacy record for ${request.schemaUrl}: ${result.reason}`);
   } else if ('failed' === result?.status) {
     logger.warn(`[schema-integrity] FAILED for ${request.schemaUrl}: ${result.reason}`);
-    if (SchemaIntegrityMode.ENFORCE === mode) {
+    if (SchemaIntegrityMode.ENFORCE === mode && canBlock) {
       throw new BadRequestException(`Schema integrity check failed for ${request.schemaUrl}: ${result.reason}`);
     }
   } else {

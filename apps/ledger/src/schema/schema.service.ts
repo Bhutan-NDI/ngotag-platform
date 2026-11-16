@@ -470,7 +470,8 @@ export class SchemaService extends BaseService {
           verifyRequest
         });
       },
-      this.logger
+      this.logger,
+      { canBlock: false }
     );
   }
 
