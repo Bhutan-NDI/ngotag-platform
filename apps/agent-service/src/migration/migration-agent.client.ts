@@ -96,6 +96,8 @@ export interface IRotationCounts {
 export interface IRotationStatus {
   job: { status: 'idle' | 'running' | 'completed'; startedAt?: string; completedAt?: string };
   counts: IRotationCounts;
+  // Absent from an agent that predates the setting.
+  staleAfterSeconds?: number;
 }
 
 export type AgentErrorKind = 'UNREACHABLE' | 'REJECTED' | 'CONFLICT' | 'NOT_FOUND' | 'FAILED';

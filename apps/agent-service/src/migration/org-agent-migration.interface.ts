@@ -99,6 +99,7 @@ export interface IRehearsalRecord {
 export interface IRotationProgress {
   job: { status: string; startedAt?: string; completedAt?: string };
   counts: Record<string, number>;
+  staleAfterSeconds?: number;
   polledAt: string;
   // Since when the number of connections still waiting for an answer has not changed.
   stalledSince?: string;

@@ -645,6 +645,29 @@ describe('after the window: purge, rotate, complete', () => {
     expect(migrationService.advance).not.toHaveBeenCalled();
   });
 
+  describe('the stale limit the agent reports', () => {
+    it('is kept with the progress', async () => {
+      const { service, world } = rotating({ purgedAt: new Date(), rotationJobId: 'rotate-all:x' });
+      world.rotationStatus = {
+        ...rotation('running', { waiting: 4, updated: 6 }),
+        staleAfterSeconds: 604800
+      } as typeof world.rotationStatus;
+
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(world.row.rotation).toMatchObject({ staleAfterSeconds: 604800 });
+    });
+
+    it('is left out when the agent does not send one', async () => {
+      const { service, world } = rotating({ purgedAt: new Date(), rotationJobId: 'rotate-all:x' });
+      world.rotationStatus = rotation('running', { waiting: 4, updated: 6 });
+
+      await service.advanceRotation(MIGRATION_ID);
+
+      expect(world.row.rotation).not.toHaveProperty('staleAfterSeconds');
+    });
+  });
+
   describe('a rotation whose waiting count does not move', () => {
     afterEach(() => {
       delete process.env.ORG_MIGRATION_ROTATION_STALL_MS;
