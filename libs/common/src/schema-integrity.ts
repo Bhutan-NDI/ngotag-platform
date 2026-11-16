@@ -28,7 +28,12 @@ export interface ISchemaIntegrityOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
+const TIMEOUT_COOLDOWN_MS = 60_000;
 let invalidModeWarned = false;
+// Sequential issuance loops would otherwise pay the full timeout once per credential while the agent hangs.
+let skipChecksUntil = 0;
+
+class SchemaIntegrityTimeoutError extends Error {}
 
 /** SCHEMA_INTEGRITY_CHECK: off (default) | warn | enforce. */
 export function getSchemaIntegrityMode(logger?: Logger): SchemaIntegrityMode {
@@ -66,7 +71,7 @@ export function schemaIdFromUrl(schemaUrl: string): string {
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: NodeJS.Timeout;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+    timer = setTimeout(() => reject(new SchemaIntegrityTimeoutError(`timed out after ${ms}ms`)), ms);
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -77,7 +82,8 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 /**
  * Runs `verify` per the configured mode. Only a `failed` result in enforce mode with `canBlock`
- * throws; legacy records, errors and timeouts (agent, RPC or file server) log a warning.
+ * throws; legacy records, errors and timeouts (agent, RPC or file server) log a warning. After a
+ * timeout, checks are skipped for a minute.
  */
 export async function checkSchemaIntegrity(
   request: ISchemaVerificationRequest,
@@ -89,12 +95,24 @@ export async function checkSchemaIntegrity(
   if (SchemaIntegrityMode.OFF === mode || !isSchemaIntegrityCheckable(request.did)) {
     return undefined;
   }
+  if (Date.now() < skipChecksUntil) {
+    logger.debug(`[schema-integrity] skipped ${request.schemaUrl}: a recent check timed out`);
+    return undefined;
+  }
 
   let result: ISchemaVerificationResult;
   try {
     result = await withTimeout(verify(request), getSchemaIntegrityTimeoutMs());
   } catch (error) {
-    logger.warn(`[schema-integrity] could not verify ${request.schemaUrl}: ${error?.message ?? JSON.stringify(error)}`);
+    const timedOut = error instanceof SchemaIntegrityTimeoutError;
+    if (timedOut) {
+      skipChecksUntil = Date.now() + TIMEOUT_COOLDOWN_MS;
+    }
+    logger.warn(
+      `[schema-integrity] could not verify ${request.schemaUrl}: ${error?.message ?? JSON.stringify(error)}${
+        timedOut ? '; skipping checks for 60s' : ''
+      }`
+    );
     return undefined;
   }
 

@@ -17,12 +17,20 @@ const result = (status: ISchemaVerificationResult['status']): ISchemaVerificatio
 
 describe('checkSchemaIntegrity', () => {
   let logger: Logger;
+  let now = 0;
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
     logger = { warn: jest.fn(), debug: jest.fn() } as unknown as Logger;
     delete process.env.SCHEMA_INTEGRITY_CHECK;
     delete process.env.SCHEMA_INTEGRITY_TIMEOUT_MS;
+    // Each test starts past any cooldown an earlier test began.
+    now += 10 * 60_000;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   afterAll(() => {
@@ -88,6 +96,28 @@ describe('checkSchemaIntegrity', () => {
     const hanging = (): Promise<ISchemaVerificationResult> => new Promise(() => undefined);
     await expect(checkSchemaIntegrity(request, hanging, logger)).resolves.toBeUndefined();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('timed out after 20ms'));
+  });
+
+  it('skips checks for a minute after a timeout', async () => {
+    process.env.SCHEMA_INTEGRITY_CHECK = 'enforce';
+    process.env.SCHEMA_INTEGRITY_TIMEOUT_MS = '20';
+    await checkSchemaIntegrity(request, () => new Promise(() => undefined), logger);
+
+    const verify = jest.fn(async () => result('failed'));
+    now += 59_000;
+    await expect(checkSchemaIntegrity(request, verify, logger)).resolves.toBeUndefined();
+    expect(verify).not.toHaveBeenCalled();
+
+    now += 2_000;
+    await expect(checkSchemaIntegrity(request, verify, logger)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('does not skip checks after an error', async () => {
+    process.env.SCHEMA_INTEGRITY_CHECK = 'warn';
+    await checkSchemaIntegrity(request, async () => Promise.reject(new Error('agent down')), logger);
+    const verify = jest.fn(async () => result('verified'));
+    await checkSchemaIntegrity(request, verify, logger);
+    expect(verify).toHaveBeenCalled();
   });
 });
 
