@@ -29,6 +29,7 @@ export const rotationSettled = (status: IRotationStatus): boolean =>
 const toProgress = (status: IRotationStatus): IRotationProgress => ({
   job: { ...status.job },
   counts: { ...status.counts },
+  ...(undefined !== status.staleAfterSeconds && { staleAfterSeconds: status.staleAfterSeconds }),
   polledAt: new Date().toISOString()
 });
 
