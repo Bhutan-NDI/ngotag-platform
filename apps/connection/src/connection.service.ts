@@ -617,7 +617,7 @@ export class ConnectionService {
         [ConnectionProcessState.INVITATION_SENT]: 0,
         [ConnectionProcessState.INVITATION_RECEIVED]: 0,
         [ConnectionProcessState.REQUEST_SENT]: 0,
-        [ConnectionProcessState.DECLIEND]: 0,
+        [ConnectionProcessState.DECLINED]: 0,
         [ConnectionProcessState.REQUEST_RECEIVED]: 0,
         [ConnectionProcessState.RESPONSE_SENT]: 0,
         [ConnectionProcessState.RESPONSE_RECEIVED]: 0

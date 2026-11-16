@@ -75,7 +75,7 @@ export function toTerminalResponseCodeStatus(
   switch (state) {
     case VerificationProcessState.DONE:
       return isVerified ? ResponseCodeStatus.COMPLETED : ResponseCodeStatus.FAILED;
-    case VerificationProcessState.DECLIEND:
+    case VerificationProcessState.DECLINED:
     case VerificationProcessState.ABANDONED:
       return ResponseCodeStatus.FAILED;
     default:

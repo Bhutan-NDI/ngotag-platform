@@ -1162,7 +1162,7 @@ export class VerificationService {
         [VerificationProcessState.PRESENTATION_RECEIVED]: 0,
         [VerificationProcessState.PRESENTATION_SENT]: 0,
         [VerificationProcessState.DONE]: 0,
-        [VerificationProcessState.DECLIEND]: 0,
+        [VerificationProcessState.DECLINED]: 0,
         [VerificationProcessState.ABANDONED]: 0
       };
 
