@@ -28,6 +28,7 @@ import { AgentSpinUpStatus } from '@credebl/enum/enum';
 import { Controller, Logger } from '@nestjs/common';
 import { InvitationMessage } from '@credebl/common/interfaces/agent-service.interface';
 import { MessagePattern } from '@nestjs/microservices';
+import { ISchemaVerificationRequest, ISchemaVerificationResult } from '@credebl/common/schema-integrity';
 import { SignDataDto } from '../../api-gateway/src/agent-service/dto/agent-service.dto';
 import { user } from '@prisma/client';
 import {
@@ -96,6 +97,14 @@ export class AgentServiceController {
   @MessagePattern({ cmd: 'agent-migrate-w3c-schema' })
   async migrateW3CSchema(payload: { url; orgId; schemaRequestPayload }): Promise<object> {
     return this.agentServiceService.migrateW3CSchema(payload.url, payload.orgId, payload.schemaRequestPayload);
+  }
+
+  @MessagePattern({ cmd: 'agent-verify-w3c-schema' })
+  async verifyW3CSchema(payload: {
+    orgId: string;
+    verifyRequest: ISchemaVerificationRequest;
+  }): Promise<ISchemaVerificationResult> {
+    return this.agentServiceService.verifyW3CSchema(payload.orgId, payload.verifyRequest);
   }
 
   //DONE
