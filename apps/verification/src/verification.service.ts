@@ -27,6 +27,7 @@ import {
 } from './interfaces/verification.interface';
 import { VerificationRepository } from './repositories/verification.repository';
 import { ATTRIBUTE_NAME_REGEX, CommonConstants } from '@credebl/common/common.constant';
+import { getMaxProofRequestExpiresInSeconds } from '@credebl/common/proof-request-expiry';
 import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import { RecordType, org_agents, organisation, presentations, user } from '@prisma/client';
 import { additionalInvitationDidsField, ReuseInvitationDids } from '@credebl/common/invitation-dids';
@@ -73,6 +74,17 @@ import { IProofCallbackResult, ResponseCodeStatus } from './response-code/respon
  * left out of the request and agent-controller applies its deployment default (DIDCOMM_PROOF_REQUEST_EXPIRY).
  */
 const toAgentExpiresInSeconds = (value: number | null | undefined): number | undefined => value ?? undefined;
+
+/**
+ * Lifetime given to a same-device redirect request when the relying party sets none. The platform does not know the
+ * agent's deployment default, so a redirect request always carries its own deadline and its response_code session can
+ * be sized to match. Capped at PROOF_REQUEST_EXPIRY_MAX_SECONDS so a deployment with a low purge ceiling still accepts it.
+ */
+export const REDIRECT_DEFAULT_EXPIRES_IN_SECONDS = 600;
+
+function redirectDefaultExpiresInSeconds(): number {
+  return Math.min(REDIRECT_DEFAULT_EXPIRES_IN_SECONDS, getMaxProofRequestExpiresInSeconds());
+}
 
 @Injectable()
 export class VerificationService {
@@ -513,7 +525,9 @@ export class VerificationService {
       }
       const { invitationDid } = reuseDids;
       outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
-      const expiresInSeconds = toAgentExpiresInSeconds(requestedExpiresInSeconds);
+      const expiresInSeconds =
+        toAgentExpiresInSeconds(requestedExpiresInSeconds) ??
+        (redirectUri ? redirectDefaultExpiresInSeconds() : undefined);
 
       let payload: IProofRequestPayload;
 
@@ -581,7 +595,7 @@ export class VerificationService {
           presentationProof.deepLinkURL = convertUrlToDeepLinkUrl(presentationProof.invitationUrl);
         }
         if (redirectUri) {
-          await this.attachRedirect(presentationProof, user.orgId, redirectUri);
+          await this.attachRedirect(presentationProof, user.orgId, redirectUri, expiresInSeconds);
         }
         return presentationProof;
       }
@@ -594,7 +608,12 @@ export class VerificationService {
     }
   }
 
-  private async attachRedirect(presentationProof: IInvitation, orgId: string, redirectUri: string): Promise<void> {
+  private async attachRedirect(
+    presentationProof: IInvitation,
+    orgId: string,
+    redirectUri: string,
+    expiresInSeconds?: number
+  ): Promise<void> {
     const threadId = presentationProof.proofRecordThId;
     if (!threadId) {
       this.logger.warn(`[attachRedirect] - no proofRecordThId returned by the agent; skipping redirect`);
@@ -602,7 +621,7 @@ export class VerificationService {
     }
     let responseCode: string;
     try {
-      responseCode = await this.proofResponseCodeService.createSession(orgId, threadId, redirectUri);
+      responseCode = await this.proofResponseCodeService.createSession(orgId, threadId, redirectUri, expiresInSeconds);
     } catch (error) {
       // The invitation already exists; return it without redirect rather than failing the request.
       this.logger.error(`[attachRedirect] - failed to create response_code session: ${error?.message}`);
@@ -615,8 +634,8 @@ export class VerificationService {
   }
 
   private async updateResponseCodeSession({ proofPresentationPayload }: IProofPresentation): Promise<void> {
-    const { threadId, state, isVerified, presentationId } = proofPresentationPayload ?? {};
-    const status = toTerminalResponseCodeStatus(state, isVerified);
+    const { threadId, state, isVerified, presentationId, errorMessage } = proofPresentationPayload ?? {};
+    const status = toTerminalResponseCodeStatus(state, isVerified, errorMessage);
     if (!threadId || !status) {
       return;
     }
