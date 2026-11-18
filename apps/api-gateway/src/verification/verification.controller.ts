@@ -60,12 +60,13 @@ import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-m
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 import { MarketplaceService } from '../marketplace/marketplace.service';
 import { RateLimit } from 'nestjs-rate-limiter';
+import { isMarketplaceMeteringEnabled } from '../marketplace/utils/marketplace-config.util';
 
 /**
  * The global limit is per IP, and many citizens share one carrier or office IP; the real limit for these routes is per
  * hostedId, in the verification service (DL-008). This only replaces the global per-IP ceiling with a looser one.
  */
-const HOSTED_PAGE_IP_RATE_LIMIT = { keyPrefix: 'verification-hosted', points: 500, duration: 1 };
+export const HOSTED_PAGE_IP_RATE_LIMIT = { keyPrefix: 'verification-hosted', points: 500, duration: 1 };
 
 /** A hostedId is 32 random bytes in base64url (43 characters); anything else is reported as not found. */
 function checkedHostedId(hostedId: string): string {
@@ -75,7 +76,6 @@ function checkedHostedId(hostedId: string): string {
   }
   return value;
 }
-import { isMarketplaceMeteringEnabled } from '../marketplace/utils/marketplace-config.util';
 
 @UseFilters(CustomExceptionFilter)
 @Controller()

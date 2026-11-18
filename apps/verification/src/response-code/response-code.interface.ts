@@ -34,7 +34,7 @@ export interface IProofCallbackResult {
 
 /**
  * What the NDI hosted page reads to show a request (HVP-SD §5.2). Created with the response_code session, only for a
- * request that carries a redirectUri, and lives exactly as long as it.
+ * request that carries a redirectUri, and lives one grace period longer than it.
  */
 export interface IHostedSession {
   hostedId: string;
@@ -42,7 +42,7 @@ export interface IHostedSession {
   threadId: string;
   /** The bare invitation: the QR code encodes this, never the deep link (DL-004). */
   proofRequestURL: string;
-  /** The deep link with returnUrl, for the "Open Bhutan NDI" button. */
+  /** The deep link without returnUrl, for the "Open Bhutan NDI" button; the page returns the browser itself. */
   deepLinkURL?: string;
   /** redirectUri?response_code=..., only ever handed out once the proof is completed or failed. */
   returnUrl: string;

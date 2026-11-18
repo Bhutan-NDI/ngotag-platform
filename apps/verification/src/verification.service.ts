@@ -58,7 +58,7 @@ import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { ISchemaDetail } from '@credebl/common/interfaces/schema.interface';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { EmailService } from '@credebl/common/email.service';
-import { ProofResponseCodeService } from './response-code/proof-response-code.service';
+import { ProofResponseCodeService, REQUEST_DEADLINE_GRACE_SECONDS } from './response-code/proof-response-code.service';
 import {
   appendReturnUrl,
   buildReturnUrl,
@@ -73,7 +73,6 @@ import {
   IHostedSession,
   IHostedStatus,
   IProofCallbackResult,
-  IResponseCodeSession,
   ResponseCodeStatus
 } from './response-code/response-code.interface';
 
@@ -651,19 +650,31 @@ export class VerificationService {
       this.logger.error(`[attachRedirect] - failed to create response_code session: ${error?.message}`);
       return;
     }
+    // The hosted page gets the deep link without returnUrl: it must not hand out the code before the proof ends (DL-013).
+    const bareDeepLinkURL = presentationProof.deepLinkURL;
     presentationProof.returnUrl = buildReturnUrl(redirectUri, responseCode);
     if (presentationProof.deepLinkURL) {
       presentationProof.deepLinkURL = appendReturnUrl(presentationProof.deepLinkURL, presentationProof.returnUrl);
     }
-    await this.attachHostedPage(presentationProof, orgId, threadId, redirectUri, expiresInSeconds, requestedAt);
+    await this.attachHostedPage(
+      presentationProof,
+      bareDeepLinkURL,
+      orgId,
+      threadId,
+      redirectUri,
+      expiresInSeconds,
+      requestedAt
+    );
   }
 
   /**
-   * Creates the NDI hosted page's session beside the response_code session, with the same lifetime (HVP-SD §5.2,
-   * DL-017). Like the redirect itself, a failure leaves the invitation usable, only without hostedPageUrl.
+   * Creates the NDI hosted page's session beside the response_code session (HVP-SD §5.2, DL-017). It lives one grace
+   * period longer, so the page can read `expired` after the code session ends. Like the redirect itself, a failure
+   * leaves the invitation usable, only without hostedPageUrl.
    */
   private async attachHostedPage(
     presentationProof: IInvitation,
+    deepLinkURL: string | undefined,
     orgId: string,
     threadId: string,
     redirectUri: string,
@@ -682,14 +693,14 @@ export class VerificationService {
           orgId,
           threadId,
           proofRequestURL: presentationProof.invitationUrl,
-          deepLinkURL: presentationProof.deepLinkURL,
+          deepLinkURL,
           returnUrl: presentationProof.returnUrl,
           redirectUri,
           returnHost: new URL(redirectUri).host,
           outOfBandId: presentationProof.outOfBandRecord?.id,
           expiresAt: new Date(requestedAt + lifetimeMs).toISOString()
         },
-        ttlSeconds
+        ttlSeconds + REQUEST_DEADLINE_GRACE_SECONDS
       );
       presentationProof.hostedPageUrl = `${baseUrl}/v/${hostedId}`;
     } catch (error) {
@@ -723,8 +734,12 @@ export class VerificationService {
         error: 'Too Many Requests'
       });
     }
-    const pastDeadline = Date.now() >= Date.parse(session.expiresAt);
-    const codeSession = await this.callHostedStore(() => this.readCodeSession(session.threadId));
+    // Pending through the grace period: a result that lands then is still delivered, so `expired` is only reported
+    // once nothing can change it.
+    const graceMs = REQUEST_DEADLINE_GRACE_SECONDS * 1000;
+    const pastDeadline = Date.now() >= Date.parse(session.expiresAt) + graceMs;
+    const { threadId } = session;
+    const codeSession = await this.callHostedStore(() => this.proofResponseCodeService.getSessionByThreadId(threadId));
     if (codeSession && ResponseCodeStatus.PENDING !== codeSession.status) {
       // Completed or failed: the page sends the browser back with the code. Expired: it offers "Start again" (DL-013).
       return ResponseCodeStatus.EXPIRED === codeSession.status
@@ -736,10 +751,6 @@ export class VerificationService {
       return { status: session.outcome };
     }
     return { status: pastDeadline ? 'expired' : 'pending' };
-  }
-
-  private readCodeSession(threadId: string): Promise<IResponseCodeSession | null> {
-    return this.proofResponseCodeService.getSessionByThreadId(threadId);
   }
 
   private async findHostedSession(hostedId: string): Promise<IHostedSession> {

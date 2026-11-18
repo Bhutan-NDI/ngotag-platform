@@ -165,7 +165,10 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
     return token ? this.getSession(token) : null;
   }
 
-  /** Stores the hosted page's session with the same lifetime as the request's response_code session. */
+  /**
+   * Stores the hosted page's session. The caller gives it the response_code session's lifetime plus one more grace
+   * period, so the page can still read `expired` after the code session ends.
+   */
   async createHostedSession(session: Omit<IHostedSession, 'hostedId'>, ttlSeconds: number): Promise<string> {
     const hostedId = randomBytes(32).toString('base64url');
     await this.exec(
@@ -192,17 +195,18 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
     if (!session || session.outcome) {
       return;
     }
-    await this.redis().set(this.hostedKey(hostedId), JSON.stringify({ ...session, outcome }), 'KEEPTTL');
+    // XX: if the session expired since the read, do not recreate it without an expiry.
+    await this.redis().set(this.hostedKey(hostedId), JSON.stringify({ ...session, outcome }), 'KEEPTTL', 'XX');
   }
 
   /** Counts a status read for a hosted page in the current window; the caller decides the limit (DL-008). */
   async countHostedStatusRead(hostedId: string): Promise<number> {
     const key = `${HOSTED_RATE_PREFIX}${hostedId}`;
-    const count = await this.redis().incr(key);
-    if (1 === count) {
-      await this.redis().expire(key, HOSTED_RATE_WINDOW_SECONDS);
-    }
-    return count;
+    // One transaction, so the window's expiry is always set with the counter.
+    const [, count] = await this.exec(
+      this.redis().multi().set(key, 0, 'EX', HOSTED_RATE_WINDOW_SECONDS, 'NX').incr(key)
+    );
+    return count as number;
   }
 
   /** Returns false when a concurrent reader already consumed the token. */

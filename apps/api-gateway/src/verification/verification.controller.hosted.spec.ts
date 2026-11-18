@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { VerificationController } from './verification.controller';
+import { HOSTED_PAGE_IP_RATE_LIMIT, VerificationController } from './verification.controller';
 
 function makeController(): { controller: VerificationController; service: Record<string, jest.Mock> } {
   const service = {
@@ -18,6 +18,13 @@ function makeRes(): { status: jest.Mock; json: jest.Mock; setHeader: jest.Mock }
 
 describe('hosted verification page routes', () => {
   const validId = 'a'.repeat(43);
+
+  // The global RateLimiterGuard reads this metadata and uses its points instead of the global 50 per second.
+  it.each(['getHostedPage', 'getHostedStatus'] as const)('%s replaces the global per-IP limit', (handler) => {
+    expect(Reflect.getMetadata('rateLimit', VerificationController.prototype[handler])).toEqual(
+      HOSTED_PAGE_IP_RATE_LIMIT
+    );
+  });
 
   it('serves a valid hostedId without caching', async () => {
     const { controller, service } = makeController();

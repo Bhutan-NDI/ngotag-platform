@@ -82,7 +82,7 @@ describe('hosted verification session', () => {
   });
 
   describe('creation', () => {
-    it('returns hostedPageUrl for a redirect request, with the same lifetime as the response_code session', async () => {
+    it('returns hostedPageUrl for a redirect request, living one grace period longer than the response_code session', async () => {
       const { service, redis } = makeService();
 
       const result = await sendOob(service, { redirectUri: REDIRECT_URI, expiresInSeconds: 900 });
@@ -90,7 +90,7 @@ describe('hosted verification session', () => {
       expect(result.hostedPageUrl).toMatch(/^https:\/\/id\.bhutanndi\.com\/v\/[A-Za-z0-9_-]{43}$/);
       const hostedId = hostedIdOf(result);
       const ttl = 900 + REQUEST_DEADLINE_GRACE_SECONDS;
-      expect(redis.ttls.get(`verification:hosted:${hostedId}`)).toBe(ttl);
+      expect(redis.ttls.get(`verification:hosted:${hostedId}`)).toBe(ttl + REQUEST_DEADLINE_GRACE_SECONDS);
       expect(redis.ttls.get(`verification:response-code:${codeOf(result.returnUrl)}`)).toBe(ttl);
     });
 
@@ -112,7 +112,7 @@ describe('hosted verification session', () => {
   });
 
   describe('GET /verification/hosted/:hostedId', () => {
-    it('returns what the page shows, with the bare invitation for the QR and no response_code', async () => {
+    it('returns what the page shows, with the bare invitation for the QR and no response_code anywhere', async () => {
       const { service } = makeService();
       const before = Date.now();
       const result = await sendOob(service, { redirectUri: REDIRECT_URI, expiresInSeconds: 900 });
@@ -122,11 +122,14 @@ describe('hosted verification session', () => {
       expect(page).toMatchObject({
         returnHost: 'rp.example.com',
         redirectUri: REDIRECT_URI,
-        proofRequestURL: INVITATION_URL,
-        deepLinkURL: result.deepLinkURL
+        proofRequestURL: INVITATION_URL
       });
-      expect(JSON.stringify(page.redirectUri)).not.toContain('response_code');
-      expect(page.deepLinkURL).toContain('returnUrl=');
+      // The relying party's own deep link carries the code; the page's never does (DL-013).
+      expect(result.deepLinkURL).toContain('returnUrl=');
+      expect(page.deepLinkURL).toBeDefined();
+      expect(page.deepLinkURL).not.toContain('returnUrl=');
+      expect(JSON.stringify(page)).not.toContain('response_code');
+      expect(JSON.stringify(page)).not.toContain(codeOf(result.returnUrl));
       const expiresAt = Date.parse(page.expiresAt);
       expect(expiresAt).toBeGreaterThanOrEqual(before + 900_000);
       expect(expiresAt).toBeLessThanOrEqual(Date.now() + 900_000);
@@ -178,13 +181,27 @@ describe('hosted verification session', () => {
       expect(await expired.service.getHostedStatus(hostedIdOf(expiredResult))).toEqual({ status: 'expired' });
     });
 
-    it('reports expired once the deadline passes, even if the wallet never reported anything', async () => {
+    it('reports expired once the deadline and grace period pass, even if the wallet never reported anything', async () => {
       const { service } = makeService();
       const result = await sendOob(service, { redirectUri: REDIRECT_URI, expiresInSeconds: 300 });
       const now = Date.now();
-      jest.spyOn(Date, 'now').mockReturnValue(now + 301_000);
+      const afterGraceMs = (300 + REQUEST_DEADLINE_GRACE_SECONDS + 1) * 1000;
+      jest.spyOn(Date, 'now').mockReturnValue(now + afterGraceMs);
 
       expect(await service.getHostedStatus(hostedIdOf(result))).toEqual({ status: 'expired' });
+    });
+
+    it('stays pending through the grace period, so a result landing then is completed, never expired first', async () => {
+      const { service } = makeService();
+      const result = await sendOob(service, { redirectUri: REDIRECT_URI, expiresInSeconds: 300 });
+      const hostedId = hostedIdOf(result);
+      const now = Date.now();
+      jest.spyOn(Date, 'now').mockReturnValue(now + 301_000);
+
+      expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'pending' });
+
+      await webhook(service, { state: 'done', isVerified: true, presentationId: 'pres-1' });
+      expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'completed', returnUrl: result.returnUrl });
     });
 
     it('limits status reads per hostedId', async () => {
@@ -197,6 +214,36 @@ describe('hosted verification session', () => {
       }
       expect(rpcStatus(await service.getHostedStatus(hostedId).catch((error) => error))).toBe(429);
       expect(redis.ttls.get(`verification:rate:hosted:${hostedId}`)).toBe(60);
+    });
+  });
+
+  describe('store', () => {
+    it('does not recreate a hosted session that expired between reading it and recording the outcome', async () => {
+      const { service, redis } = makeService();
+      const hostedId = hostedIdOf(await sendOob(service, { redirectUri: REDIRECT_URI }));
+      const responseCodes = (service as unknown as { proofResponseCodeService: ProofResponseCodeService })
+        .proofResponseCodeService;
+      const session = await responseCodes.getHostedSession(hostedId);
+      jest.spyOn(responseCodes, 'getHostedSession').mockResolvedValue(session);
+      redis.store.delete(`verification:hosted:${hostedId}`);
+
+      await responseCodes.recordHostedOutcome(THREAD_ID, ResponseCodeStatus.COMPLETED);
+
+      expect(redis.store.has(`verification:hosted:${hostedId}`)).toBe(false);
+    });
+
+    it('sets the read counter and its window together, and keeps the window on later reads', async () => {
+      const { service, redis } = makeService();
+      const hostedId = hostedIdOf(await sendOob(service, { redirectUri: REDIRECT_URI }));
+      const responseCodes = (service as unknown as { proofResponseCodeService: ProofResponseCodeService })
+        .proofResponseCodeService;
+      const key = `verification:rate:hosted:${hostedId}`;
+
+      expect(await responseCodes.countHostedStatusRead(hostedId)).toBe(1);
+      expect(redis.ttls.get(key)).toBe(60);
+      redis.ttls.set(key, 12);
+      expect(await responseCodes.countHostedStatusRead(hostedId)).toBe(2);
+      expect(redis.ttls.get(key)).toBe(12);
     });
   });
 });
