@@ -1,5 +1,6 @@
 import { VerificationProcessState } from '@credebl/enum/enum';
-import { ResponseCodeStatus } from './response-code.interface';
+import { REQUEST_EXPIRED_ERROR_PREFIX } from '../interfaces/verification.interface';
+import { ResponseCodeStatus, TerminalResponseCodeStatus } from './response-code.interface';
 
 export function parseRedirectUriAllowlist(stored?: string | null): string[] {
   return (stored || '')
@@ -70,13 +71,18 @@ export function appendReturnUrl(deepLinkUrl: string, returnUrl: string): string 
 
 export function toTerminalResponseCodeStatus(
   state: string,
-  isVerified?: boolean
-): ResponseCodeStatus.COMPLETED | ResponseCodeStatus.FAILED | null {
+  isVerified?: boolean,
+  errorMessage?: string | null
+): TerminalResponseCodeStatus | null {
   switch (state) {
     case VerificationProcessState.DONE:
       return isVerified ? ResponseCodeStatus.COMPLETED : ResponseCodeStatus.FAILED;
-    case VerificationProcessState.DECLINED:
     case VerificationProcessState.ABANDONED:
+      // A request the wallet let run out is not a refusal.
+      return errorMessage?.startsWith(REQUEST_EXPIRED_ERROR_PREFIX)
+        ? ResponseCodeStatus.EXPIRED
+        : ResponseCodeStatus.FAILED;
+    case VerificationProcessState.DECLINED:
       return ResponseCodeStatus.FAILED;
     default:
       return null;
