@@ -13,6 +13,7 @@ const KEY_PREFIX = 'verification:response-code:';
 const THREAD_INDEX_PREFIX = 'verification:idx:thread:';
 const HOSTED_PREFIX = 'verification:hosted:';
 const HOSTED_THREAD_INDEX_PREFIX = 'verification:idx:hosted-thread:';
+const HOSTED_OOB_INDEX_PREFIX = 'verification:idx:hosted-oob:';
 const HOSTED_RATE_PREFIX = 'verification:rate:hosted:';
 /** Window of the per-hostedId read limit on the status endpoint (DL-008). */
 export const HOSTED_RATE_WINDOW_SECONDS = 60;
@@ -171,12 +172,14 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
    */
   async createHostedSession(session: Omit<IHostedSession, 'hostedId'>, ttlSeconds: number): Promise<string> {
     const hostedId = randomBytes(32).toString('base64url');
-    await this.exec(
-      this.redis()
-        .multi()
-        .set(this.hostedKey(hostedId), JSON.stringify({ hostedId, ...session }), 'EX', ttlSeconds)
-        .set(this.hostedThreadIndexKey(session.threadId), hostedId, 'EX', ttlSeconds)
-    );
+    const transaction = this.redis()
+      .multi()
+      .set(this.hostedKey(hostedId), JSON.stringify({ hostedId, ...session }), 'EX', ttlSeconds)
+      .set(this.hostedThreadIndexKey(session.threadId), hostedId, 'EX', ttlSeconds);
+    if (session.outOfBandId) {
+      transaction.set(this.hostedOutOfBandIndexKey(session.outOfBandId), hostedId, 'EX', ttlSeconds);
+    }
+    await this.exec(transaction);
     return hostedId;
   }
 
@@ -197,6 +200,29 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
     }
     // XX: if the session expired since the read, do not recreate it without an expiry.
     await this.redis().set(this.hostedKey(hostedId), JSON.stringify({ ...session, outcome }), 'KEEPTTL', 'XX');
+  }
+
+  /**
+   * Marks the hosted session of a scanned invitation (DL-016). Ignored for an invitation without a hosted page, for
+   * another org's, and once the proof has ended. Returns whether the session was marked.
+   */
+  async markHostedScanned(outOfBandId: string, orgId: string): Promise<boolean> {
+    const hostedId = await this.redis().get(this.hostedOutOfBandIndexKey(outOfBandId));
+    if (!hostedId) {
+      return false;
+    }
+    const session = await this.getHostedSession(hostedId);
+    if (!session || session.orgId !== orgId || session.scanned || session.outcome) {
+      return false;
+    }
+    // XX: if the session expired since the read, do not recreate it without an expiry.
+    const applied = await this.redis().set(
+      this.hostedKey(hostedId),
+      JSON.stringify({ ...session, scanned: true }),
+      'KEEPTTL',
+      'XX'
+    );
+    return 'OK' === applied;
   }
 
   /** Counts a status read for a hosted page in the current window; the caller decides the limit (DL-008). */
@@ -261,5 +287,9 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
 
   private hostedThreadIndexKey(threadId: string): string {
     return `${HOSTED_THREAD_INDEX_PREFIX}${threadId}`;
+  }
+
+  private hostedOutOfBandIndexKey(outOfBandId: string): string {
+    return `${HOSTED_OOB_INDEX_PREFIX}${outOfBandId}`;
   }
 }

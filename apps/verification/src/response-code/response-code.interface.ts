@@ -54,6 +54,8 @@ export interface IHostedSession {
   expiresAt: string;
   /** Kept once the proof ends, so the page still learns it after the response_code is used. */
   outcome?: TerminalResponseCodeStatus;
+  /** The wallet connected for this invitation, so the QR code was scanned (DL-016). Optional signal. */
+  scanned?: boolean;
 }
 
 /** GET /verification/hosted/:hostedId. Carries no response_code (DL-013). */

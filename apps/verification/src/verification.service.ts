@@ -750,7 +750,26 @@ export class VerificationService {
       // The code was already exchanged or its result window has passed: report the outcome, with nothing to return.
       return { status: session.outcome };
     }
-    return { status: pastDeadline ? 'expired' : 'pending' };
+    if (pastDeadline) {
+      return { status: 'expired' };
+    }
+    // Optional: without the scan signal the page simply stays on pending (DL-016).
+    return { status: session.scanned ? 'scanned' : 'pending' };
+  }
+
+  /**
+   * The wallet connected for an invitation, which it does as soon as it scans and before it shows the request
+   * (HVP-SD E10, DL-016). Sent by the connection service; never fails the connection webhook.
+   */
+  async markHostedScanned(outOfBandId: string, orgId: string): Promise<void> {
+    if (!outOfBandId || !orgId) {
+      return;
+    }
+    try {
+      await this.proofResponseCodeService.markHostedScanned(outOfBandId, orgId);
+    } catch (error) {
+      this.logger.warn(`[markHostedScanned] - could not mark ${outOfBandId} scanned: ${error?.message}`);
+    }
   }
 
   private async findHostedSession(hostedId: string): Promise<IHostedSession> {

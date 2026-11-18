@@ -131,6 +131,11 @@ export class VerificationController {
     return this.verificationService.getHostedStatus(payload.hostedId);
   }
 
+  @MessagePattern({ cmd: 'hosted-verification-scanned' })
+  async markHostedScanned(payload: { outOfBandId: string; orgId: string }): Promise<void> {
+    return this.verificationService.markHostedScanned(payload.outOfBandId, payload.orgId);
+  }
+
   @MessagePattern({ cmd: 'set-verification-redirect-uris' })
   async setRedirectUris(payload: { orgId: string; redirectUris: string[]; userId: string }): Promise<string[]> {
     const { orgId, redirectUris, userId } = payload;

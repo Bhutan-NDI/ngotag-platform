@@ -49,11 +49,29 @@ export class ConnectionService {
   async getConnectionWebhook(payload: ICreateConnection): Promise<object> {
     try {
       const saveConnectionDetails = await this.connectionRepository.saveConnectionWebhook(payload);
+      // The saved row carries the org resolved from the agent's tenant, which a shared-agent webhook URL does not.
+      this.notifyHostedScan(payload.connectionDto, (saveConnectionDetails as { orgId?: string })?.orgId);
       return saveConnectionDetails;
     } catch (error) {
       this.logger.error(`[getConnectionWebhook] - error in fetch connection webhook: ${error}`);
       throw new RpcException(error?.response ?? error);
     }
+  }
+
+  /**
+   * Tells the verification service which invitation the wallet just connected for, so an NDI hosted page can show that
+   * its QR code was scanned (DL-016). A reused connection keeps the id of the invitation it was first made from, so the
+   * scanned invitation comes from outOfBandRecord on a HandshakeReused event. Fire and forget: the signal is optional
+   * and never delays or fails the webhook.
+   */
+  private notifyHostedScan(connectionDto: ICreateConnection['connectionDto'], orgId?: string): void {
+    const outOfBandId = connectionDto?.outOfBandRecord?.id ?? connectionDto?.outOfBandId;
+    if (!outOfBandId || !orgId) {
+      return;
+    }
+    this.natsClient
+      .sendNatsMessage(this.connectionServiceProxy, 'hosted-verification-scanned', { outOfBandId, orgId })
+      .catch((error) => this.logger.debug(`[notifyHostedScan] - not delivered: ${error?.message ?? error}`));
   }
 
   /**
