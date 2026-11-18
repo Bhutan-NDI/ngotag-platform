@@ -17,7 +17,7 @@ import NestjsLoggerServiceAdapter from '@credebl/logger/nestjsLoggerServiceAdapt
 import { UpdatableValidationPipe } from '@credebl/common/custom-overrideable-validation-pipe';
 import * as useragent from 'express-useragent';
 import { EcosystemSwaggerFilter } from './authz/guards/ecosystem-swagger.filter';
-import { getMaxProofRequestExpiresInSeconds } from './verification/dto/request-proof.dto';
+import { getMaxProofRequestExpiresInSeconds } from '@credebl/common/proof-request-expiry';
 
 dotenv.config();
 // Fail at startup, not on the first proof request, if PROOF_REQUEST_EXPIRY_MAX_SECONDS is invalid.

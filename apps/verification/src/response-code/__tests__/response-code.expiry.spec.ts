@@ -78,6 +78,20 @@ describe('response_code session follows the proof request deadline', () => {
     expect(sessionTtl(redis, returnUrl)).toBe(REDIRECT_DEFAULT_EXPIRES_IN_SECONDS + REQUEST_DEADLINE_GRACE_SECONDS);
   });
 
+  it('caps the redirect default at PROOF_REQUEST_EXPIRY_MAX_SECONDS', async () => {
+    process.env.PROOF_REQUEST_EXPIRY_MAX_SECONDS = '400';
+    try {
+      const { service, redis, natsSend } = makeService();
+
+      const { returnUrl } = await sendOob(service, { redirectUri: REDIRECT_URI });
+
+      expect(agentExpiresInSeconds(natsSend)).toBe(400);
+      expect(sessionTtl(redis, returnUrl)).toBe(400 + REQUEST_DEADLINE_GRACE_SECONDS);
+    } finally {
+      delete process.env.PROOF_REQUEST_EXPIRY_MAX_SECONDS;
+    }
+  });
+
   it('leaves the expiry to the agent default when there is no redirect', async () => {
     const { service, natsSend } = makeService();
 

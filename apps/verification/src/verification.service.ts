@@ -27,6 +27,7 @@ import {
 } from './interfaces/verification.interface';
 import { VerificationRepository } from './repositories/verification.repository';
 import { ATTRIBUTE_NAME_REGEX, CommonConstants } from '@credebl/common/common.constant';
+import { getMaxProofRequestExpiresInSeconds } from '@credebl/common/proof-request-expiry';
 import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import { RecordType, org_agents, organisation, presentations, user } from '@prisma/client';
 import { additionalInvitationDidsField, ReuseInvitationDids } from '@credebl/common/invitation-dids';
@@ -77,9 +78,13 @@ const toAgentExpiresInSeconds = (value: number | null | undefined): number | und
 /**
  * Lifetime given to a same-device redirect request when the relying party sets none. The platform does not know the
  * agent's deployment default, so a redirect request always carries its own deadline and its response_code session can
- * be sized to match.
+ * be sized to match. Capped at PROOF_REQUEST_EXPIRY_MAX_SECONDS so a deployment with a low purge ceiling still accepts it.
  */
 export const REDIRECT_DEFAULT_EXPIRES_IN_SECONDS = 600;
+
+function redirectDefaultExpiresInSeconds(): number {
+  return Math.min(REDIRECT_DEFAULT_EXPIRES_IN_SECONDS, getMaxProofRequestExpiresInSeconds());
+}
 
 @Injectable()
 export class VerificationService {
@@ -522,7 +527,7 @@ export class VerificationService {
       outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
       const expiresInSeconds =
         toAgentExpiresInSeconds(requestedExpiresInSeconds) ??
-        (redirectUri ? REDIRECT_DEFAULT_EXPIRES_IN_SECONDS : undefined);
+        (redirectUri ? redirectDefaultExpiresInSeconds() : undefined);
 
       let payload: IProofRequestPayload;
 
