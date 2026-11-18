@@ -42,6 +42,29 @@ export class FakeRedis {
     return this.store.get(key) ?? null;
   }
 
+  /** Only the KEEPTTL form is used outside a transaction. */
+  async set(key: string, value: string, mode: 'KEEPTTL'): Promise<'OK'> {
+    this.assertConnected();
+    if ('KEEPTTL' !== mode) {
+      throw new Error(`FakeRedis.set supports only KEEPTTL, got ${mode}`);
+    }
+    this.store.set(key, value);
+    return 'OK';
+  }
+
+  async incr(key: string): Promise<number> {
+    this.assertConnected();
+    const next = Number(this.store.get(key) ?? 0) + 1;
+    this.store.set(key, String(next));
+    return next;
+  }
+
+  async expire(key: string, ttl: number): Promise<number> {
+    this.assertConnected();
+    this.ttls.set(key, ttl);
+    return this.store.has(key) ? 1 : 0;
+  }
+
   async eval(_script: string, _numKeys: number, ...args: (string | number)[]): Promise<number> {
     this.assertConnected();
     const [tokenKey, indexKey, expected, updated, ttl] = args as [string, string, string, string, number];

@@ -31,3 +31,44 @@ export interface IProofCallbackResult {
   threadId?: string;
   result?: IResponseCodeResult;
 }
+
+/**
+ * What the NDI hosted page reads to show a request (HVP-SD §5.2). Created with the response_code session, only for a
+ * request that carries a redirectUri, and lives exactly as long as it.
+ */
+export interface IHostedSession {
+  hostedId: string;
+  orgId: string;
+  threadId: string;
+  /** The bare invitation: the QR code encodes this, never the deep link (DL-004). */
+  proofRequestURL: string;
+  /** The deep link with returnUrl, for the "Open Bhutan NDI" button. */
+  deepLinkURL?: string;
+  /** redirectUri?response_code=..., only ever handed out once the proof is completed or failed. */
+  returnUrl: string;
+  redirectUri: string;
+  returnHost: string;
+  /** Links a later connection or handshake-reuse event to this session (DL-016). */
+  outOfBandId?: string;
+  /** The request's own deadline (DL-017). */
+  expiresAt: string;
+  /** Kept once the proof ends, so the page still learns it after the response_code is used. */
+  outcome?: TerminalResponseCodeStatus;
+}
+
+/** GET /verification/hosted/:hostedId. Carries no response_code (DL-013). */
+export interface IHostedPage {
+  returnHost: string;
+  redirectUri: string;
+  proofRequestURL: string;
+  deepLinkURL?: string;
+  expiresAt: string;
+}
+
+export type HostedStatus = 'pending' | 'scanned' | 'completed' | 'failed' | 'expired';
+
+/** GET /verification/hosted/:hostedId/status. returnUrl only while the result can still be exchanged. */
+export interface IHostedStatus {
+  status: HostedStatus;
+  returnUrl?: string;
+}
