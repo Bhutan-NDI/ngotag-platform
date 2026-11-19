@@ -86,8 +86,156 @@ jobs:
       - name: Build ${{ matrix.app }}
         run: pnpm run build ${{ matrix.app }}
 
+  # Most existing files fail prettier or eslint, so only files a PR adds are gated;
+  # files it modifies are reported.
+  changed-files:
+    if: github.event_name == 'pull_request'
+    name: Lint changed files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      PHANTOMJS_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@9.15.3 --ignore-scripts
+
+      - name: Locate the pnpm store
+        id: pnpm
+        run: echo "store=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm.outputs.store }}
+          key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm exec prisma generate --schema=libs/prisma-service/prisma/schema.prisma
+
+      - name: Collect changed TypeScript files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git diff -z --name-only --diff-filter=A "$BASE_SHA...HEAD" -- '*.ts' > "$RUNNER_TEMP/added"
+          git diff -z --name-only --diff-filter=CMR "$BASE_SHA...HEAD" -- '*.ts' > "$RUNNER_TEMP/modified"
+
+      - name: Formatting (added files)
+        run: xargs -0 -r pnpm exec prettier --check < "$RUNNER_TEMP/added"
+
+      - name: Linting (added files)
+        run: xargs -0 -r pnpm exec eslint < "$RUNNER_TEMP/added"
+
+      - name: Formatting (modified files)
+        id: format
+        continue-on-error: true
+        run: xargs -0 -r pnpm exec prettier --check < "$RUNNER_TEMP/modified"
+
+      - name: Linting (modified files)
+        id: lint
+        continue-on-error: true
+        run: xargs -0 -r pnpm exec eslint < "$RUNNER_TEMP/modified"
+
+      - name: Summary
+        if: always()
+        env:
+          FORMAT: ${{ steps.format.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+        run: |
+          {
+            echo "## Modified files (report only)"
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Formatting | $FORMAT |"
+            echo "| Linting | $LINT |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Report only, and not required by Validate, until each check passes on develop.
+  backlog:
+    name: Backlog report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      PHANTOMJS_SKIP_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.21.0'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@9.15.3 --ignore-scripts
+
+      - name: Locate the pnpm store
+        id: pnpm
+        run: echo "store=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm.outputs.store }}
+          key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm exec prisma generate --schema=libs/prisma-service/prisma/schema.prisma
+
+      - name: Formatting
+        id: format
+        continue-on-error: true
+        run: pnpm exec prettier --check "apps/**/*.ts" "libs/**/*.ts"
+
+      - name: Linting
+        id: lint
+        continue-on-error: true
+        run: pnpm exec eslint "{apps,libs}/**/*.ts"
+
+      - name: Compile
+        id: compile
+        continue-on-error: true
+        run: pnpm exec tsc --noEmit -p tsconfig.json
+
+      - name: Test
+        id: test
+        continue-on-error: true
+        run: pnpm exec jest --ci
+
+      - name: Summary
+        if: always()
+        env:
+          FORMAT: ${{ steps.format.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+          COMPILE: ${{ steps.compile.outcome }}
+          TEST: ${{ steps.test.outcome }}
+        run: |
+          {
+            echo "## Backlog (report only)"
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Formatting | $FORMAT |"
+            echo "| Linting | $LINT |"
+            echo "| Compile | $COMPILE |"
+            echo "| Test | $TEST |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   validate:
-    needs: [release-automation, build]
+    needs: [release-automation, build, changed-files]
     if: always()
     name: Validate
     runs-on: ubuntu-24.04
@@ -97,6 +245,10 @@ jobs:
         env:
           RELEASE_AUTOMATION: ${{ needs.release-automation.result }}
           BUILD: ${{ needs.build.result }}
+          CHANGED_FILES: ${{ needs.changed-files.result }}
+          EVENT: ${{ github.event_name }}
         run: |
           test "$RELEASE_AUTOMATION" = success || { echo "release automation checks: $RELEASE_AUTOMATION" >&2; exit 1; }
           test "$BUILD" = success || { echo "service builds: $BUILD" >&2; exit 1; }
+          test "$CHANGED_FILES" = success || { test "$EVENT" != pull_request && test "$CHANGED_FILES" = skipped; } ||
+            { echo "changed-file lint: $CHANGED_FILES" >&2; exit 1; }
