@@ -5,15 +5,18 @@ import { CreateRole } from './dto/create-role.dto';
 import { UpdateRole } from './dto/update-role.dto';
 import { getNextPrevPages, getSkipTake } from '../common/functions';
 import { Prisma } from '@prisma/client';
-import { assertRole } from '../common/keycloak-roles.util';
+import { MobileVerifierAccess } from '../common/mobile-verifier-access.service';
 import { OrgRoles } from 'libs/org-roles/enums';
 
 @Injectable()
 export class VerifierRoleService {
-  constructor(private readonly verifierRoleRepository: VerifierRoleRepository) {}
+  constructor(
+    private readonly verifierRoleRepository: VerifierRoleRepository,
+    private readonly mobileVerifierAccess: MobileVerifierAccess
+  ) {}
 
   async createVerifierRole(rolePayload: CreateRole, loginOrgId: string, authorization: string): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
     const roleData: Prisma.mobile_verifier_roleCreateInput = {
       role: rolePayload.role,
@@ -34,7 +37,7 @@ export class VerifierRoleService {
     loginOrgId: string,
     authorization: string
   ): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
     const updatedCount = await this.verifierRoleRepository.updateVerifierRole(id, loginOrgId, {
       role: rolePayload.role

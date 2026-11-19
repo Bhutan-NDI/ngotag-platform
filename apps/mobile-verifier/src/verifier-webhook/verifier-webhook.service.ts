@@ -2,7 +2,7 @@ import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { VerifierWebhookRepository } from './verifier-webhook.repository';
 import { ResponseType } from '../common/response';
 import { CreateVerifierWebhook } from './dto/create-verifier-webhook.dto';
-import { assertRole } from '../common/keycloak-roles.util';
+import { MobileVerifierAccess } from '../common/mobile-verifier-access.service';
 import { OrgRoles } from 'libs/org-roles/enums';
 import { encryptClientCredential } from '@credebl/common/cast.helper';
 import { decryptIfEncrypted } from '../common/functions';
@@ -13,14 +13,17 @@ const SECRET_MASK = '********';
 
 @Injectable()
 export class VerifierWebhookService {
-  constructor(private readonly verifierWebhookRepository: VerifierWebhookRepository) {}
+  constructor(
+    private readonly verifierWebhookRepository: VerifierWebhookRepository,
+    private readonly mobileVerifierAccess: MobileVerifierAccess
+  ) {}
 
   async registerWebhook(
     webhookPayload: CreateVerifierWebhook,
     loginOrgId: string,
     authorization: string
   ): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
     const { webhookId, webhookUrl, authentication } = webhookPayload;
     const { version, data } = authentication;
@@ -42,7 +45,7 @@ export class VerifierWebhookService {
   }
 
   async getWebhook(loginOrgId: string, authorization: string, webhookId?: string): Promise<ResponseType> {
-    assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
+    await this.mobileVerifierAccess.assertRole(authorization, loginOrgId, OrgRoles.ALLOW_VERIFIER);
 
     const webhook = await this.verifierWebhookRepository.getWebhook(loginOrgId, webhookId);
 

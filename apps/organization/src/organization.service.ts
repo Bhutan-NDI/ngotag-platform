@@ -654,10 +654,9 @@ export class OrganizationService {
     role?: string
   ): Promise<IGetOrganization> {
     try {
+      const allOrganisations = await this.organizationRepository.isPlatformAdmin(userId);
       const query = {
-        userOrgRoles: {
-          some: { userId }
-        },
+        ...(allOrganisations ? {} : { userOrgRoles: { some: { userId } } }),
         OR: [
           { name: { contains: search, mode: 'insensitive' } },
           { description: { contains: search, mode: 'insensitive' } }
@@ -672,7 +671,8 @@ export class OrganizationService {
         pageNumber,
         pageSize,
         role,
-        userId
+        userId,
+        allOrganisations
       );
 
       const { organizations } = getOrgs;

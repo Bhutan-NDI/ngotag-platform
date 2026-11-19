@@ -21,6 +21,7 @@ import { VerifierUserService } from './verifier-user/verifier-user.service';
 import { VerifierWebhookController } from './verifier-webhook/verifier-webhook.controller';
 import { VerifierWebhookService } from './verifier-webhook/verifier-webhook.service';
 import { VerifierWebhookRepository } from './verifier-webhook/verifier-webhook.repository';
+import { MobileVerifierAccess } from './common/mobile-verifier-access.service';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { VerifierWebhookRepository } from './verifier-webhook/verifier-webhook.r
     VerifierUserService,
     VerifierWebhookService,
     VerifierWebhookRepository,
+    MobileVerifierAccess,
     NATSClient
   ]
 })
