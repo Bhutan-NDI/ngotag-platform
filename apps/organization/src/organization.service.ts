@@ -114,14 +114,17 @@ export class OrganizationService {
     keycloakUserId: string
   ): Promise<organisation> {
     try {
-      const userOrgCount = await this.organizationRepository.userOrganizationCount(userId);
+      // A platform admin may create any number of organisations; the limits apply to everyone else.
+      if (!(await this.organizationRepository.isPlatformAdmin(userId))) {
+        const userOrgCount = await this.organizationRepository.userOrganizationCount(userId);
 
-      if (userOrgCount >= toNumber(`${process.env.MAX_ORG_LIMIT}`)) {
-        throw new BadRequestException(ResponseMessages.organisation.error.MaximumOrgsLimit);
+        if (userOrgCount >= toNumber(`${process.env.MAX_ORG_LIMIT}`)) {
+          throw new BadRequestException(ResponseMessages.organisation.error.MaximumOrgsLimit);
+        }
+
+        // Enforce the marketplace plan organization limit after the platform-wide MAX_ORG_LIMIT.
+        await this.assertMarketplaceOrganizationLimit(userId, userOrgCount);
       }
-
-      // Enforce the marketplace plan organization limit after the platform-wide MAX_ORG_LIMIT.
-      await this.assertMarketplaceOrganizationLimit(userId, userOrgCount);
 
       const organizationExist = await this.organizationRepository.checkOrganizationNameExist(createOrgDto.name);
 

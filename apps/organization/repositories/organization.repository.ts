@@ -38,6 +38,7 @@ import {
 
 import { CreateOrganizationDto } from '../dtos/create-organization.dto';
 import { IOrgRoles } from 'libs/org-roles/interfaces/org-roles.interface';
+import { OrgRoles } from 'libs/org-roles/enums';
 import { PrismaService } from '@credebl/prisma-service';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { UserOrgRolesService } from '@credebl/user-org-roles';
@@ -809,6 +810,13 @@ export class OrganizationRepository {
       this.logger.error(`error: ${JSON.stringify(error)}`);
       throw new InternalServerErrorException(error);
     }
+  }
+
+  async isPlatformAdmin(userId: string): Promise<boolean> {
+    const count = await this.prisma.user_org_roles.count({
+      where: { userId, orgRole: { name: OrgRoles.PLATFORM_ADMIN } }
+    });
+    return 0 < count;
   }
 
   async userOrganizationCount(userId: string): Promise<number> {
