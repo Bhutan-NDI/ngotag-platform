@@ -42,9 +42,12 @@ export interface IHostedSession {
   threadId: string;
   /** The bare invitation: the QR code encodes this, never the deep link (DL-004). */
   proofRequestURL: string;
-  /** The deep link without returnUrl, for the "Open Bhutan NDI" button; the page returns the browser itself. */
+  /**
+   * The relying party's deep link, with returnUrl, for the "Open Bhutan NDI" button: the wallet opens returnUrl once
+   * the proof completes, so the page does not redirect after it is tapped (E7, DL-007).
+   */
   deepLinkURL?: string;
-  /** redirectUri?response_code=..., only ever handed out once the proof is completed or failed. */
+  /** redirectUri?response_code=..., only returned by /status once the proof is completed or failed. */
   returnUrl: string;
   redirectUri: string;
   returnHost: string;
@@ -56,7 +59,10 @@ export interface IHostedSession {
   outcome?: TerminalResponseCodeStatus;
 }
 
-/** GET /verification/hosted/:hostedId. Carries no response_code (DL-013). */
+/**
+ * GET /verification/hosted/:hostedId. `redirectUri` carries no response_code (DL-013); `deepLinkURL` does (DL-007), so
+ * the hostedId holder can exchange the code: see `attachHostedPage`.
+ */
 export interface IHostedPage {
   returnHost: string;
   redirectUri: string;

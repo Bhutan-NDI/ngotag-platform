@@ -74,6 +74,9 @@ export interface ICreateConnectionPayload {
   outOfBandId: string;
   orgId: string;
   contextCorrelationId: string;
+  /** Only on a HandshakeReused event: the invitation the wallet just scanned. */
+  outOfBandRecord?: { id?: string };
+  reuseThreadId?: string;
 }
 
 export interface IFetchConnections {
