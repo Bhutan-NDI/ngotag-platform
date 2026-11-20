@@ -157,6 +157,18 @@ export class VerificationService extends BaseService {
     return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-proof-callback-result', payload);
   }
 
+  getHostedPage(hostedId: string): Promise<object> {
+    return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-hosted-verification-session', {
+      hostedId
+    });
+  }
+
+  getHostedStatus(hostedId: string): Promise<object> {
+    return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-hosted-verification-status', {
+      hostedId
+    });
+  }
+
   setRedirectUris(orgId: string, redirectUris: string[], userId: string): Promise<string[]> {
     const payload = { orgId, redirectUris, userId };
     return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'set-verification-redirect-uris', payload);

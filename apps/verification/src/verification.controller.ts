@@ -17,7 +17,7 @@ import { Controller } from '@nestjs/common';
 import { IUserRequest } from '@credebl/user-request/user-request.interface';
 import { MessagePattern } from '@nestjs/microservices';
 import { VerificationService } from './verification.service';
-import { IProofCallbackResult } from './response-code/response-code.interface';
+import { IHostedPage, IHostedStatus, IProofCallbackResult } from './response-code/response-code.interface';
 
 @Controller()
 export class VerificationController {
@@ -119,6 +119,16 @@ export class VerificationController {
   @MessagePattern({ cmd: 'get-proof-callback-result' })
   async getProofCallbackResult(payload: { responseCode: string }): Promise<IProofCallbackResult> {
     return this.verificationService.getProofCallbackResult(payload.responseCode);
+  }
+
+  @MessagePattern({ cmd: 'get-hosted-verification-session' })
+  async getHostedPage(payload: { hostedId: string }): Promise<IHostedPage> {
+    return this.verificationService.getHostedPage(payload.hostedId);
+  }
+
+  @MessagePattern({ cmd: 'get-hosted-verification-status' })
+  async getHostedStatus(payload: { hostedId: string }): Promise<IHostedStatus> {
+    return this.verificationService.getHostedStatus(payload.hostedId);
   }
 
   @MessagePattern({ cmd: 'set-verification-redirect-uris' })
