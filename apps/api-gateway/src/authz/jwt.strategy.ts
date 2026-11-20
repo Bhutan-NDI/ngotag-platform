@@ -124,7 +124,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // Applied after ...payload so a userRole claim in the token cannot override the
       // database-derived value in either direction -- elevating a non-holder, or masking a
       // mapped one. This is the second source of truth the change exists to remove.
-      userRole: isHolder ? CommonConstants.USER_HOLDER_ROLE : undefined
+      userRole: isHolder ? CommonConstants.USER_HOLDER_ROLE : undefined,
+      // From the session row, after ...payload so no token claim can set it. A refresh leaves createdAt alone, so
+      // it dates the last email-and-password sign-in; StepUpAuthGuard reads it.
+      sessionCreatedAt: sessionDetails?.createdAt
     };
   }
 }

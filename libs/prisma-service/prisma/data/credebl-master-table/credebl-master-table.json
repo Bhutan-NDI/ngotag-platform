@@ -55,6 +55,14 @@
     {
       "name": "platform_admin",
       "description": "To setup all the platform of the user"
+    },
+    {
+      "name": "ALLOW_PROOF_TEMPLATE",
+      "description": "Allows creating mobile-verifier proof templates for this organization"
+    },
+    {
+      "name": "ALLOW_VERIFIER",
+      "description": "Allows creating mobile-verifier verifier roles for this organization"
     }
   ],
   "agentTypeData": [

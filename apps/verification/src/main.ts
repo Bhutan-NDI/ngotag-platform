@@ -6,10 +6,13 @@ import { VerificationModule } from './verification.module';
 import { getNatsOptions } from '@credebl/common/nats.config';
 import { CommonConstants } from '@credebl/common/common.constant';
 import NestjsLoggerServiceAdapter from '@credebl/logger/nestjsLoggerServiceAdapter';
+import { getMaxProofRequestExpiresInSeconds } from '@credebl/common/proof-request-expiry';
 
 const logger = new Logger();
 
 async function bootstrap(): Promise<void> {
+  // Fail at startup, not on the first redirect proof request, if PROOF_REQUEST_EXPIRY_MAX_SECONDS is invalid.
+  getMaxProofRequestExpiresInSeconds();
   const app = await NestFactory.createMicroservice<MicroserviceOptions>(VerificationModule, {
     transport: Transport.NATS,
     options: getNatsOptions(

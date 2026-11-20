@@ -32,11 +32,6 @@ export interface IRequestProof {
   willConfirm?: boolean;
 }
 
-export interface IGetAllProofPresentations {
-  url: string;
-  apiKey: string;
-}
-
 export interface IGetProofPresentationById {
   url: string;
   apiKey?: string;
@@ -144,6 +139,7 @@ export interface ISendPresentationExchangeProofRequestPayload {
   proofFormats: IPresentationExchangeProofFormats;
   autoAcceptProof: string;
   label?: string;
+  expiresInSeconds?: number;
 }
 export interface IPresentationExchangeProofRequestPayload {
   url: string;
@@ -173,7 +169,9 @@ export interface ISendProofRequestPayload {
   reuseConnection?: boolean;
   recipientKey?: string;
   invitationDid?: string;
+  additionalInvitationDids?: string[];
   redirectUri?: string;
+  expiresInSeconds?: number | null;
 }
 
 export interface IWSendProofRequestPayload {
@@ -267,6 +265,7 @@ export interface IProofRequestData {
   presentationDefinition?: IProofRequestPresentationDefinition;
   comment: string;
   autoAcceptProof: AutoAccept;
+  expiresInSeconds?: number | null;
 }
 export interface IProofFormat {
   indy: Indy;
@@ -295,7 +294,7 @@ export interface IEmailResponse {
 export enum ProofRequest {
   presentationReceived = 'presentation-received',
   offerReceived = 'offer-received',
-  declined = 'decliend',
+  declined = 'declined',
   requestSent = 'request-sent',
   requestReceived = 'request-received',
   credentialIssued = 'credential-issued',
@@ -309,8 +308,17 @@ export enum ProofRequestState {
   requestReceived = 'Received',
   done = 'Verified',
   abandoned = 'Declined',
+  expired = 'Expired',
   presentationReceived = 'Presentation Received'
 }
+
+/**
+ * How an expired proof request reaches the verifier as errorMessage. The holder's wallet sends a problem report with
+ * description "request-expired", but Credo always sets its code to "abandoned", and the verifier's agent stores
+ * `${code}: ${description}`. This prefix is the only thing that tells an expired request from a genuine decline: both
+ * end as abandoned.
+ */
+export const REQUEST_EXPIRED_ERROR_PREFIX = 'abandoned: request-expired';
 
 export interface IProofPresentationByThread {
   threadId: string;

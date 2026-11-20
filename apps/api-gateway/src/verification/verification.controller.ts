@@ -684,16 +684,21 @@ export class VerificationController {
   @ApiOperation({
     summary: 'Get proof result by response_code',
     description:
-      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof finishes. completed only means it finished: fetch the outcome with the authenticated proof endpoint. A completed/failed result can be read only once, so read it once and keep the outcome in your own state (a retried or duplicated read gets 410).'
+      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof finishes. completed only means it finished: fetch the outcome with the authenticated proof endpoint. expired with a threadId means the request ran out before the holder answered. A completed, failed or expired result can be read only once, so read it once and keep the outcome in your own state (a retried or duplicated read gets 410).'
   })
   @ApiQuery({ name: 'response_code', required: true })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Pending, completed or failed', type: ApiResponseDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Pending, completed, failed, or expired with a threadId (the request ran out)',
+    type: ApiResponseDto
+  })
   @ApiResponse({ status: HttpStatus.GONE, description: 'Unknown, expired or already used response_code' })
   async getProofCallbackResult(@Query('response_code') responseCode: string, @Res() res: Response): Promise<Response> {
     // Set first so error responses (e.g. 503) are not cached either.
     res.setHeader('Cache-Control', 'no-store');
     const callbackResult = await this.verificationService.getProofCallbackResult(responseCode?.trim());
-    if ('expired' === callbackResult.status) {
+    // An expired result with a threadId is the request's outcome; without one the code itself is unknown or used.
+    if ('expired' === callbackResult.status && !callbackResult.threadId) {
       return res.status(HttpStatus.GONE).json({
         statusCode: HttpStatus.GONE,
         message: ResponseMessages.verification.error.responseCodeExpired,

@@ -13,7 +13,6 @@ import { IssueCredentials, IssuedCredentialStatus } from '../enum/issuance.enum'
 // eslint-disable-next-line camelcase
 import {
   Prisma,
-  agent_invitations,
   credentials,
   file_data,
   file_upload,
@@ -29,6 +28,7 @@ import { IDeletedIssuanceRecords } from '@credebl/common/interfaces/issuance.int
 import { IIssuedCredentialSearchParams } from 'apps/api-gateway/src/issuance/interfaces';
 import { IUserRequest } from '@credebl/user-request/user-request.interface';
 import { PrismaService } from '@credebl/prisma-service';
+import { findReuseInvitationDids, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import { ResponseMessages } from '@credebl/common/response-messages';
 
 @Injectable()
@@ -93,29 +93,8 @@ export class IssuanceRepository {
     }
   }
 
-  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations> {
-    try {
-      return this.prisma.agent_invitations.findFirst({
-        where: {
-          AND: [
-            {
-              orgId
-            },
-            {
-              invitationDid: {
-                not: null
-              }
-            }
-          ]
-        },
-        orderBy: {
-          createDateTime: 'asc'
-        }
-      });
-    } catch (error) {
-      this.logger.error(`Error in getInvitationDid in issuance repository: ${error.message}`);
-      throw error;
-    }
+  getReuseInvitationDids(orgId: string): Promise<ReuseInvitationDids> {
+    return findReuseInvitationDids(this.prisma, orgId);
   }
 
   async getAllIssuedCredentials(

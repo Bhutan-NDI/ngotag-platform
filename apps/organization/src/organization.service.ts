@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
 import { CommonService } from '@credebl/common';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import { OrganizationRepository } from '../repositories/organization.repository';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { OrgRolesService } from '@credebl/org-roles';
@@ -401,7 +402,18 @@ export class OrganizationService {
     );
     const orgDetails = await this.clientRegistrationService.createClient(orgName, orgId, token);
 
-    const orgRolesList = [OrgRoles.OWNER, OrgRoles.ADMIN, OrgRoles.ISSUER, OrgRoles.VERIFIER, OrgRoles.MEMBER];
+    // ALLOW_PROOF_TEMPLATE/ALLOW_VERIFIER are created here (like every other role) so they can
+    // be assigned/revoked later via the existing updateUserRoles flow; they are not granted to
+    // the creating user automatically.
+    const orgRolesList = [
+      OrgRoles.OWNER,
+      OrgRoles.ADMIN,
+      OrgRoles.ISSUER,
+      OrgRoles.VERIFIER,
+      OrgRoles.MEMBER,
+      OrgRoles.ALLOW_PROOF_TEMPLATE,
+      OrgRoles.ALLOW_VERIFIER
+    ];
 
     for (const role of orgRolesList) {
       await this.clientRegistrationService.createClientRole(orgDetails.idpId, token, role, role);
@@ -1462,6 +1474,12 @@ export class OrganizationService {
       }
     );
 
+    // A client role with no org_roles row would make the mapping below throw — after the user's
+    // existing roles were already deleted. Refuse up front, before anything is touched.
+    if (rolesPayload.some((role) => null === role)) {
+      throw new NotFoundException(ResponseMessages.organisation.error.orgRoleIdNotFound);
+    }
+
     const userData = await this.getUserUserId(userId);
 
     const [, deletedUserRoleRecords] = await Promise.all([
@@ -1902,12 +1920,13 @@ export class OrganizationService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }

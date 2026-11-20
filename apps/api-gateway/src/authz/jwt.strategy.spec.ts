@@ -58,3 +58,41 @@ describe('JwtStrategy.validate — holder marker', () => {
     expect(result).not.toHaveProperty('user_role_mapping');
   });
 });
+
+describe('JwtStrategy.validate — session creation time for step-up', () => {
+  const makeSessionStrategy = (session: unknown): JwtStrategy =>
+    new JwtStrategy(
+      { findUserinKeycloak: jest.fn(async () => nonHolderRow) } as never,
+      {} as never,
+      { checkSession: jest.fn(async () => session) } as never
+    );
+
+  it("exposes the session's createdAt from the database", async () => {
+    const createdAt = new Date('2026-10-20T08:00:00Z');
+
+    const result = await makeSessionStrategy({ id: 's1', createdAt }).validate({ sub: 'k', sid: 's1' } as never);
+
+    expect(result['sessionCreatedAt']).toBe(createdAt);
+  });
+
+  it('does not let a token claim set it', async () => {
+    const result = await makeStrategy(nonHolderRow).validate({
+      sub: 'keycloak-2',
+      sessionCreatedAt: new Date().toISOString()
+    } as never);
+
+    expect(result['sessionCreatedAt']).toBeUndefined();
+  });
+
+  it('does not let a token claim replace the database value', async () => {
+    const createdAt = new Date('2026-10-20T08:00:00Z');
+
+    const result = await makeSessionStrategy({ id: 's1', createdAt }).validate({
+      sub: 'k',
+      sid: 's1',
+      sessionCreatedAt: new Date().toISOString()
+    } as never);
+
+    expect(result['sessionCreatedAt']).toBe(createdAt);
+  });
+});

@@ -12,7 +12,6 @@ import {
 } from '@nestjs/common';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import {
-  IGetAllProofPresentations,
   IProofRequestSearchCriteria,
   IGetProofPresentationById,
   IProofPresentation,
@@ -28,7 +27,10 @@ import {
 } from './interfaces/verification.interface';
 import { VerificationRepository } from './repositories/verification.repository';
 import { ATTRIBUTE_NAME_REGEX, CommonConstants } from '@credebl/common/common.constant';
-import { RecordType, agent_invitations, org_agents, organisation, presentations, user } from '@prisma/client';
+import { getMaxProofRequestExpiresInSeconds } from '@credebl/common/proof-request-expiry';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
+import { RecordType, org_agents, organisation, presentations, user } from '@prisma/client';
+import { additionalInvitationDidsField, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import { AutoAccept, VerificationProcessState } from '@credebl/enum/enum';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import * as QRCode from 'qrcode';
@@ -66,6 +68,23 @@ import {
   toTerminalResponseCodeStatus
 } from './response-code/redirect-uri.util';
 import { IProofCallbackResult, ResponseCodeStatus } from './response-code/response-code.interface';
+
+/**
+ * The agent-controller value for `expiresInSeconds`: null or absent becomes undefined, so the field is
+ * left out of the request and agent-controller applies its deployment default (DIDCOMM_PROOF_REQUEST_EXPIRY).
+ */
+const toAgentExpiresInSeconds = (value: number | null | undefined): number | undefined => value ?? undefined;
+
+/**
+ * Lifetime given to a same-device redirect request when the relying party sets none. The platform does not know the
+ * agent's deployment default, so a redirect request always carries its own deadline and its response_code session can
+ * be sized to match. Capped at PROOF_REQUEST_EXPIRY_MAX_SECONDS so a deployment with a low purge ceiling still accepts it.
+ */
+export const REDIRECT_DEFAULT_EXPIRES_IN_SECONDS = 600;
+
+function redirectDefaultExpiresInSeconds(): number {
+  return Math.min(REDIRECT_DEFAULT_EXPIRES_IN_SECONDS, getMaxProofRequestExpiresInSeconds());
+}
 
 @Injectable()
 export class VerificationService {
@@ -193,22 +212,6 @@ export class VerificationService {
   }
 
   /**
-   * Consume agent API for get all proof presentations
-   * @param payload
-   * @returns Get all proof presentation
-   */
-  async _getProofPresentations(payload: IGetAllProofPresentations): Promise<object> {
-    try {
-      const pattern = { cmd: 'agent-get-proof-presentations' };
-      const result = await this.natsClient.send<object>(this.verificationServiceProxy, pattern, payload);
-      return result;
-    } catch (error) {
-      this.logger.error(`[_getProofPresentations] - error in get proof presentations : ${JSON.stringify(error)}`);
-      throw error;
-    }
-  }
-
-  /**
    * Get verified proof presentation by issuerId
    * @param issuerId
    * @returns Proof presentation details by issuerId
@@ -304,7 +307,8 @@ export class VerificationService {
           autoAcceptProof: requestProof.autoAcceptProof || AutoAccept.Never,
           goalCode: requestProof.goalCode || undefined,
           parentThreadId: requestProof.parentThreadId || undefined,
-          willConfirm: requestProof.willConfirm || undefined
+          willConfirm: requestProof.willConfirm || undefined,
+          expiresInSeconds: toAgentExpiresInSeconds(requestProof.expiresInSeconds)
         };
 
         const payload: IProofRequestPayload = {
@@ -506,25 +510,36 @@ export class VerificationService {
       const url = getAgentUrl(getAgentDetails?.agentEndPoint, CommonConstants.CREATE_OUT_OF_BAND_PROOF_PRESENTATION);
 
       // Destructuring 'outOfBandRequestProof' to remove emailId, as it is not used while agent operation
-      const { isShortenUrl, emailId, type, reuseConnection, redirectUri, ...updateOutOfBandRequestProof } =
-        outOfBandRequestProof;
-      let invitationDid: string | undefined;
+      const {
+        isShortenUrl,
+        emailId,
+        type,
+        reuseConnection,
+        redirectUri,
+        expiresInSeconds: requestedExpiresInSeconds,
+        ...updateOutOfBandRequestProof
+      } = outOfBandRequestProof;
+      let reuseDids: ReuseInvitationDids = {};
       if (true === reuseConnection) {
-        const invitation: agent_invitations = await this.verificationRepository.getInvitationDidByOrgId(user.orgId);
-        invitationDid = invitation?.invitationDid ?? undefined;
+        reuseDids = await this.verificationRepository.getReuseInvitationDids(user.orgId);
       }
+      const { invitationDid } = reuseDids;
       outOfBandRequestProof.autoAcceptProof = outOfBandRequestProof.autoAcceptProof || AutoAccept.Always;
+      const expiresInSeconds =
+        toAgentExpiresInSeconds(requestedExpiresInSeconds) ??
+        (redirectUri ? redirectDefaultExpiresInSeconds() : undefined);
 
       let payload: IProofRequestPayload;
 
       if (ProofRequestType.INDY === type) {
         updateOutOfBandRequestProof.protocolVersion = updateOutOfBandRequestProof.protocolVersion || 'v1';
         updateOutOfBandRequestProof.invitationDid = invitationDid || undefined;
+        Object.assign(updateOutOfBandRequestProof, additionalInvitationDidsField(reuseDids));
         updateOutOfBandRequestProof.imageUrl = getOrganization?.logoUrl || undefined;
         payload = {
           orgId: user.orgId,
           url,
-          proofRequestPayload: updateOutOfBandRequestProof
+          proofRequestPayload: { ...updateOutOfBandRequestProof, expiresInSeconds }
         };
       }
 
@@ -552,7 +567,9 @@ export class VerificationService {
               }
             },
             autoAcceptProof: outOfBandRequestProof.autoAcceptProof,
-            invitationDid: invitationDid || undefined
+            invitationDid: invitationDid || undefined,
+            ...additionalInvitationDidsField(reuseDids),
+            expiresInSeconds
           }
         };
       }
@@ -578,7 +595,7 @@ export class VerificationService {
           presentationProof.deepLinkURL = convertUrlToDeepLinkUrl(presentationProof.invitationUrl);
         }
         if (redirectUri) {
-          await this.attachRedirect(presentationProof, user.orgId, redirectUri);
+          await this.attachRedirect(presentationProof, user.orgId, redirectUri, expiresInSeconds);
         }
         return presentationProof;
       }
@@ -591,7 +608,12 @@ export class VerificationService {
     }
   }
 
-  private async attachRedirect(presentationProof: IInvitation, orgId: string, redirectUri: string): Promise<void> {
+  private async attachRedirect(
+    presentationProof: IInvitation,
+    orgId: string,
+    redirectUri: string,
+    expiresInSeconds?: number
+  ): Promise<void> {
     const threadId = presentationProof.proofRecordThId;
     if (!threadId) {
       this.logger.warn(`[attachRedirect] - no proofRecordThId returned by the agent; skipping redirect`);
@@ -599,7 +621,7 @@ export class VerificationService {
     }
     let responseCode: string;
     try {
-      responseCode = await this.proofResponseCodeService.createSession(orgId, threadId, redirectUri);
+      responseCode = await this.proofResponseCodeService.createSession(orgId, threadId, redirectUri, expiresInSeconds);
     } catch (error) {
       // The invitation already exists; return it without redirect rather than failing the request.
       this.logger.error(`[attachRedirect] - failed to create response_code session: ${error?.message}`);
@@ -612,8 +634,8 @@ export class VerificationService {
   }
 
   private async updateResponseCodeSession({ proofPresentationPayload }: IProofPresentation): Promise<void> {
-    const { threadId, state, isVerified, presentationId } = proofPresentationPayload ?? {};
-    const status = toTerminalResponseCodeStatus(state, isVerified);
+    const { threadId, state, isVerified, presentationId, errorMessage } = proofPresentationPayload ?? {};
+    const status = toTerminalResponseCodeStatus(state, isVerified, errorMessage);
     if (!threadId || !status) {
       return;
     }
@@ -1115,19 +1137,20 @@ export class VerificationService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }
 
   verificationErrorHandling(error): void {
-    if (!error && !error?.status && !error?.status?.message && !error?.status?.message?.error) {
-      throw new RpcException(error.response ? error.response : error);
+    if (!error?.status?.message) {
+      throw new RpcException(error?.response ? error.response : error);
     } else {
       throw new RpcException({
         message: error?.status?.message?.error?.reason
@@ -1158,7 +1181,7 @@ export class VerificationService {
         [VerificationProcessState.PRESENTATION_RECEIVED]: 0,
         [VerificationProcessState.PRESENTATION_SENT]: 0,
         [VerificationProcessState.DONE]: 0,
-        [VerificationProcessState.DECLIEND]: 0,
+        [VerificationProcessState.DECLINED]: 0,
         [VerificationProcessState.ABANDONED]: 0
       };
 

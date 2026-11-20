@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "release": {
+    "title": "NGOTAG Platform",
+    "tag_prefix": "platform/{service}/v",
+    "image_tag_prefix": "platform-",
+    "platform": "linux/arm64"
+  },
+  "services": {
+    "agent": {
+      "dockerfile": "Dockerfiles/Dockerfile.agent-service",
+      "app": "agent-service",
+      "legacy_name": "agent-service"
+    },
+    "agent-provisioning": {
+      "dockerfile": "Dockerfiles/Dockerfile.agent-provisioning",
+      "app": "agent-provisioning"
+    },
+    "api-gateway": {
+      "dockerfile": "Dockerfiles/Dockerfile.api-gateway",
+      "app": "api-gateway"
+    },
+    "cloud-wallet": {
+      "dockerfile": "Dockerfiles/Dockerfile.cloud-wallet",
+      "app": "cloud-wallet"
+    },
+    "connection": {
+      "dockerfile": "Dockerfiles/Dockerfile.connection",
+      "app": "connection"
+    },
+    "ecosystem": {
+      "dockerfile": "Dockerfiles/Dockerfile.ecosystem",
+      "app": "ecosystem"
+    },
+    "geo-location": {
+      "dockerfile": "Dockerfiles/Dockerfile.geolocation",
+      "app": "geo-location"
+    },
+    "issuance": {
+      "dockerfile": "Dockerfiles/Dockerfile.issuance",
+      "app": "issuance"
+    },
+    "ledger": {
+      "dockerfile": "Dockerfiles/Dockerfile.ledger",
+      "app": "ledger"
+    },
+    "mobile-verifier": {
+      "dockerfile": "Dockerfiles/Dockerfile.mobile-verifier",
+      "app": "mobile-verifier"
+    },
+    "notification": {
+      "dockerfile": "Dockerfiles/Dockerfile.notification",
+      "app": "notification"
+    },
+    "organization": {
+      "dockerfile": "Dockerfiles/Dockerfile.organization",
+      "app": "organization"
+    },
+    "user": {
+      "dockerfile": "Dockerfiles/Dockerfile.user",
+      "app": "user"
+    },
+    "utility": {
+      "dockerfile": "Dockerfiles/Dockerfile.utility",
+      "app": "utility"
+    },
+    "verification": {
+      "dockerfile": "Dockerfiles/Dockerfile.verification",
+      "app": "verification"
+    },
+    "webhook": {
+      "dockerfile": "Dockerfiles/Dockerfile.webhook",
+      "app": "webhook"
+    }
+  },
+  "migration": {
+    "target": "migrate",
+    "template_service": "api-gateway",
+    "status_command": "cd libs/prisma-service && npx prisma migrate status",
+    "deploy_command": "cd libs/prisma-service && npx prisma migrate deploy && npx prisma migrate status"
+  },
+  "environments": {
+    "qa": {
+      "allowed_branch": "develop",
+      "tag_prefix": "platform-qa-",
+      "channel": "qa",
+      "legacy_release_pattern": "^qa/{legacy}/v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "stage": {
+      "allowed_branch": "main",
+      "tag_prefix": "platform-stage-",
+      "channel": "rc",
+      "legacy_release_pattern": "^stage/{legacy}/v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "prod": {
+      "allowed_branch": "main",
+      "tag_prefix": "platform-prod-",
+      "channel": "stable",
+      "promote_from": "stage",
+      "legacy_release_pattern": "^prod/{legacy}/v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    }
+  },
+  "ci": {
+    "check_name": "Validate",
+    "app_slug": "github-actions"
+  }
+}

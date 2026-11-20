@@ -15,15 +15,61 @@ import {
   ArrayUnique,
   ArrayMaxSize,
   ArrayMinSize,
-  IsUrl
+  IsUrl,
+  IsInt,
+  Min,
+  ValidateBy
 } from 'class-validator';
 import { REDIRECT_URI_VALIDATION_OPTIONS } from './redirect-uris.dto';
 import { trim } from '@credebl/common/cast.helper';
+import { applyDecorators } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { AutoAccept } from '@credebl/enum/enum';
 import { IProofFormats } from '../interfaces/verification.interface';
 import { ProofRequestType } from '../enum/verification.enum';
+import {
+  DEFAULT_MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS,
+  MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS,
+  PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV,
+  getMaxProofRequestExpiresInSeconds
+} from '@credebl/common/proof-request-expiry';
+
+export {
+  DEFAULT_MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS,
+  MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS,
+  PROOF_REQUEST_EXPIRY_MAX_SECONDS_ENV,
+  getMaxProofRequestExpiresInSeconds
+};
+
+function MaxProofRequestExpiresInSeconds(): PropertyDecorator {
+  return ValidateBy({
+    name: 'maxProofRequestExpiresInSeconds',
+    validator: {
+      validate: (value): boolean => 'number' !== typeof value || value <= getMaxProofRequestExpiresInSeconds(),
+      defaultMessage: (): string => `expiresInSeconds must be at most ${getMaxProofRequestExpiresInSeconds()}`
+    }
+  });
+}
+
+/** Optional expiresInSeconds, validated the same way on connection-based and out-of-band requests. */
+function ExpiresInSecondsProperty(): PropertyDecorator {
+  return applyDecorators(
+    ApiPropertyOptional({
+      type: Number,
+      nullable: true,
+      example: 1800,
+      minimum: MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS,
+      description: `Seconds until the proof request expires. Omit (or null) to use the agent deployment default. The maximum depends on the deployment's purge settings (${DEFAULT_MAX_PROOF_REQUEST_EXPIRES_IN_SECONDS} by default). Out-of-range or non-integer values are rejected, never adjusted.`
+    }),
+    IsOptional(),
+    IsInt({ message: 'expiresInSeconds must be a whole number of seconds' }),
+    Min(MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS, {
+      message: `expiresInSeconds must be at least ${MIN_PROOF_REQUEST_EXPIRES_IN_SECONDS}`
+    }),
+    MaxProofRequestExpiresInSeconds()
+  );
+}
 
 export class ProofRequestAttribute {
   @ValidateIf((obj) => obj.attributeNames === undefined)
@@ -87,6 +133,9 @@ class ProofPayload {
   @IsNotEmpty({ message: 'please provide valid protocol version' })
   @IsOptional()
   protocolVersion: string;
+
+  @ExpiresInSecondsProperty()
+  expiresInSeconds?: number | null;
 }
 
 export class Filter {
@@ -511,4 +560,7 @@ export class SendProofRequestPayload {
   @Transform(({ value }) => trim(value))
   @IsUrl(REDIRECT_URI_VALIDATION_OPTIONS, { message: 'redirectUri must be a valid http(s) URL' })
   redirectUri?: string;
+
+  @ExpiresInSecondsProperty()
+  expiresInSeconds?: number | null;
 }

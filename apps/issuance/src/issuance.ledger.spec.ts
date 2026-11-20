@@ -137,7 +137,7 @@ async function start(agent: Agent, rows: TemplateRow[]): Promise<Fixture> {
     getOrganization: jest.fn().mockResolvedValue({ name: 'Issuer' }),
     updateSchemaIdByThreadId: jest.fn().mockResolvedValue({}),
     getCredentialDefinitionDetails: jest.fn(),
-    getInvitationDidByOrgId: jest.fn().mockResolvedValue(null)
+    getReuseInvitationDids: jest.fn().mockResolvedValue({})
   };
   const storageService = { getFileByKey: jest.fn().mockRejectedValue(new Error('storage reached')) };
   const coordinator = {
@@ -539,5 +539,85 @@ describe('Indy templates keep the ledger check, read from the DIDs', () => {
     expect(await failureOf(csvTemplate())).toContain(MISMATCH);
     expect(await failureOf(upload())).toContain(MISMATCH);
     expect(fixture.storageService.getFileByKey).not.toHaveBeenCalled();
+  });
+});
+
+describe('reuse-connection invitation DIDs in out-of-band offers', () => {
+  let fixture: Fixture;
+  const reusePayload = (): object => ({ ...outOfBandPayload(), reuseConnection: true });
+
+  beforeEach(async () => {
+    const rows = [template({ ledgerId: LEDGERS['polygon:testnet'] })];
+    fixture = await start({ orgId: ORG_ID, orgDid: 'did:polygon:testnet:0xissuer', ledgerId: null }, rows);
+  });
+
+  afterEach(async () => {
+    await fixture.app.close();
+    jest.restoreAllMocks();
+  });
+
+  it('sends an org that has moved to a dedicated agent its new invitation DID first and the old one second', async () => {
+    fixture.repository.getReuseInvitationDids.mockResolvedValue({
+      invitationDid: 'did:peer:new',
+      additionalInvitationDids: ['did:peer:old']
+    });
+
+    await fixture.transport.dispatch(entryPoints.outOfBand, reusePayload());
+
+    expect(fixture.repository.getReuseInvitationDids).toHaveBeenCalledWith(ORG_ID);
+    expect(fixture.agentCalls.outOfBand.mock.calls[0][0]).toMatchObject({
+      invitationDid: 'did:peer:new',
+      additionalInvitationDids: ['did:peer:old']
+    });
+  });
+
+  it('sends any other org just its invitation DID, with no additionalInvitationDids key an older agent would reject', async () => {
+    fixture.repository.getReuseInvitationDids.mockResolvedValue({ invitationDid: 'did:peer:oldest' });
+
+    await fixture.transport.dispatch(entryPoints.outOfBand, reusePayload());
+
+    const [[issueData]] = fixture.agentCalls.outOfBand.mock.calls;
+    expect(issueData).toMatchObject({ invitationDid: 'did:peer:oldest' });
+    expect(issueData).not.toHaveProperty('additionalInvitationDids');
+  });
+
+  it('does not look up an invitation when the offer does not reuse a connection', async () => {
+    await fixture.transport.dispatch(entryPoints.outOfBand, outOfBandPayload());
+
+    expect(fixture.repository.getReuseInvitationDids).not.toHaveBeenCalled();
+    const [[issueData]] = fixture.agentCalls.outOfBand.mock.calls;
+    expect(issueData.invitationDid).toBeUndefined();
+    expect(issueData).not.toHaveProperty('additionalInvitationDids');
+  });
+
+  it('carries both DIDs on an emailed offer, the path bulk issuance rows take', async () => {
+    fixture.agentCalls.email.mockRestore();
+    fixture.repository.getReuseInvitationDids.mockResolvedValue({
+      invitationDid: 'did:peer:new',
+      additionalInvitationDids: ['did:peer:old']
+    });
+
+    await fixture.service
+      .sendEmailForCredentialOffer({
+        orgId: ORG_ID,
+        credentialType: 'jsonld',
+        isReuseConnection: true,
+        isValidateSchema: false,
+        iterator: { credential: credential(), options },
+        outOfBandCredential: {},
+        organisation: { name: 'Issuer' },
+        agentEndPoint: 'https://agent.example.com',
+        emailId: 'holder@example.com',
+        organizationDetails: { name: 'Issuer' },
+        errors: [],
+        url: 'https://agent.example.com/oob',
+        index: 0
+      } as never)
+      .catch(() => undefined);
+
+    expect(fixture.agentCalls.outOfBand.mock.calls[0][0]).toMatchObject({
+      invitationDid: 'did:peer:new',
+      additionalInvitationDids: ['did:peer:old']
+    });
   });
 });
