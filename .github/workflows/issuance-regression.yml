@@ -8,11 +8,7 @@ on:
       - 'libs/context/**'
       - 'libs/common/src/NATSClient*'
       - 'libs/common/src/common.utils*'
-<<<<<<< HEAD
       - 'libs/common/src/schema-integrity*'
-||||||| 8f541f2a
-=======
->>>>>>> origin/main
       - 'apps/organization/src/organization.service.ts'
       - 'apps/organization/src/__tests__/**'
       - 'apps/agent-service/src/agent-service.service.ts'
@@ -50,12 +46,7 @@ jobs:
       - name: Build issuance
         run: pnpm run build issuance
       - name: Test NATS handlers and ledger checks
-<<<<<<< HEAD
         run: pnpm exec jest --runInBand apps/issuance/src/issuance.controller.spec.ts apps/issuance/src/issuance.ledger.spec.ts libs/common/src/common.utils.spec.ts libs/common/src/schema-integrity.spec.ts apps/organization/src/__tests__/organization.service.setPrimaryDid.spec.ts apps/agent-service/src/__tests__/agent-service.service.createDid.spec.ts
-||||||| 8f541f2a
-=======
-        run: pnpm exec jest --runInBand apps/issuance/src/issuance.controller.spec.ts apps/issuance/src/issuance.ledger.spec.ts libs/common/src/common.utils.spec.ts apps/organization/src/__tests__/organization.service.setPrimaryDid.spec.ts apps/agent-service/src/__tests__/agent-service.service.createDid.spec.ts
->>>>>>> origin/main
       - name: Start isolated Redis fixture
         run: |
           docker run --rm -d --name codex-issuance-p2-redis -p 127.0.0.1::6379 redis:7.2.5
