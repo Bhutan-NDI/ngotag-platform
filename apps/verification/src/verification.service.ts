@@ -654,14 +654,7 @@ export class VerificationService {
     if (presentationProof.deepLinkURL) {
       presentationProof.deepLinkURL = appendReturnUrl(presentationProof.deepLinkURL, presentationProof.returnUrl);
     }
-    await this.attachHostedPage(
-      presentationProof,
-      orgId,
-      threadId,
-      redirectUri,
-      expiresInSeconds,
-      requestedAt
-    );
+    await this.attachHostedPage(presentationProof, orgId, threadId, redirectUri, expiresInSeconds, requestedAt);
   }
 
   /**
@@ -670,8 +663,11 @@ export class VerificationService {
    * leaves the invitation usable, only without hostedPageUrl.
    *
    * The page gets the same deep link as the relying party, with returnUrl, so the wallet brings the citizen back on a
-   * phone (E7, DL-007). The relying party's own page already holds that code today (HVP-SD §6, "Code exposure"), and
-   * it is useless without the relying party's credentials and the thread-id check.
+   * phone (E7, DL-007). So the page holds the response_code from page load, not only once the proof ends. callback-result
+   * needs no credentials, so whoever holds the hostedId can learn the outcome status and use up its single terminal
+   * read, after which the relying party's own exchange gets a 410; the presentation itself still needs the relying
+   * party's credentials. Accepted because the hostedId is 256 random bits, the page is served no-store and the hosted
+   * routes are rate limited.
    */
   private async attachHostedPage(
     presentationProof: IInvitation,
@@ -754,7 +750,8 @@ export class VerificationService {
       return { status: 'expired' };
     }
     // Optional: without the scan signal the page simply stays on pending (DL-016).
-    return { status: session.scanned ? 'scanned' : 'pending' };
+    const scanned = await this.callHostedStore(() => this.proofResponseCodeService.isHostedScanned(hostedId));
+    return { status: scanned ? 'scanned' : 'pending' };
   }
 
   /**

@@ -141,6 +141,34 @@ describe('hosted page: scanned (DL-016)', () => {
 
     expect(await responseCodes.markHostedScanned(OOB_ID, ORG_ID)).toBe(false);
     expect(redis.store.has(`verification:hosted:${hostedId}`)).toBe(false);
+    expect(redis.store.has(`verification:hosted-scanned:${hostedId}`)).toBe(false);
+  });
+
+  it('keeps an outcome recorded while the scan is being marked, and expires the flag with the session', async () => {
+    const service = makeService();
+    const { hostedId, returnUrl } = await hostedRequest(service);
+    const responseCodes = (service as unknown as { proofResponseCodeService: ProofResponseCodeService })
+      .proofResponseCodeService;
+    const redis = (responseCodes as unknown as { client: FakeRedis }).client;
+    const read = jest.spyOn(responseCodes, 'getHostedSession');
+    // The proof ends after markHostedScanned has read the session but before it writes.
+    read.mockImplementationOnce(async (id) => {
+      const session = JSON.parse(redis.store.get(`verification:hosted:${id}`));
+      await service.webhookProofPresentation({
+        orgId: ORG_ID,
+        proofPresentationPayload: { threadId: THREAD_ID, state: 'done', isVerified: true } as never
+      });
+      return session;
+    });
+
+    await responseCodes.markHostedScanned(OOB_ID, ORG_ID);
+    // Once the relying party has used the code, the page relies on the outcome kept on the hosted session.
+    await service.getProofCallbackResult(new URL(returnUrl).searchParams.get('response_code'));
+
+    expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'completed' });
+    expect(redis.ttls.get(`verification:hosted-scanned:${hostedId}`)).toBe(
+      redis.ttls.get(`verification:hosted:${hostedId}`)
+    );
   });
 
   it('never fails when the session store is down', async () => {

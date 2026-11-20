@@ -54,17 +54,34 @@ export class FakeRedis {
     return this.store.get(key) ?? null;
   }
 
-  /** Only the KEEPTTL XX form is used outside a transaction. */
-  async set(key: string, value: string, mode: 'KEEPTTL', condition: 'XX'): Promise<'OK' | null> {
+  /** Outside a transaction, only the KEEPTTL XX and PX <ms> NX forms are used. */
+  async set(key: string, value: string, ...options: ['KEEPTTL', 'XX'] | ['PX', number, 'NX']): Promise<'OK' | null> {
     this.assertConnected();
-    if ('KEEPTTL' !== mode || 'XX' !== condition) {
-      throw new Error(`FakeRedis.set supports only KEEPTTL XX, got ${mode} ${condition}`);
+    if ('KEEPTTL' === options[0] && 'XX' === options[1]) {
+      if (!this.store.has(key)) {
+        return null;
+      }
+      this.store.set(key, value);
+      return 'OK';
     }
+    if ('PX' === options[0] && 'NX' === options[2]) {
+      if (this.store.has(key)) {
+        return null;
+      }
+      this.store.set(key, value);
+      this.ttls.set(key, options[1] / 1000);
+      return 'OK';
+    }
+    throw new Error(`FakeRedis.set does not support ${options.join(' ')}`);
+  }
+
+  /** -2 for a missing key and -1 for one without an expiry, as Redis does. */
+  async pttl(key: string): Promise<number> {
+    this.assertConnected();
     if (!this.store.has(key)) {
-      return null;
+      return -2;
     }
-    this.store.set(key, value);
-    return 'OK';
+    return this.ttls.has(key) ? this.ttls.get(key) * 1000 : -1;
   }
 
   async eval(_script: string, _numKeys: number, ...args: (string | number)[]): Promise<number> {

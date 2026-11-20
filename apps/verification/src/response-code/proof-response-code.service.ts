@@ -14,6 +14,7 @@ const THREAD_INDEX_PREFIX = 'verification:idx:thread:';
 const HOSTED_PREFIX = 'verification:hosted:';
 const HOSTED_THREAD_INDEX_PREFIX = 'verification:idx:hosted-thread:';
 const HOSTED_OOB_INDEX_PREFIX = 'verification:idx:hosted-oob:';
+const HOSTED_SCANNED_PREFIX = 'verification:hosted-scanned:';
 const HOSTED_RATE_PREFIX = 'verification:rate:hosted:';
 /** Window of the per-hostedId read limit on the status endpoint (DL-008). */
 export const HOSTED_RATE_WINDOW_SECONDS = 60;
@@ -205,6 +206,9 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
   /**
    * Marks the hosted session of a scanned invitation (DL-016). Ignored for an invitation without a hosted page, for
    * another org's, and once the proof has ended. Returns whether the session was marked.
+   *
+   * The flag is its own key, never a rewrite of the session JSON, so it cannot overwrite an outcome recorded meanwhile.
+   * It expires with the session.
    */
   async markHostedScanned(outOfBandId: string, orgId: string): Promise<boolean> {
     const hostedId = await this.redis().get(this.hostedOutOfBandIndexKey(outOfBandId));
@@ -212,17 +216,19 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     const session = await this.getHostedSession(hostedId);
-    if (!session || session.orgId !== orgId || session.scanned || session.outcome) {
+    if (!session || session.orgId !== orgId || session.outcome) {
       return false;
     }
-    // XX: if the session expired since the read, do not recreate it without an expiry.
-    const applied = await this.redis().set(
-      this.hostedKey(hostedId),
-      JSON.stringify({ ...session, scanned: true }),
-      'KEEPTTL',
-      'XX'
-    );
+    const remainingMs = await this.redis().pttl(this.hostedKey(hostedId));
+    if (0 >= remainingMs) {
+      return false;
+    }
+    const applied = await this.redis().set(this.hostedScannedKey(hostedId), '1', 'PX', remainingMs, 'NX');
     return 'OK' === applied;
+  }
+
+  async isHostedScanned(hostedId: string): Promise<boolean> {
+    return null !== (await this.redis().get(this.hostedScannedKey(hostedId)));
   }
 
   /** Counts a status read for a hosted page in the current window; the caller decides the limit (DL-008). */
@@ -291,5 +297,9 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
 
   private hostedOutOfBandIndexKey(outOfBandId: string): string {
     return `${HOSTED_OOB_INDEX_PREFIX}${outOfBandId}`;
+  }
+
+  private hostedScannedKey(hostedId: string): string {
+    return `${HOSTED_SCANNED_PREFIX}${hostedId}`;
   }
 }

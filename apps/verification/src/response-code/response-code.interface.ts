@@ -57,13 +57,11 @@ export interface IHostedSession {
   expiresAt: string;
   /** Kept once the proof ends, so the page still learns it after the response_code is used. */
   outcome?: TerminalResponseCodeStatus;
-  /** The wallet connected for this invitation, so the QR code was scanned (DL-016). Optional signal. */
-  scanned?: boolean;
 }
 
 /**
- * GET /verification/hosted/:hostedId. `redirectUri` carries no response_code (DL-013); `deepLinkURL` does, as the
- * relying party's page already does today (HVP-SD §6, DL-007).
+ * GET /verification/hosted/:hostedId. `redirectUri` carries no response_code (DL-013); `deepLinkURL` does (DL-007), so
+ * the hostedId holder can exchange the code: see `attachHostedPage`.
  */
 export interface IHostedPage {
   returnHost: string;
