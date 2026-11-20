@@ -350,7 +350,7 @@ export class OrgAgentMigrationRehearsalService {
     migrationId: string,
     actor: string | null,
     record: IRehearsalRecord & { code: string },
-    custody: ICustodyFacts = {},
+    custody?: ICustodyFacts,
     leftoverExportJobId?: string | null
   ): Promise<void> {
     try {
