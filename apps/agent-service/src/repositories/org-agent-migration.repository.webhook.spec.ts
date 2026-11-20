@@ -78,7 +78,8 @@ describe('OrgAgentMigrationRepository webhook probe queries', () => {
     it('asks for stabilising migrations with an open window, no confirmed webhook and a try that is due', async () => {
       const { repository, prisma } = build();
       const now = new Date();
-      const retryBefore = new Date(now.getTime() - 10 * 60 * 1000);
+      const tenMinutesMs = 10 * 60 * 1000;
+      const retryBefore = new Date(now.getTime() - tenMinutesMs);
 
       await expect(repository.findAwaitingWebhook(now, retryBefore, 5)).resolves.toEqual([{ id: 'm1' }]);
 

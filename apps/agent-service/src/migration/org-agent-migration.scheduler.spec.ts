@@ -594,13 +594,13 @@ describe('OrgAgentMigrationScheduler: confirming webhooks during the window', ()
   it('spaces its tries by a configurable time, ten minutes by default', async () => {
     const { scheduler, migrationRepository } = build();
     await scheduler.tick();
-    const [now, retryBefore] = migrationRepository.findAwaitingWebhook.mock.calls[0];
+    const [[now, retryBefore]] = migrationRepository.findAwaitingWebhook.mock.calls;
     expect(now.getTime() - retryBefore.getTime()).toBe(10 * MINUTE);
 
     process.env.ORG_MIGRATION_WEBHOOK_RETRY_MS = String(2 * MINUTE);
     migrationRepository.findAwaitingWebhook.mockClear();
     await scheduler.tick();
-    const [later, laterRetryBefore] = migrationRepository.findAwaitingWebhook.mock.calls[0];
+    const [[later, laterRetryBefore]] = migrationRepository.findAwaitingWebhook.mock.calls;
     expect(later.getTime() - laterRetryBefore.getTime()).toBe(2 * MINUTE);
   });
 
