@@ -650,15 +650,12 @@ export class VerificationService {
       this.logger.error(`[attachRedirect] - failed to create response_code session: ${error?.message}`);
       return;
     }
-    // The hosted page gets the deep link without returnUrl: it must not hand out the code before the proof ends (DL-013).
-    const bareDeepLinkURL = presentationProof.deepLinkURL;
     presentationProof.returnUrl = buildReturnUrl(redirectUri, responseCode);
     if (presentationProof.deepLinkURL) {
       presentationProof.deepLinkURL = appendReturnUrl(presentationProof.deepLinkURL, presentationProof.returnUrl);
     }
     await this.attachHostedPage(
       presentationProof,
-      bareDeepLinkURL,
       orgId,
       threadId,
       redirectUri,
@@ -671,10 +668,13 @@ export class VerificationService {
    * Creates the NDI hosted page's session beside the response_code session (HVP-SD §5.2, DL-017). It lives one grace
    * period longer, so the page can read `expired` after the code session ends. Like the redirect itself, a failure
    * leaves the invitation usable, only without hostedPageUrl.
+   *
+   * The page gets the same deep link as the relying party, with returnUrl, so the wallet brings the citizen back on a
+   * phone (E7, DL-007). The relying party's own page already holds that code today (HVP-SD §6, "Code exposure"), and
+   * it is useless without the relying party's credentials and the thread-id check.
    */
   private async attachHostedPage(
     presentationProof: IInvitation,
-    deepLinkURL: string | undefined,
     orgId: string,
     threadId: string,
     redirectUri: string,
@@ -693,7 +693,7 @@ export class VerificationService {
           orgId,
           threadId,
           proofRequestURL: presentationProof.invitationUrl,
-          deepLinkURL,
+          deepLinkURL: presentationProof.deepLinkURL,
           returnUrl: presentationProof.returnUrl,
           redirectUri,
           returnHost: new URL(redirectUri).host,
