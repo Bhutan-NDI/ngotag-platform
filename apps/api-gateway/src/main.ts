@@ -1,4 +1,4 @@
-import { otelSDK } from './tracer';
+import './instrument';
 import * as dotenv from 'dotenv';
 import * as express from 'express';
 
@@ -24,19 +24,6 @@ dotenv.config();
 getMaxProofRequestExpiresInSeconds();
 
 async function bootstrap(): Promise<void> {
-  try {
-    if (otelSDK) {
-      await otelSDK.start();
-      // eslint-disable-next-line no-console
-      console.log('OpenTelemetry SDK started successfully');
-    } else {
-      // eslint-disable-next-line no-console
-      console.log('OpenTelemetry SDK disabled for this environment');
-    }
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to start OpenTelemetry SDK:', error);
-  }
   const app = await NestFactory.create(AppModule);
 
   app.useLogger(app.get(NestjsLoggerServiceAdapter));
