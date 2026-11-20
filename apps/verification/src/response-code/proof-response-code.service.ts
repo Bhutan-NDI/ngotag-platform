@@ -203,13 +203,7 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
     await this.redis().set(this.hostedKey(hostedId), JSON.stringify({ ...session, outcome }), 'KEEPTTL', 'XX');
   }
 
-  /**
-   * Marks the hosted session of a scanned invitation (DL-016). Ignored for an invitation without a hosted page, for
-   * another org's, and once the proof has ended. Returns whether the session was marked.
-   *
-   * The flag is its own key, never a rewrite of the session JSON, so it cannot overwrite an outcome recorded meanwhile.
-   * It expires with the session.
-   */
+  /** The flag is its own key, so it can't overwrite an outcome recorded meanwhile (DL-016). */
   async markHostedScanned(outOfBandId: string, orgId: string): Promise<boolean> {
     const hostedId = await this.redis().get(this.hostedOutOfBandIndexKey(outOfBandId));
     if (!hostedId) {

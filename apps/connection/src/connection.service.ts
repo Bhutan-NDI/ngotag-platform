@@ -58,12 +58,7 @@ export class ConnectionService {
     }
   }
 
-  /**
-   * Tells the verification service which invitation the wallet just connected for, so an NDI hosted page can show that
-   * its QR code was scanned (DL-016). A reused connection keeps the id of the invitation it was first made from, so the
-   * scanned invitation comes from outOfBandRecord on a HandshakeReused event. Fire and forget: the signal is optional
-   * and never delays or fails the webhook.
-   */
+  /** Fire and forget (DL-016). On HandshakeReused the scanned invitation is outOfBandRecord, not outOfBandId. */
   private notifyHostedScan(connectionDto: ICreateConnection['connectionDto'], orgId?: string): void {
     const outOfBandId = connectionDto?.outOfBandRecord?.id ?? connectionDto?.outOfBandId;
     if (!outOfBandId || !orgId) {
