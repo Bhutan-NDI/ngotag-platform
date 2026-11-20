@@ -50,6 +50,15 @@ export const outgoingUrlAttributes = (options: RequestOptions): Attributes => {
   return { 'url.full': `${options.protocol ?? 'http:'}//${host}${(options.path ?? '/').split('?')[0]}` };
 };
 
+// An exporter with no URL silently falls back to localhost:4318, and one with no key is refused.
+function warnIfUnset(names: string[]): void {
+  const missing = names.filter((name) => !process.env[name]);
+  if (0 < missing.length) {
+    // eslint-disable-next-line no-console
+    console.warn(`OpenTelemetry is enabled but ${missing.join(', ')} not set`);
+  }
+}
+
 if (otelEnabled) {
   // The SDK reports failed exports through this logger, so it stays on, at WARN.
   diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.WARN);
@@ -59,16 +68,7 @@ if (otelEnabled) {
   // Must be set before the HTTP instrumentation is built.
   process.env.OTEL_SEMCONV_STABILITY_OPT_IN = 'http';
 
-  const missing = [
-    'OTEL_TRACES_OTLP_ENDPOINT',
-    'OTEL_LOGS_OTLP_ENDPOINT',
-    'OTEL_METRICS_OTLP_ENDPOINT',
-    'OTEL_HEADERS_KEY'
-  ].filter((name) => !process.env[name]);
-  if (0 < missing.length) {
-    // eslint-disable-next-line no-console
-    console.warn(`OpenTelemetry is enabled but ${missing.join(', ')} not set`);
-  }
+  warnIfUnset(['OTEL_LOGS_OTLP_ENDPOINT', 'OTEL_HEADERS_KEY']);
 }
 
 // The release workflow builds the source commit into the gateway image; an explicit
@@ -130,6 +130,8 @@ export const startTelemetry = (): NodeSDK | null => {
   if (!otelEnabled || otelSDK) {
     return otelSDK;
   }
+  // Checked here, not at load: only the gateway sends traces and metrics.
+  warnIfUnset(['OTEL_TRACES_OTLP_ENDPOINT', 'OTEL_METRICS_OTLP_ENDPOINT']);
   otelSDK = new NodeSDK({
     resource,
     autoDetectResources: false,

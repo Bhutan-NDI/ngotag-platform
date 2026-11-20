@@ -57,8 +57,12 @@ export class NATSClient {
         try {
           return await request();
         } catch (error) {
-          // Errors from a microservice arrive as plain objects, not Error instances.
-          span.setStatus({ code: SpanStatusCode.ERROR, message: error?.message });
+          // Errors from a microservice arrive as plain objects, not Error instances, and their message
+          // can be an array or object (validation errors), which the SDK would drop with a warning.
+          span.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: 'string' === typeof error?.message ? error.message : JSON.stringify(error?.message)
+          });
           if (error instanceof Error) {
             span.recordException(error);
           }
