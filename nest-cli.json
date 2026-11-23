@@ -314,6 +314,15 @@
         "tsConfigPath": "apps/webhook/tsconfig.app.json"
       }
     },
+    "mobile-verifier": {
+      "type": "application",
+      "root": "apps/mobile-verifier",
+      "entryFile": "main",
+      "sourceRoot": "apps/mobile-verifier/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/mobile-verifier/tsconfig.app.json"
+      }
+    },
     "x509": {
       "type": "application",
       "root": "apps/x509",

@@ -94,6 +94,7 @@ export enum CommonConstants {
   // ETHEREUM BASED W3C SCHEMAS
   CREATE_ETHEREUM_W3C_SCHEMA = '/ethereum/create-schema',
   MIGRATE_ETHEREUM_W3C_SCHEMA = '/ethereum/migrate-schema',
+  VERIFY_ETHEREUM_W3C_SCHEMA = '/ethereum/verify-schema',
 
   // SHARED AGENT
   URL_SHAGENT_CREATE_TENANT = '/multi-tenancy/create-tenant',
@@ -462,6 +463,7 @@ export enum CommonConstants {
   OIDC4VC_VERIFICATION_SERVICE = 'oid4vc-verification',
   OID4VP_VERIFICATION_SESSION = 'oid4vp-verification-session',
   X509_SERVICE = 'x509-service',
+  MOBILE_VERIFIER_SERVICE = 'mobile-verifier',
 
   ACCEPT_OFFER = '/didcomm/credentials/accept-offer',
   SEED_LENGTH = 32,

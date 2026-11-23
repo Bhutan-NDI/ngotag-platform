@@ -3,16 +3,18 @@ import {
   IProofPresentation,
   IProofRequestSearchCriteria,
   ProofRequest,
-  ProofRequestState
+  ProofRequestState,
+  REQUEST_EXPIRED_ERROR_PREFIX
 } from '../interfaces/verification.interface';
 import { IProofPresentationsListCount, IVerificationRecords } from '@credebl/common/interfaces/verification.interface';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 // eslint-disable-next-line camelcase
-import { Prisma, agent_invitations, org_agents, organisation, platform_config, presentations } from '@prisma/client';
+import { Prisma, org_agents, organisation, platform_config, presentations } from '@prisma/client';
 
 import { CommonService } from '@credebl/common';
 import { IUserRequest } from '@credebl/user-request/user-request.interface';
 import { PrismaService } from '@credebl/prisma-service';
+import { findReuseInvitationDids, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { SortValue } from '@credebl/enum/enum';
 
@@ -87,6 +89,27 @@ export class VerificationRepository {
     }
   }
 
+  /**
+   * "Expired" and "Declined" both mean state abandoned; only the errorMessage the holder's problem report leaves behind tells them apart, so
+   * they get their own filter instead of the free-text search. Returns null for any other search.
+   */
+  private statusOnlyFilter(orgId: string, search: string): Prisma.presentationsWhereInput | null {
+    const term = search.trim().toLowerCase();
+    const expired = { startsWith: REQUEST_EXPIRED_ERROR_PREFIX };
+    if (ProofRequestState.expired.toLowerCase() === term) {
+      return { orgId, state: ProofRequest.abandoned, errorMessage: expired };
+    }
+    if (ProofRequestState.abandoned.toLowerCase() === term) {
+      // A decline usually has no errorMessage; NOT on its own would drop those rows (NULL never matches).
+      return {
+        orgId,
+        state: ProofRequest.abandoned,
+        OR: [{ errorMessage: null }, { NOT: { errorMessage: expired } }]
+      };
+    }
+    return null;
+  }
+
   async getAllProofRequests(
     user: IUserRequest,
     orgId: string,
@@ -105,9 +128,6 @@ export class VerificationRepository {
         case ProofRequestState.done.toLowerCase():
           verificationStateInfo = ProofRequest.done;
           break;
-        case ProofRequestState.abandoned.toLowerCase():
-          verificationStateInfo = ProofRequest.abandoned;
-          break;
         case ProofRequestState.presentationReceived.toLowerCase():
           verificationStateInfo = ProofRequest.presentationReceived;
           break;
@@ -115,7 +135,10 @@ export class VerificationRepository {
           break;
       }
 
-      const whereClause: Prisma.presentationsWhereInput = {
+      const whereClause: Prisma.presentationsWhereInput = this.statusOnlyFilter(
+        orgId,
+        proofRequestsSearchCriteria.search
+      ) ?? {
         orgId,
         OR: [
           { connectionId: { contains: proofRequestsSearchCriteria.search, mode: 'insensitive' } },
@@ -291,30 +314,8 @@ export class VerificationRepository {
     }
   }
 
-  // eslint-disable-next-line camelcase
-  async getInvitationDidByOrgId(orgId: string): Promise<agent_invitations> {
-    try {
-      return this.prisma.agent_invitations.findFirst({
-        where: {
-          AND: [
-            {
-              orgId
-            },
-            {
-              invitationDid: {
-                not: null
-              }
-            }
-          ]
-        },
-        orderBy: {
-          createDateTime: 'asc' // or 'desc' for descending order
-        }
-      });
-    } catch (error) {
-      this.logger.error(`Error in getInvitationDid in verification repository: ${error.message}`);
-      throw error;
-    }
+  getReuseInvitationDids(orgId: string): Promise<ReuseInvitationDids> {
+    return findReuseInvitationDids(this.prisma, orgId);
   }
 
   async deleteVerificationRecordsByOrgId(orgId: string): Promise<IVerificationRecords> {

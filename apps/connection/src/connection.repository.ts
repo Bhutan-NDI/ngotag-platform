@@ -1,5 +1,6 @@
 import { Injectable, Logger, ConflictException } from '@nestjs/common';
 import { PrismaService } from '@credebl/prisma-service';
+import { findReuseInvitationDids, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 // eslint-disable-next-line camelcase
 import { agent_invitations, org_agents, platform_config, shortening_url } from '@prisma/client';
 import { IConnectionSearchCriteria, ICreateConnection, OrgAgent } from './interfaces/connection.interfaces';
@@ -402,5 +403,9 @@ export class ConnectionRepository {
       this.logger.error(`Error in getInvitationDid in connection repository: ${error.message}`);
       throw error;
     }
+  }
+
+  getReuseInvitationDids(orgId: string): Promise<ReuseInvitationDids> {
+    return findReuseInvitationDids(this.prisma, orgId);
   }
 }

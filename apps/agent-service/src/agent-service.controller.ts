@@ -28,6 +28,7 @@ import { AgentSpinUpStatus } from '@credebl/enum/enum';
 import { Controller, Logger } from '@nestjs/common';
 import { InvitationMessage } from '@credebl/common/interfaces/agent-service.interface';
 import { MessagePattern } from '@nestjs/microservices';
+import { ISchemaVerificationRequest, ISchemaVerificationResult } from '@credebl/common/schema-integrity';
 import { SignDataDto } from '../../api-gateway/src/agent-service/dto/agent-service.dto';
 import { user } from '@prisma/client';
 import {
@@ -98,6 +99,14 @@ export class AgentServiceController {
     return this.agentServiceService.migrateW3CSchema(payload.url, payload.orgId, payload.schemaRequestPayload);
   }
 
+  @MessagePattern({ cmd: 'agent-verify-w3c-schema' })
+  async verifyW3CSchema(payload: {
+    orgId: string;
+    verifyRequest: ISchemaVerificationRequest;
+  }): Promise<ISchemaVerificationResult> {
+    return this.agentServiceService.verifyW3CSchema(payload.orgId, payload.verifyRequest);
+  }
+
   //DONE
   @MessagePattern({ cmd: 'agent-get-schema' })
   async getSchemaById(payload: IGetSchemaAgentRedirection): Promise<object> {
@@ -140,22 +149,10 @@ export class AgentServiceController {
   }
 
   //DONE
-  @MessagePattern({ cmd: 'agent-get-all-issued-credentials' })
-  async getIssueCredentials(payload: { url: string; apiKey: string }): Promise<object> {
-    return this.agentServiceService.getIssueCredentials(payload.url, payload.apiKey);
-  }
-
-  //DONE
   @MessagePattern({ cmd: 'agent-get-issued-credentials-by-credentialDefinitionId' })
   async getIssueCredentialsbyCredentialRecordId(payload: { url: string; orgId: string }): Promise<object> {
     return this.agentServiceService.getIssueCredentialsbyCredentialRecordId(payload.url, payload.orgId);
   }
-  //DONE
-  @MessagePattern({ cmd: 'agent-get-proof-presentations' })
-  async getProofPresentations(payload: { url: string; apiKey: string }): Promise<object> {
-    return this.agentServiceService.getProofPresentations(payload.url, payload.apiKey);
-  }
-
   //DONE
   @MessagePattern({ cmd: 'agent-get-proof-presentation-by-id' })
   async getProofPresentationById(payload: { url: string; orgId: string }): Promise<object> {

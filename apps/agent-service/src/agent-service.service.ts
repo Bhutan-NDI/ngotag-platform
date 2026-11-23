@@ -73,6 +73,7 @@ import { AgentServiceRepository } from './repositories/agent-service.repository'
 import { Prisma, RecordType, ledgers, org_agents, organisation, platform_config, user } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
 import { CommonConstants } from '@credebl/common/common.constant';
+import { ISchemaVerificationRequest, ISchemaVerificationResult } from '@credebl/common/schema-integrity';
 import { CommonService } from '@credebl/common';
 import { GetSchemaAgentRedirection } from 'apps/ledger/src/schema/schema.interface';
 import { ResponseMessages } from '@credebl/common/response-messages';
@@ -1487,18 +1488,6 @@ export class AgentServiceService {
       throw error;
     }
   }
-  async getProofPresentations(url: string, apiKey: string): Promise<object> {
-    try {
-      const getProofPresentationsData = await this.commonService
-        .httpGet(url, { headers: { authorization: apiKey } })
-        .then(async (response) => response);
-
-      return getProofPresentationsData;
-    } catch (error) {
-      this.logger.error(`Error in proof presentations in agent service : ${JSON.stringify(error)}`);
-      throw error;
-    }
-  }
 
   async oidcIssuerCreate(issueData, url: string, orgId: string): Promise<object> {
     try {
@@ -1642,18 +1631,6 @@ export class AgentServiceService {
       return data;
     } catch (error) {
       this.logger.error(`Error in oidcIssuerTemplate in agent service : ${JSON.stringify(error)}`);
-      throw error;
-    }
-  }
-
-  async getIssueCredentials(url: string, apiKey: string): Promise<object> {
-    try {
-      const data = await this.commonService
-        .httpGet(url, { headers: { authorization: apiKey } })
-        .then(async (response) => response);
-      return data;
-    } catch (error) {
-      this.logger.error(`Error in getIssueCredentials in agent service : ${JSON.stringify(error)}`);
       throw error;
     }
   }
@@ -1991,6 +1968,7 @@ export class AgentServiceService {
 
   async deleteWallet(orgId: string, user: user): Promise<object> {
     try {
+      await this.assertOrgNotMigrating(orgId);
       // Retrieve the API key and agent information
       const [getApiKeyResult, orgAgentResult] = await Promise.allSettled([
         this.getOrgAgentApiKey(orgId),
@@ -2011,11 +1989,14 @@ export class AgentServiceService {
 
       const orgAgent = orgAgentResult?.value;
 
-      // Handle orphaned partial record — wallet creation failed before Credo was called,
-      // so there is nothing in Credo to delete. Just clean up the DB record.
-      if (!orgAgent.tenantId || !orgAgent.orgAgentTypeId) {
+      const orphaned = async (): Promise<undefined> => {
         await this.agentServiceRepository.deleteOrgAgentByOrg(orgAgent.orgId);
-        return;
+        return undefined;
+      };
+
+      // Orphaned partial record — wallet creation failed before Credo was called, so there is nothing to delete there.
+      if (!orgAgent.orgAgentTypeId) {
+        return orphaned();
       }
 
       const orgAgentTypeResult = await this.agentServiceRepository.getOrgAgentType(orgAgent.orgAgentTypeId);
@@ -2024,8 +2005,13 @@ export class AgentServiceService {
         throw new NotFoundException(ResponseMessages.agent.error.orgAgentNotFound);
       }
 
+      // A dedicated agent has no tenant: only a shared-agent record without one is an orphan.
+      if (OrgAgentType.SHARED === orgAgentTypeResult.agent && !orgAgent.tenantId) {
+        return orphaned();
+      }
+
       let getApiKey;
-      if (OrgAgentType.SHARED) {
+      if (OrgAgentType.SHARED === orgAgentTypeResult.agent) {
         const platformAdminSpinnedUp = await this.agentServiceRepository.platformAdminAgent(
           CommonConstants.PLATFORM_ADMIN_ORG
         );
@@ -2053,10 +2039,21 @@ export class AgentServiceService {
         const { orgDid, agentInvitation, deleteOrgAgent } =
           await this.agentServiceRepository.deleteOrgAgentByOrg(orgId);
 
-        // Make the HTTP DELETE request
-        const deleteWallet = await this.commonService.httpDelete(url, {
-          headers: { authorization: getApiKey }
-        });
+        // httpDelete throws on a 404 (also when the connection is refused, which is not "already gone")
+        let deleteWallet: { status: number };
+        try {
+          deleteWallet = await this.commonService.httpDelete(url, {
+            headers: { authorization: getApiKey }
+          });
+        } catch (error) {
+          const refused = JSON.stringify(error?.getResponse?.() ?? '').includes(
+            CommonConstants.RESP_ERR_HTTP_ECONNREFUSED
+          );
+          if (HttpStatus.NOT_FOUND !== error?.getStatus?.() || refused) {
+            throw error;
+          }
+          deleteWallet = { status: HttpStatus.NOT_FOUND };
+        }
 
         // 204 = deleted, 404 = already gone — both are acceptable (idempotent delete)
         if (deleteWallet.status !== HttpStatus.NO_CONTENT && deleteWallet.status !== HttpStatus.NOT_FOUND) {
@@ -2151,6 +2148,7 @@ export class AgentServiceService {
   async setDedicatedAgentToken(payload: ISetDedicatedAgentToken): Promise<IDedicatedAgentTokenResult> {
     const { targetOrgId, agentToken, agentEndPoint, userId } = payload;
     try {
+      await this.assertOrgNotMigrating(targetOrgId);
       const [orgAgentDetails, dedicatedAgentTypeId, organizationDetails] = await Promise.all([
         this.agentServiceRepository.getAgentApiKey(targetOrgId),
         this.agentServiceRepository.getOrgAgentTypeDetails(OrgAgentType.DEDICATED),
@@ -2273,7 +2271,21 @@ export class AgentServiceService {
     }
   }
 
+  private async assertOrgNotMigrating(orgId: string): Promise<void> {
+    if (await this.agentServiceRepository.isOrgAgentMigrationFrozen(orgId)) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.LOCKED,
+          message: ResponseMessages.agent.error.orgAgentMigrating,
+          error: 'ORG_AGENT_MIGRATING'
+        },
+        HttpStatus.LOCKED
+      );
+    }
+  }
+
   async getOrgAgentApiKey(orgId: string): Promise<string> {
+    await this.assertOrgNotMigrating(orgId);
     try {
       const orgAgentDetails = await this.agentServiceRepository.getAgentApiKey(orgId);
       const orgAgentId = await this.agentServiceRepository.getOrgAgentTypeDetails(OrgAgentType.SHARED);
@@ -2421,6 +2433,21 @@ export class AgentServiceService {
       return schemaRequest;
     } catch (error) {
       this.logger.error(`Error in migrateW3CSchema request in agent service : ${JSON.stringify(error)}`);
+      throw error;
+    }
+  }
+
+  async verifyW3CSchema(orgId: string, verifyRequest: ISchemaVerificationRequest): Promise<ISchemaVerificationResult> {
+    try {
+      const agentDetails = await this.agentServiceRepository.getAgentDetailsByOrgId(orgId);
+      if (!agentDetails?.agentEndPoint) {
+        throw new NotFoundException(ResponseMessages.agent.error.agentNotExists);
+      }
+      const url = `${agentDetails.agentEndPoint}${CommonConstants.VERIFY_ETHEREUM_W3C_SCHEMA}`;
+      const getApiKey = await this.getOrgAgentApiKey(orgId);
+      return await this.commonService.httpPost(url, verifyRequest, { headers: { authorization: getApiKey } });
+    } catch (error) {
+      this.logger.error(`Error in verifyW3CSchema request in agent service : ${JSON.stringify(error)}`);
       throw error;
     }
   }

@@ -1,4 +1,4 @@
-import { otelSDK } from './tracer';
+import './instrument';
 import * as dotenv from 'dotenv';
 import * as express from 'express';
 
@@ -17,23 +17,13 @@ import NestjsLoggerServiceAdapter from '@credebl/logger/nestjsLoggerServiceAdapt
 import { UpdatableValidationPipe } from '@credebl/common/custom-overrideable-validation-pipe';
 import * as useragent from 'express-useragent';
 import { EcosystemSwaggerFilter } from './authz/guards/ecosystem-swagger.filter';
+import { getMaxProofRequestExpiresInSeconds } from '@credebl/common/proof-request-expiry';
 
 dotenv.config();
+// Fail at startup, not on the first proof request, if PROOF_REQUEST_EXPIRY_MAX_SECONDS is invalid.
+getMaxProofRequestExpiresInSeconds();
 
 async function bootstrap(): Promise<void> {
-  try {
-    if (otelSDK) {
-      await otelSDK.start();
-      // eslint-disable-next-line no-console
-      console.log('OpenTelemetry SDK started successfully');
-    } else {
-      // eslint-disable-next-line no-console
-      console.log('OpenTelemetry SDK disabled for this environment');
-    }
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to start OpenTelemetry SDK:', error);
-  }
   const app = await NestFactory.create(AppModule);
 
   app.useLogger(app.get(NestjsLoggerServiceAdapter));
@@ -69,7 +59,12 @@ async function bootstrap(): Promise<void> {
 
   const options = new DocumentBuilder()
     .setTitle(`${process.env.PLATFORM_NAME}`)
-    .setDescription(`${process.env.PLATFORM_NAME} Platform APIs`)
+    .setDescription(
+      `${process.env.PLATFORM_NAME} Platform APIs\n\n` +
+        '**423 ORG_AGENT_MIGRATING:** an organisation whose wallet is being moved to its own agent answers calls that ' +
+        'use its agent with `423` and `error: "ORG_AGENT_MIGRATING"`. This is a planned pause, not a failure: retry ' +
+        'the request after the move.'
+    )
     .setVersion('1.0')
     .addBearerAuth()
     .addServer('/')

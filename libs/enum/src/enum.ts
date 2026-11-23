@@ -104,6 +104,46 @@ export enum OrgAgentType {
   SHARED = 'SHARED'
 }
 
+export enum OrgAgentMigrationStatus {
+  CREATED = 'CREATED',
+  REHEARSED = 'REHEARSED',
+  SCHEDULED = 'SCHEDULED',
+  FROZEN = 'FROZEN',
+  EXPORTING = 'EXPORTING',
+  IMPORTING = 'IMPORTING',
+  VERIFYING = 'VERIFYING',
+  CUTOVER = 'CUTOVER',
+  STABILISING = 'STABILISING',
+  ROTATING = 'ROTATING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+  CANCELLED = 'CANCELLED',
+  DISASTER_RESTORED = 'DISASTER_RESTORED'
+}
+
+export const ORG_AGENT_MIGRATION_TERMINAL_STATUSES: readonly OrgAgentMigrationStatus[] = [
+  OrgAgentMigrationStatus.COMPLETED,
+  OrgAgentMigrationStatus.FAILED,
+  OrgAgentMigrationStatus.CANCELLED,
+  OrgAgentMigrationStatus.DISASTER_RESTORED
+];
+
+export const ORG_AGENT_MIGRATION_FROZEN_STATUSES: readonly OrgAgentMigrationStatus[] = [
+  OrgAgentMigrationStatus.FROZEN,
+  OrgAgentMigrationStatus.EXPORTING,
+  OrgAgentMigrationStatus.IMPORTING,
+  OrgAgentMigrationStatus.VERIFYING,
+  OrgAgentMigrationStatus.CUTOVER
+];
+
+// Once the org row points at the dedicated agent: new reuse requests use the invitation created there.
+export const ORG_AGENT_MIGRATION_POST_CUTOVER_STATUSES: readonly OrgAgentMigrationStatus[] = [
+  OrgAgentMigrationStatus.CUTOVER,
+  OrgAgentMigrationStatus.STABILISING,
+  OrgAgentMigrationStatus.ROTATING,
+  OrgAgentMigrationStatus.COMPLETED
+];
+
 export enum AgentSpinUpStatus {
   PENDING = 0,
   WALLET_CREATED = 1,
@@ -225,7 +265,7 @@ export enum IssuanceProcessState {
   PROPOSAL_RECEIVED = 'proposal-received',
   OFFER_SENT = 'offer-sent',
   OFFER_RECEIVED = 'offer-received',
-  DECLIEND = 'decliend',
+  DECLINED = 'declined',
   REQUEST_SENT = 'request-sent',
   REQUEST_RECEIVED = 'request-received',
   CREDENTIAL_ISSUED = 'credential-issued',
@@ -241,7 +281,7 @@ export enum VerificationProcessState {
   REQUEST_RECEIVED = 'request-received',
   PRESENTATION_SENT = 'presentation-sent',
   PRESENTATION_RECEIVED = 'presentation-received',
-  DECLIEND = 'declined',
+  DECLINED = 'declined',
   ABANDONED = 'abandoned',
   DONE = 'done'
 }
@@ -251,7 +291,7 @@ export enum ConnectionProcessState {
   INVITATION_SENT = 'invitation-sent',
   INVITATION_RECEIVED = 'invitation-received',
   REQUEST_SENT = 'request-sent',
-  DECLIEND = 'decliend',
+  DECLINED = 'declined',
   REQUEST_RECEIVED = 'request-received',
   RESPONSE_SENT = 'response-sent',
   RESPONSE_RECEIVED = 'response-received',

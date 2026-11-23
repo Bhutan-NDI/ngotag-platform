@@ -1,13 +1,20 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import Redis, { ChainableCommander } from 'ioredis';
-import { IResponseCodeResult, IResponseCodeSession, ResponseCodeStatus } from './response-code.interface';
+import {
+  IResponseCodeResult,
+  IResponseCodeSession,
+  ResponseCodeStatus,
+  TerminalResponseCodeStatus
+} from './response-code.interface';
 
 const KEY_PREFIX = 'verification:response-code:';
 const THREAD_INDEX_PREFIX = 'verification:idx:thread:';
 export const DEFAULT_PENDING_TTL_SECONDS = 600;
 export const DEFAULT_RESULT_TTL_SECONDS = 60;
 export const MAX_TTL_SECONDS = 3600;
+/** Covers delivering a result that lands right at the request deadline. */
+export const REQUEST_DEADLINE_GRACE_SECONDS = 30;
 
 // Compare-and-set: writes only if the session still holds the exact value that was read, so a
 // consumed (deleted) or already-terminal session is never recreated or re-extended.
@@ -68,7 +75,17 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async createSession(orgId: string, threadId: string, redirectUri: string): Promise<string> {
+  /**
+   * `requestExpiresInSeconds` is the proof request's own lifetime: the session lives that long plus a short grace, so
+   * a citizen who approves before the request expires still gets a usable response_code. Without it the session
+   * falls back to PROOF_RESPONSE_CODE_PENDING_TTL_SECONDS.
+   */
+  async createSession(
+    orgId: string,
+    threadId: string,
+    redirectUri: string,
+    requestExpiresInSeconds?: number
+  ): Promise<string> {
     const token = randomBytes(32).toString('base64url');
     const session: IResponseCodeSession = {
       orgId,
@@ -77,11 +94,15 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
       status: ResponseCodeStatus.PENDING,
       createdAt: new Date().toISOString()
     };
+    const ttlSeconds =
+      Number.isInteger(requestExpiresInSeconds) && 0 < requestExpiresInSeconds
+        ? requestExpiresInSeconds + REQUEST_DEADLINE_GRACE_SECONDS
+        : this.pendingTtlSeconds;
     await this.exec(
       this.redis()
         .multi()
-        .set(this.tokenKey(token), JSON.stringify(session), 'EX', this.pendingTtlSeconds)
-        .set(this.threadIndexKey(threadId), token, 'EX', this.pendingTtlSeconds)
+        .set(this.tokenKey(token), JSON.stringify(session), 'EX', ttlSeconds)
+        .set(this.threadIndexKey(threadId), token, 'EX', ttlSeconds)
     );
     return token;
   }
@@ -94,7 +115,7 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
   /** No-op when the proof has no session, it was already consumed, or it is already terminal. */
   async markTerminalByThreadId(
     threadId: string,
-    status: ResponseCodeStatus.COMPLETED | ResponseCodeStatus.FAILED,
+    status: TerminalResponseCodeStatus,
     result: IResponseCodeResult
   ): Promise<void> {
     const indexKey = this.threadIndexKey(threadId);

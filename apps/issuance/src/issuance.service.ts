@@ -3,6 +3,7 @@ import { IssuanceWorkCoordinator } from './issuance-work.coordinator';
 /* eslint-disable no-useless-catch */
 /* eslint-disable camelcase */
 import { CommonService } from '@credebl/common';
+import { resolveHttpStatus } from '@credebl/common/exception-normalisation';
 import {
   BadRequestException,
   ConflictException,
@@ -79,7 +80,8 @@ import {
   ISchemaObject
 } from '@credebl/common/interfaces/issuance.interface';
 import { OOBIssueCredentialDto } from 'apps/api-gateway/src/issuance/dtos/issuance.dto';
-import { RecordType, agent_invitations, organisation, user } from '@prisma/client';
+import { RecordType, organisation, user } from '@prisma/client';
+import { additionalInvitationDidsField, ReuseInvitationDids } from '@credebl/common/invitation-dids';
 import {
   createOobJsonldIssuancePayload,
   validateAndUpdateIssuanceDates,
@@ -91,9 +93,25 @@ import { validateW3CSchemaAttributes } from '../libs/helpers/attributes.validato
 import { ISchemaDetail } from '@credebl/common/interfaces/schema.interface';
 import ContextStorageService, { ContextStorageServiceKey } from '@credebl/context/contextStorageService.interface';
 import { NATSClient } from '@credebl/common/NATSClient';
+import { checkSchemaIntegrity, ISchemaVerificationResult, schemaIdFromUrl } from '@credebl/common/schema-integrity';
 import { extractAttributeNames, unflattenCsvRow } from '../libs/helpers/attributes.extractor';
 import { redisStore } from 'cache-manager-ioredis-yet';
 import { EmailService } from '@credebl/common/email.service';
+
+const ORG_AGENT_MIGRATING = 'ORG_AGENT_MIGRATING';
+
+interface IAgentCallError {
+  statusCode?: unknown;
+  code?: unknown;
+  message?: unknown;
+  error?: unknown;
+}
+
+const agentCallError = (error: IAgentCallError): HttpException => {
+  const status = resolveHttpStatus(error?.statusCode, error?.code);
+  const name = ORG_AGENT_MIGRATING === error?.error ? ORG_AGENT_MIGRATING : error?.message;
+  return new HttpException({ statusCode: status, message: error?.message, error: name }, status);
+};
 
 @Injectable()
 export class IssuanceService {
@@ -201,7 +219,8 @@ export class IssuanceService {
     }
   }
 
-  async getW3CSchemaAttributes(schemaUrl: string): Promise<ISchemaAttributes[]> {
+  /** With `orgId`, also checks the schema against its on-chain checksum via that org's agent. */
+  async getW3CSchemaAttributes(schemaUrl: string, orgId?: string): Promise<ISchemaAttributes[]> {
     this.logger.debug('Getting w3c schema attributes from schemaUrl', schemaUrl);
     const schemaRequest = await this.commonService.httpGet(schemaUrl).then(async (response) => response);
     if (!schemaRequest) {
@@ -215,6 +234,20 @@ export class IssuanceService {
 
     if (!getSchemaDetails) {
       throw new NotFoundException(ResponseMessages.schema.error.notFound);
+    }
+
+    if (orgId) {
+      await checkSchemaIntegrity(
+        { did: getSchemaDetails.publisherDid, schemaId: schemaIdFromUrl(schemaUrl), schemaUrl },
+        (verifyRequest) => {
+          const pattern = { cmd: 'agent-verify-w3c-schema' };
+          return this.natsClient.send<ISchemaVerificationResult>(this.issuanceServiceProxy, pattern, {
+            orgId,
+            verifyRequest
+          });
+        },
+        this.logger
+      );
     }
 
     const schemaAttributes = JSON.parse(getSchemaDetails?.attributes);
@@ -313,7 +346,7 @@ export class IssuanceService {
 
             const schemaServerUrl = issueData?.credentialFormats?.jsonld?.credential?.['@context']?.[1];
 
-            const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl);
+            const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl, orgId);
 
             if (isValidateSchema) {
               validateW3CSchemaAttributes(filteredIssuanceAttributes, schemaUrlAttributes, this.logger);
@@ -325,6 +358,22 @@ export class IssuanceService {
       });
 
       const results = await Promise.allSettled(issuancePromises);
+
+      const migrationFrozen =
+        0 < results.length &&
+        results.every(
+          (result) => PromiseResult.REJECTED === result.status && ORG_AGENT_MIGRATING === result.reason?.response?.error
+        );
+      if (migrationFrozen) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.LOCKED,
+            message: ResponseMessages.agent.error.orgAgentMigrating,
+            error: ORG_AGENT_MIGRATING
+          },
+          HttpStatus.LOCKED
+        );
+      }
 
       const processedResults = results.map((result) => {
         if (PromiseResult.REJECTED === result.status) {
@@ -437,11 +486,11 @@ export class IssuanceService {
       }
 
       const agentDetails = await this.issuanceRepository.getAgentEndPoint(orgId);
-      let invitationDid: string | undefined;
+      let reuseDids: ReuseInvitationDids = {};
       if (true === reuseConnection) {
-        const invitation: agent_invitations = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
-        invitationDid = invitation?.invitationDid ?? undefined;
+        reuseDids = await this.issuanceRepository.getReuseInvitationDids(orgId);
       }
+      const { invitationDid } = reuseDids;
       const { agentEndPoint, organisation } = agentDetails;
 
       if (!agentDetails) {
@@ -468,7 +517,8 @@ export class IssuanceService {
           imageUrl: organisation?.logoUrl || payload?.imageUrl || undefined,
           label: organisation?.name,
           comment: comment || '',
-          invitationDid: invitationDid || undefined
+          invitationDid: invitationDid || undefined,
+          ...additionalInvitationDidsField(reuseDids)
         };
       }
 
@@ -496,7 +546,8 @@ export class IssuanceService {
           imageUrl: organisation?.logoUrl || payload?.imageUrl || undefined,
           label: organisation?.name,
           comment: comment || '',
-          invitationDid: invitationDid || undefined
+          invitationDid: invitationDid || undefined,
+          ...additionalInvitationDidsField(reuseDids)
         };
         const payloadAttributes = issueData?.credentialFormats?.jsonld?.credential?.credentialSubject;
 
@@ -505,7 +556,7 @@ export class IssuanceService {
 
         const schemaServerUrl = issueData?.credentialFormats?.jsonld?.credential?.['@context']?.[1];
 
-        const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl);
+        const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl, orgId);
 
         if (isValidateSchema) {
           validateW3CSchemaAttributes(filteredIssuanceAttributes, schemaUrlAttributes, this.logger);
@@ -564,13 +615,7 @@ export class IssuanceService {
 
         .catch((error) => {
           this.logger.error(`catch: ${JSON.stringify(error)}`);
-          throw new HttpException(
-            {
-              status: error.statusCode,
-              error: error.message
-            },
-            error.error
-          );
+          throw agentCallError(error);
         });
       return createOffer;
     } catch (error) {
@@ -596,13 +641,7 @@ export class IssuanceService {
         .toPromise()
         .catch((error) => {
           this.logger.error(`catch: ${JSON.stringify(error)}`);
-          throw new HttpException(
-            {
-              status: error.statusCode,
-              error: error.message
-            },
-            error.error
-          );
+          throw agentCallError(error);
         });
     } catch (error) {
       this.logger.error(`[natsCall] - error in nats call : ${JSON.stringify(error)}`);
@@ -725,22 +764,6 @@ export class IssuanceService {
       results.push(schemaRequest);
     }
     return results;
-  }
-
-  async _getIssueCredentials(
-    url: string,
-    apiKey: string
-  ): Promise<{
-    response: string;
-  }> {
-    try {
-      const pattern = { cmd: 'agent-get-all-issued-credentials' };
-      const payload = { url, apiKey };
-      return await this.natsCall(pattern, payload);
-    } catch (error) {
-      this.logger.error(`[_getIssueCredentials] [NATS call]- error in fetch credentials : ${JSON.stringify(error)}`);
-      throw error;
-    }
   }
 
   async getIssueCredentialsbyCredentialRecordId(
@@ -1016,12 +1039,12 @@ export class IssuanceService {
     } = sendEmailCredentialOffer;
     const iterationNo = index + 1;
     try {
-      let invitationDid: string | undefined;
+      let reuseDids: ReuseInvitationDids = {};
       if (true === isReuseConnection) {
         this.logger.debug('This is a reuse connection, fetching invitation did');
-        const invitation: agent_invitations = await this.issuanceRepository.getInvitationDidByOrgId(orgId);
-        invitationDid = invitation?.invitationDid ?? undefined;
+        reuseDids = await this.issuanceRepository.getReuseInvitationDids(orgId);
       }
+      const { invitationDid } = reuseDids;
 
       let outOfBandIssuancePayload;
       this.logger.debug('This is an email issuance of type', credentialType);
@@ -1042,7 +1065,8 @@ export class IssuanceService {
           willConfirm: outOfBandCredential.willConfirm || undefined,
           label: organisation?.name,
           imageUrl: organisation?.logoUrl || outOfBandCredential?.imageUrl,
-          invitationDid: invitationDid || undefined
+          invitationDid: invitationDid || undefined,
+          ...additionalInvitationDidsField(reuseDids)
         };
       }
 
@@ -1063,7 +1087,8 @@ export class IssuanceService {
           willConfirm: outOfBandCredential.willConfirm || undefined,
           label: organisation?.name,
           imageUrl: organisation?.logoUrl || outOfBandCredential?.imageUrl,
-          invitationDid: invitationDid || undefined
+          invitationDid: invitationDid || undefined,
+          ...additionalInvitationDidsField(reuseDids)
         };
 
         const payloadAttributes = outOfBandIssuancePayload?.credentialFormats?.jsonld?.credential?.credentialSubject;
@@ -1073,7 +1098,7 @@ export class IssuanceService {
 
         const schemaServerUrl = outOfBandIssuancePayload?.credentialFormats?.jsonld?.credential?.['@context']?.[1];
 
-        const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl);
+        const schemaUrlAttributes = await this.getW3CSchemaAttributes(schemaServerUrl, orgId);
 
         if (isValidateSchema) {
           validateW3CSchemaAttributes(filteredIssuanceAttributes, schemaUrlAttributes, this.logger);
@@ -2080,12 +2105,13 @@ export class IssuanceService {
       return message;
     } catch (error) {
       this.logger.error(`catch: ${JSON.stringify(error)}`);
+      const status = resolveHttpStatus(error?.status, error?.code);
       throw new HttpException(
         {
-          status: error.status,
+          status,
           error: error.message
         },
-        error.status
+        status
       );
     }
   }
@@ -2165,7 +2191,7 @@ export class IssuanceService {
         [IssuanceProcessState.OFFER_SENT]: 0,
         [IssuanceProcessState.OFFER_RECEIVED]: 0,
         [IssuanceProcessState.DONE]: 0,
-        [IssuanceProcessState.DECLIEND]: 0,
+        [IssuanceProcessState.DECLINED]: 0,
         [IssuanceProcessState.CREDENTIAL_RECEIVED]: 0,
         [IssuanceProcessState.CREDENTIAL_ISSUED]: 0,
         [IssuanceProcessState.ABANDONED]: 0

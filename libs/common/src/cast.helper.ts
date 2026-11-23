@@ -2,9 +2,7 @@ import * as CryptoJS from 'crypto-js';
 
 import { BadRequestException, Logger, PipeTransform } from '@nestjs/common';
 import {
-  DidMethod,
   JSONSchemaType,
-  ProofType,
   TemplateIdentifier,
   W3CSchemaDataType,
   ledgerLessDIDType,
@@ -23,6 +21,7 @@ import {
 
 import { ISchemaFields } from './interfaces/schema.interface';
 import { ResponseMessages } from './response-messages';
+import { jsonLdProofTypeForDid } from './common.utils';
 import { plainToClass } from 'class-transformer';
 
 const logger = new Logger();
@@ -347,7 +346,7 @@ export const createOobJsonldIssuancePayload = (JsonldCredentialDetails: IJsonldC
   const { credentialData, orgDid, orgId, schemaLedgerId, schemaName, isReuseConnection } = JsonldCredentialDetails;
   const credentialSubject = {};
 
-  const proofType = orgDid?.includes(DidMethod.POLYGON) ? ProofType.POLYGON_PROOFTYPE : ProofType.NO_LEDGER_PROOFTYPE;
+  const proofType = jsonLdProofTypeForDid(orgDid);
 
   for (const key in credentialData) {
     if (credentialData.hasOwnProperty(key) && TemplateIdentifier.EMAIL_COLUMN !== key) {

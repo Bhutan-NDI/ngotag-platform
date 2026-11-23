@@ -5,6 +5,7 @@ import { LogData, LogLevel } from '@credebl/logger/log';
 import { ConfigService } from '@nestjs/config';
 import ContextStorageService, { ContextStorageServiceKey } from '@credebl/context/contextStorageService.interface';
 import { MICRO_SERVICE_NAME } from '@credebl/common/common.constant';
+import type { AnyValueMap } from '@opentelemetry/api-logs';
 import { otelLogger } from '../../../apps/api-gateway/src/tracer';
 
 @Injectable({ scope: Scope.TRANSIENT })
@@ -107,7 +108,8 @@ export default class LoggerService implements Logger {
       otelLogger.emit({
         body: `${correlationId} ${'string' === typeof message ? message : message.message}`,
         severityText,
-        attributes
+        // The log data passes through as is (error was made serialisable above); the SDK handles nested values.
+        attributes: attributes as unknown as AnyValueMap
       });
     } catch (err) {
       // eslint-disable-next-line no-console

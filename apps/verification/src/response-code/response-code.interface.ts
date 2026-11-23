@@ -6,6 +6,12 @@ export enum ResponseCodeStatus {
   EXPIRED = 'expired'
 }
 
+/** A proof outcome: completed, failed (refused or not verified), or expired (ran out unanswered). */
+export type TerminalResponseCodeStatus =
+  | ResponseCodeStatus.COMPLETED
+  | ResponseCodeStatus.FAILED
+  | ResponseCodeStatus.EXPIRED;
+
 export interface IResponseCodeResult {
   state: string;
   presentationId?: string;

@@ -19,6 +19,22 @@ import { GlobalConfigModule } from '@credebl/config/global-config.module';
 import { ContextInterceptorModule } from '@credebl/context/contextInterceptorModule';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { APP_INTERCEPTOR } from '@nestjs/core';
+import { OrgAgentMigrationController } from './migration/org-agent-migration.controller';
+import { OrgAgentMigrationService } from './migration/org-agent-migration.service';
+import { OrgAgentMigrationPreflightService } from './migration/org-agent-migration.preflight.service';
+import { OrgAgentMigrationRehearsalService } from './migration/org-agent-migration.rehearsal.service';
+import { ScheduleModule } from '@nestjs/schedule';
+import { OrgAgentMigrationRestoreService } from './migration/org-agent-migration.restore.service';
+import { OrgAgentMigrationSwitchOverService } from './migration/org-agent-migration.switch-over.service';
+import { OrgAgentMigrationWebhookService } from './migration/org-agent-migration.webhook.service';
+import { OrgAgentMigrationScheduleService } from './migration/org-agent-migration.schedule.service';
+import { OrgAgentMigrationScheduler } from './migration/org-agent-migration.scheduler';
+import { OrgAgentMigrationExecutor } from './migration/org-agent-migration.executor.service';
+import { OrgAgentMigrationAlertService } from './migration/org-agent-migration.alert.service';
+import { OrgAgentMigrationAuthorizer } from './migration/org-agent-migration.authorizer';
+import { MigrationAgentAccess } from './migration/migration-agent-access';
+import { MigrationAgentClient } from './migration/migration-agent.client';
+import { OrgAgentMigrationRepository } from './repositories/org-agent-migration.repository';
 
 @Module({
   imports: [
@@ -43,12 +59,27 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
     // let AxiosError.toJSON() -- and CommonService.httpGet's JSON.stringify(error) -- write the
     // submitted agent token's authorization header into logs.
     HttpModule,
+    ScheduleModule.forRoot(),
     CacheModule.register()
   ],
-  controllers: [AgentServiceController],
+  controllers: [AgentServiceController, OrgAgentMigrationController],
   providers: [
     AgentServiceService,
     AgentServiceRepository,
+    OrgAgentMigrationService,
+    OrgAgentMigrationPreflightService,
+    OrgAgentMigrationRehearsalService,
+    OrgAgentMigrationAlertService,
+    OrgAgentMigrationExecutor,
+    OrgAgentMigrationScheduleService,
+    OrgAgentMigrationSwitchOverService,
+    OrgAgentMigrationWebhookService,
+    OrgAgentMigrationRestoreService,
+    OrgAgentMigrationScheduler,
+    OrgAgentMigrationAuthorizer,
+    MigrationAgentAccess,
+    MigrationAgentClient,
+    OrgAgentMigrationRepository,
     PrismaService,
     Logger,
     ConnectionService,
