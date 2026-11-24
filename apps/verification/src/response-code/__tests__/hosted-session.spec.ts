@@ -112,7 +112,7 @@ describe('hosted verification session', () => {
   });
 
   describe('GET /verification/hosted/:hostedId', () => {
-    it('returns what the page shows, with the bare invitation for the QR and no response_code anywhere', async () => {
+    it('returns what the page shows: the bare invitation for the QR, the code only in the deep link', async () => {
       const { service } = makeService();
       const before = Date.now();
       const result = await sendOob(service, { redirectUri: REDIRECT_URI, expiresInSeconds: 900 });
@@ -124,12 +124,14 @@ describe('hosted verification session', () => {
         redirectUri: REDIRECT_URI,
         proofRequestURL: INVITATION_URL
       });
-      // The relying party's own deep link carries the code; the page's never does (DL-013).
+      // The page gets the relying party's deep link, with returnUrl, so the wallet returns the citizen (E7, DL-007).
       expect(result.deepLinkURL).toContain('returnUrl=');
-      expect(page.deepLinkURL).toBeDefined();
-      expect(page.deepLinkURL).not.toContain('returnUrl=');
-      expect(JSON.stringify(page)).not.toContain('response_code');
-      expect(JSON.stringify(page)).not.toContain(codeOf(result.returnUrl));
+      expect(page.deepLinkURL).toBe(result.deepLinkURL);
+      // Everywhere else the code stays out: "Start again" uses redirectUri, and the QR the bare invitation (DL-004, DL-013).
+      const withoutDeepLink = { ...page, deepLinkURL: undefined };
+      expect(JSON.stringify(withoutDeepLink)).not.toContain('response_code');
+      expect(JSON.stringify(withoutDeepLink)).not.toContain(codeOf(result.returnUrl));
+      expect(page.proofRequestURL).not.toContain('returnUrl');
       const expiresAt = Date.parse(page.expiresAt);
       expect(expiresAt).toBeGreaterThanOrEqual(before + 900_000);
       expect(expiresAt).toBeLessThanOrEqual(Date.now() + 900_000);

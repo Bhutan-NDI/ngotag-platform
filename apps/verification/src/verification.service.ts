@@ -650,31 +650,21 @@ export class VerificationService {
       this.logger.error(`[attachRedirect] - failed to create response_code session: ${error?.message}`);
       return;
     }
-    // The hosted page gets the deep link without returnUrl: it must not hand out the code before the proof ends (DL-013).
-    const bareDeepLinkURL = presentationProof.deepLinkURL;
     presentationProof.returnUrl = buildReturnUrl(redirectUri, responseCode);
     if (presentationProof.deepLinkURL) {
       presentationProof.deepLinkURL = appendReturnUrl(presentationProof.deepLinkURL, presentationProof.returnUrl);
     }
-    await this.attachHostedPage(
-      presentationProof,
-      bareDeepLinkURL,
-      orgId,
-      threadId,
-      redirectUri,
-      expiresInSeconds,
-      requestedAt
-    );
+    await this.attachHostedPage(presentationProof, orgId, threadId, redirectUri, expiresInSeconds, requestedAt);
   }
 
   /**
    * Creates the NDI hosted page's session beside the response_code session (HVP-SD §5.2, DL-017). It lives one grace
    * period longer, so the page can read `expired` after the code session ends. Like the redirect itself, a failure
    * leaves the invitation usable, only without hostedPageUrl.
+   * deepLinkURL carries returnUrl (E7, DL-007), so the hostedId holder can use up the code's single terminal read.
    */
   private async attachHostedPage(
     presentationProof: IInvitation,
-    deepLinkURL: string | undefined,
     orgId: string,
     threadId: string,
     redirectUri: string,
@@ -693,7 +683,7 @@ export class VerificationService {
           orgId,
           threadId,
           proofRequestURL: presentationProof.invitationUrl,
-          deepLinkURL,
+          deepLinkURL: presentationProof.deepLinkURL,
           returnUrl: presentationProof.returnUrl,
           redirectUri,
           returnHost: new URL(redirectUri).host,
@@ -750,7 +740,27 @@ export class VerificationService {
       // The code was already exchanged or its result window has passed: report the outcome, with nothing to return.
       return { status: session.outcome };
     }
-    return { status: pastDeadline ? 'expired' : 'pending' };
+    if (pastDeadline) {
+      return { status: 'expired' };
+    }
+    // Optional: without the scan signal the page simply stays on pending (DL-016).
+    const scanned = await this.callHostedStore(() => this.proofResponseCodeService.isHostedScanned(hostedId));
+    return { status: scanned ? 'scanned' : 'pending' };
+  }
+
+  /**
+   * The wallet connected for an invitation, which it does as soon as it scans and before it shows the request
+   * (HVP-SD E10, DL-016). Sent by the connection service; never fails the connection webhook.
+   */
+  async markHostedScanned(outOfBandId: string, orgId: string): Promise<void> {
+    if (!outOfBandId || !orgId) {
+      return;
+    }
+    try {
+      await this.proofResponseCodeService.markHostedScanned(outOfBandId, orgId);
+    } catch (error) {
+      this.logger.warn(`[markHostedScanned] - could not mark ${outOfBandId} scanned: ${error?.message}`);
+    }
   }
 
   private async findHostedSession(hostedId: string): Promise<IHostedSession> {

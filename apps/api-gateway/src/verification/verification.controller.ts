@@ -739,7 +739,7 @@ export class VerificationController {
   @ApiOperation({
     summary: 'Get a hosted verification page session',
     description:
-      'For the NDI hosted page: the QR invitation, the deep link, the return host, redirectUri without the response_code, and the request deadline (expiresAt).'
+      'For the NDI hosted page: the QR invitation, the deep link (with returnUrl, as the relying party gets it), the return host, redirectUri without the response_code, and the request deadline (expiresAt).'
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Session found', type: ApiResponseDto })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Unknown or expired hostedId' })
