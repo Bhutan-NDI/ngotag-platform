@@ -1,7 +1,9 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { OrgRoles } from 'libs/org-roles/enums';
 
 interface UserOrgRole {
   orgId: string;
+  orgRole?: { name: string };
 }
 
 // mobile-verifier has no organization table of its own — it resolves org identity and
@@ -20,8 +22,10 @@ export const resolveNgotagOrgId = (
 
   const userOrgRoles = (user?.userOrgRoles ?? []) as UserOrgRole[];
   const isMember = userOrgRoles.some((membership) => membership.orgId === requestedOrgId);
+  // A platform admin acts in every organisation, as OrgRolesGuard allows elsewhere.
+  const isPlatformAdmin = userOrgRoles.some((membership) => OrgRoles.PLATFORM_ADMIN === membership.orgRole?.name);
 
-  if (!isMember) {
+  if (!isMember && !isPlatformAdmin) {
     throw new ForbiddenException('You are not a member of this organization');
   }
 

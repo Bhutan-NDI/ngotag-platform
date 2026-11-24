@@ -38,6 +38,7 @@ import {
 
 import { CreateOrganizationDto } from '../dtos/create-organization.dto';
 import { IOrgRoles } from 'libs/org-roles/interfaces/org-roles.interface';
+import { OrgRoles } from 'libs/org-roles/enums';
 import { PrismaService } from '@credebl/prisma-service';
 import { ResponseMessages } from '@credebl/common/response-messages';
 import { UserOrgRolesService } from '@credebl/user-org-roles';
@@ -727,14 +728,16 @@ export class OrganizationRepository {
     pageNumber: number,
     pageSize: number,
     role?: string,
-    userId?: string
+    userId?: string,
+    allOrganisations = false
   ): Promise<IGetOrganization> {
     try {
       const sortByName = SortValue.DESC;
-      const result = await this.prisma.$transaction([
-        this.prisma.organisation.findMany({
-          where: {
-            ...queryObject,
+      // Every organisation when allOrganisations is set (a platform admin), otherwise only those
+      // the user holds a role in. The selected userOrgRoles still list only the user's own roles.
+      const membership = allOrganisations
+        ? {}
+        : {
             userOrgRoles: {
               some: {
                 orgRole: {
@@ -743,6 +746,12 @@ export class OrganizationRepository {
                 userId
               }
             }
+          };
+      const result = await this.prisma.$transaction([
+        this.prisma.organisation.findMany({
+          where: {
+            ...queryObject,
+            ...membership
           },
           select: {
             id: true,
@@ -789,14 +798,7 @@ export class OrganizationRepository {
         this.prisma.organisation.count({
           where: {
             ...queryObject,
-            userOrgRoles: {
-              some: {
-                orgRole: {
-                  name: role
-                },
-                userId
-              }
-            }
+            ...membership
           }
         })
       ]);
@@ -809,6 +811,13 @@ export class OrganizationRepository {
       this.logger.error(`error: ${JSON.stringify(error)}`);
       throw new InternalServerErrorException(error);
     }
+  }
+
+  async isPlatformAdmin(userId: string): Promise<boolean> {
+    const count = await this.prisma.user_org_roles.count({
+      where: { userId, orgRole: { name: OrgRoles.PLATFORM_ADMIN } }
+    });
+    return 0 < count;
   }
 
   async userOrganizationCount(userId: string): Promise<number> {
