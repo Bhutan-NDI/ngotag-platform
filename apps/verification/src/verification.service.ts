@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -57,7 +58,7 @@ import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { ISchemaDetail } from '@credebl/common/interfaces/schema.interface';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { EmailService } from '@credebl/common/email.service';
-import { ProofResponseCodeService } from './response-code/proof-response-code.service';
+import { ProofResponseCodeService, REQUEST_DEADLINE_GRACE_SECONDS } from './response-code/proof-response-code.service';
 import {
   appendReturnUrl,
   buildReturnUrl,
@@ -67,7 +68,13 @@ import {
   parseRedirectUriAllowlist,
   toTerminalResponseCodeStatus
 } from './response-code/redirect-uri.util';
-import { IProofCallbackResult, ResponseCodeStatus } from './response-code/response-code.interface';
+import {
+  IHostedPage,
+  IHostedSession,
+  IHostedStatus,
+  IProofCallbackResult,
+  ResponseCodeStatus
+} from './response-code/response-code.interface';
 
 /**
  * The agent-controller value for `expiresInSeconds`: null or absent becomes undefined, so the field is
@@ -81,6 +88,19 @@ const toAgentExpiresInSeconds = (value: number | null | undefined): number | und
  * be sized to match. Capped at PROOF_REQUEST_EXPIRY_MAX_SECONDS so a deployment with a low purge ceiling still accepts it.
  */
 export const REDIRECT_DEFAULT_EXPIRES_IN_SECONDS = 600;
+
+/** Status reads allowed per hosted page per minute; the page polls every 2-5 s (DL-008). */
+const DEFAULT_HOSTED_STATUS_READS_PER_MINUTE = 60;
+
+function hostedStatusReadsPerMinute(): number {
+  const value = Number(process.env.HOSTED_STATUS_RATE_LIMIT_PER_MINUTE);
+  return Number.isInteger(value) && 0 < value ? value : DEFAULT_HOSTED_STATUS_READS_PER_MINUTE;
+}
+
+/** Where the NDI hosted page is served, e.g. https://id.bhutanndi.com (DL-012). Unset: no hosted page. */
+function hostedPageBaseUrl(): string | undefined {
+  return process.env.HOSTED_PAGE_BASE_URL?.trim().replace(/\/+$/, '') || undefined;
+}
 
 function redirectDefaultExpiresInSeconds(): number {
   return Math.min(REDIRECT_DEFAULT_EXPIRES_IN_SECONDS, getMaxProofRequestExpiresInSeconds());
@@ -578,6 +598,8 @@ export class VerificationService {
         await this.verificationRepository.saveEmail(emailResponse as IEmailResponse[]);
         return emailResponse;
       } else {
+        // The agent counts the deadline from about now, so the hosted page never shows a later one (DL-017).
+        const requestedAt = Date.now();
         const presentationProof: IInvitation = await this.generateOOBProofReq(payload);
         const proofRequestInvitationUrl: string = presentationProof.invitationUrl;
         if (isShortenUrl) {
@@ -595,7 +617,7 @@ export class VerificationService {
           presentationProof.deepLinkURL = convertUrlToDeepLinkUrl(presentationProof.invitationUrl);
         }
         if (redirectUri) {
-          await this.attachRedirect(presentationProof, user.orgId, redirectUri, expiresInSeconds);
+          await this.attachRedirect(presentationProof, user.orgId, redirectUri, expiresInSeconds, requestedAt);
         }
         return presentationProof;
       }
@@ -612,7 +634,8 @@ export class VerificationService {
     presentationProof: IInvitation,
     orgId: string,
     redirectUri: string,
-    expiresInSeconds?: number
+    expiresInSeconds?: number,
+    requestedAt: number = Date.now()
   ): Promise<void> {
     const threadId = presentationProof.proofRecordThId;
     if (!threadId) {
@@ -627,9 +650,130 @@ export class VerificationService {
       this.logger.error(`[attachRedirect] - failed to create response_code session: ${error?.message}`);
       return;
     }
+    // The hosted page gets the deep link without returnUrl: it must not hand out the code before the proof ends (DL-013).
+    const bareDeepLinkURL = presentationProof.deepLinkURL;
     presentationProof.returnUrl = buildReturnUrl(redirectUri, responseCode);
     if (presentationProof.deepLinkURL) {
       presentationProof.deepLinkURL = appendReturnUrl(presentationProof.deepLinkURL, presentationProof.returnUrl);
+    }
+    await this.attachHostedPage(
+      presentationProof,
+      bareDeepLinkURL,
+      orgId,
+      threadId,
+      redirectUri,
+      expiresInSeconds,
+      requestedAt
+    );
+  }
+
+  /**
+   * Creates the NDI hosted page's session beside the response_code session (HVP-SD §5.2, DL-017). It lives one grace
+   * period longer, so the page can read `expired` after the code session ends. Like the redirect itself, a failure
+   * leaves the invitation usable, only without hostedPageUrl.
+   */
+  private async attachHostedPage(
+    presentationProof: IInvitation,
+    deepLinkURL: string | undefined,
+    orgId: string,
+    threadId: string,
+    redirectUri: string,
+    expiresInSeconds: number | undefined,
+    requestedAt: number
+  ): Promise<void> {
+    const baseUrl = hostedPageBaseUrl();
+    if (!baseUrl) {
+      return;
+    }
+    const ttlSeconds = this.proofResponseCodeService.sessionTtlSeconds(expiresInSeconds);
+    const lifetimeMs = (expiresInSeconds ?? ttlSeconds) * 1000;
+    try {
+      const hostedId = await this.proofResponseCodeService.createHostedSession(
+        {
+          orgId,
+          threadId,
+          proofRequestURL: presentationProof.invitationUrl,
+          deepLinkURL,
+          returnUrl: presentationProof.returnUrl,
+          redirectUri,
+          returnHost: new URL(redirectUri).host,
+          outOfBandId: presentationProof.outOfBandRecord?.id,
+          expiresAt: new Date(requestedAt + lifetimeMs).toISOString()
+        },
+        ttlSeconds + REQUEST_DEADLINE_GRACE_SECONDS
+      );
+      presentationProof.hostedPageUrl = `${baseUrl}/v/${hostedId}`;
+    } catch (error) {
+      this.logger.error(`[attachHostedPage] - failed to create hosted session: ${error?.message}`);
+    }
+  }
+
+  /** What the hosted page needs to show a request. Unknown and expired ids get the same not-found (HVP-SD §6). */
+  async getHostedPage(hostedId: string): Promise<IHostedPage> {
+    const session = await this.findHostedSession(hostedId);
+    return {
+      returnHost: session.returnHost,
+      redirectUri: session.redirectUri,
+      proofRequestURL: session.proofRequestURL,
+      deepLinkURL: session.deepLinkURL,
+      expiresAt: session.expiresAt
+    };
+  }
+
+  /**
+   * The hosted page's polled status (HVP-SD §5.3). Reads the response_code session without consuming it, so the relying
+   * party can still exchange the code; callback-result cannot be used because a terminal read deletes the session.
+   */
+  async getHostedStatus(hostedId: string): Promise<IHostedStatus> {
+    const session = await this.findHostedSession(hostedId);
+    const reads = await this.callHostedStore(() => this.proofResponseCodeService.countHostedStatusRead(hostedId));
+    if (reads > hostedStatusReadsPerMinute()) {
+      throw new RpcException({
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        message: ResponseMessages.verification.error.hostedStatusRateLimited,
+        error: 'Too Many Requests'
+      });
+    }
+    // Pending through the grace period: a result that lands then is still delivered, so `expired` is only reported
+    // once nothing can change it.
+    const graceMs = REQUEST_DEADLINE_GRACE_SECONDS * 1000;
+    const pastDeadline = Date.now() >= Date.parse(session.expiresAt) + graceMs;
+    const { threadId } = session;
+    const codeSession = await this.callHostedStore(() => this.proofResponseCodeService.getSessionByThreadId(threadId));
+    if (codeSession && ResponseCodeStatus.PENDING !== codeSession.status) {
+      // Completed or failed: the page sends the browser back with the code. Expired: it offers "Start again" (DL-013).
+      return ResponseCodeStatus.EXPIRED === codeSession.status
+        ? { status: 'expired' }
+        : { status: codeSession.status, returnUrl: session.returnUrl };
+    }
+    if (!codeSession && session.outcome) {
+      // The code was already exchanged or its result window has passed: report the outcome, with nothing to return.
+      return { status: session.outcome };
+    }
+    return { status: pastDeadline ? 'expired' : 'pending' };
+  }
+
+  private async findHostedSession(hostedId: string): Promise<IHostedSession> {
+    const session = hostedId
+      ? await this.callHostedStore(() => this.proofResponseCodeService.getHostedSession(hostedId))
+      : null;
+    if (!session) {
+      throw new RpcException(
+        new NotFoundException(ResponseMessages.verification.error.hostedSessionNotFound).getResponse()
+      );
+    }
+    return session;
+  }
+
+  /** A store outage is a 503, never a not-found: the session may be fine once Redis is back. */
+  private async callHostedStore<T>(read: () => Promise<T>): Promise<T> {
+    try {
+      return await read();
+    } catch (error) {
+      this.logger.error(`[hosted] - session store unavailable: ${error?.message}`);
+      throw new RpcException(
+        new ServiceUnavailableException(ResponseMessages.verification.error.responseCodeUnavailable).getResponse()
+      );
     }
   }
 
@@ -644,6 +788,7 @@ export class VerificationService {
         state,
         presentationId
       });
+      await this.proofResponseCodeService.recordHostedOutcome(threadId, status);
     } catch (error) {
       this.logger.error(`[updateResponseCodeSession] - error for threadId ${threadId}: ${error?.message}`);
     }

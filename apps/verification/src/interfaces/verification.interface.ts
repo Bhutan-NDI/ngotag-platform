@@ -249,6 +249,8 @@ export interface IInvitation {
   invitationUrl?: string;
   deepLinkURL?: string;
   returnUrl?: string;
+  /** The NDI hosted page for this request; only for a request with a redirectUri (DL-003, DL-014). */
+  hostedPageUrl?: string;
 }
 
 export interface IProofRequestData {

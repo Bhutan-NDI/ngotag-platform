@@ -25,6 +25,7 @@ import {
   Param,
   UseFilters,
   BadRequestException,
+  NotFoundException,
   ParseUUIDPipe,
   Delete,
   Patch,
@@ -58,7 +59,23 @@ import { IWebhookUrlInfo } from '@credebl/common/interfaces/webhook.interface';
 import { RequiresMarketplaceFeature } from '../marketplace/decorators/requires-marketplace-feature.decorator';
 import { MarketplaceEntitlementGuard } from '../marketplace/guards/marketplace-entitlement.guard';
 import { MarketplaceService } from '../marketplace/marketplace.service';
+import { RateLimit } from 'nestjs-rate-limiter';
 import { isMarketplaceMeteringEnabled } from '../marketplace/utils/marketplace-config.util';
+
+/**
+ * The global limit is per IP, and many citizens share one carrier or office IP; the real limit for these routes is per
+ * hostedId, in the verification service (DL-008). This only replaces the global per-IP ceiling with a looser one.
+ */
+export const HOSTED_PAGE_IP_RATE_LIMIT = { keyPrefix: 'verification-hosted', points: 500, duration: 1 };
+
+/** A hostedId is 32 random bytes in base64url (43 characters); anything else is reported as not found. */
+function checkedHostedId(hostedId: string): string {
+  const value = hostedId?.trim();
+  if (!/^[A-Za-z0-9_-]{43}$/.test(value ?? '')) {
+    throw new NotFoundException(ResponseMessages.verification.error.hostedSessionNotFound);
+  }
+  return value;
+}
 
 @UseFilters(CustomExceptionFilter)
 @Controller()
@@ -709,6 +726,54 @@ export class VerificationController {
       statusCode: HttpStatus.OK,
       message: ResponseMessages.verification.success.callbackResultFetched,
       data: callbackResult
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  /**
+   * Public and read-only, for the NDI hosted verification page (HVP-SD §5.3). The opaque, 256-bit hostedId is the only
+   * input; unknown and expired ids get the same 404.
+   */
+  @Get('/verification/hosted/:hostedId')
+  @RateLimit(HOSTED_PAGE_IP_RATE_LIMIT)
+  @ApiOperation({
+    summary: 'Get a hosted verification page session',
+    description:
+      'For the NDI hosted page: the QR invitation, the deep link, the return host, redirectUri without the response_code, and the request deadline (expiresAt).'
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Session found', type: ApiResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Unknown or expired hostedId' })
+  async getHostedPage(@Param('hostedId') hostedId: string, @Res() res: Response): Promise<Response> {
+    res.setHeader('Cache-Control', 'no-store');
+    const data = await this.verificationService.getHostedPage(checkedHostedId(hostedId));
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.hostedSessionFetched,
+      data
+    };
+    return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  /**
+   * Polled by the hosted page. Never consumes the response_code, and has its own limit per hostedId (DL-008).
+   */
+  @Get('/verification/hosted/:hostedId/status')
+  @RateLimit(HOSTED_PAGE_IP_RATE_LIMIT)
+  @ApiOperation({
+    summary: 'Get a hosted verification page status',
+    description:
+      'pending, scanned, completed, failed or expired. On completed or failed, also returnUrl (redirectUri with the response_code). Rate limited per hostedId.'
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Current status', type: ApiResponseDto })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Unknown or expired hostedId' })
+  @ApiResponse({ status: HttpStatus.TOO_MANY_REQUESTS, description: 'Too many status reads for this hostedId' })
+  async getHostedStatus(@Param('hostedId') hostedId: string, @Res() res: Response): Promise<Response> {
+    res.setHeader('Cache-Control', 'no-store');
+    const data = await this.verificationService.getHostedStatus(checkedHostedId(hostedId));
+    const finalResponse: IResponse = {
+      statusCode: HttpStatus.OK,
+      message: ResponseMessages.verification.success.hostedStatusFetched,
+      data
     };
     return res.status(HttpStatus.OK).json(finalResponse);
   }

@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { randomBytes } from 'crypto';
 import Redis, { ChainableCommander } from 'ioredis';
 import {
+  IHostedSession,
   IResponseCodeResult,
   IResponseCodeSession,
   ResponseCodeStatus,
@@ -10,6 +11,11 @@ import {
 
 const KEY_PREFIX = 'verification:response-code:';
 const THREAD_INDEX_PREFIX = 'verification:idx:thread:';
+const HOSTED_PREFIX = 'verification:hosted:';
+const HOSTED_THREAD_INDEX_PREFIX = 'verification:idx:hosted-thread:';
+const HOSTED_RATE_PREFIX = 'verification:rate:hosted:';
+/** Window of the per-hostedId read limit on the status endpoint (DL-008). */
+export const HOSTED_RATE_WINDOW_SECONDS = 60;
 export const DEFAULT_PENDING_TTL_SECONDS = 600;
 export const DEFAULT_RESULT_TTL_SECONDS = 60;
 export const MAX_TTL_SECONDS = 3600;
@@ -94,10 +100,7 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
       status: ResponseCodeStatus.PENDING,
       createdAt: new Date().toISOString()
     };
-    const ttlSeconds =
-      Number.isInteger(requestExpiresInSeconds) && 0 < requestExpiresInSeconds
-        ? requestExpiresInSeconds + REQUEST_DEADLINE_GRACE_SECONDS
-        : this.pendingTtlSeconds;
+    const ttlSeconds = this.sessionTtlSeconds(requestExpiresInSeconds);
     await this.exec(
       this.redis()
         .multi()
@@ -105,6 +108,13 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
         .set(this.threadIndexKey(threadId), token, 'EX', ttlSeconds)
     );
     return token;
+  }
+
+  /** The request deadline plus grace, or the configured pending TTL when the request has no known lifetime. */
+  sessionTtlSeconds(requestExpiresInSeconds?: number): number {
+    return Number.isInteger(requestExpiresInSeconds) && 0 < requestExpiresInSeconds
+      ? requestExpiresInSeconds + REQUEST_DEADLINE_GRACE_SECONDS
+      : this.pendingTtlSeconds;
   }
 
   async getSession(token: string): Promise<IResponseCodeSession | null> {
@@ -147,6 +157,56 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
     } else {
       this.logger.debug(`response_code session for threadId ${threadId} changed concurrently; update skipped`);
     }
+  }
+
+  /** Reads a proof's session through the thread index without consuming it (HVP-SD §5.3). */
+  async getSessionByThreadId(threadId: string): Promise<IResponseCodeSession | null> {
+    const token = await this.redis().get(this.threadIndexKey(threadId));
+    return token ? this.getSession(token) : null;
+  }
+
+  /**
+   * Stores the hosted page's session. The caller gives it the response_code session's lifetime plus one more grace
+   * period, so the page can still read `expired` after the code session ends.
+   */
+  async createHostedSession(session: Omit<IHostedSession, 'hostedId'>, ttlSeconds: number): Promise<string> {
+    const hostedId = randomBytes(32).toString('base64url');
+    await this.exec(
+      this.redis()
+        .multi()
+        .set(this.hostedKey(hostedId), JSON.stringify({ hostedId, ...session }), 'EX', ttlSeconds)
+        .set(this.hostedThreadIndexKey(session.threadId), hostedId, 'EX', ttlSeconds)
+    );
+    return hostedId;
+  }
+
+  async getHostedSession(hostedId: string): Promise<IHostedSession | null> {
+    const raw = await this.redis().get(this.hostedKey(hostedId));
+    return raw ? (JSON.parse(raw) as IHostedSession) : null;
+  }
+
+  /** Keeps the proof's outcome on its hosted session, if it has one. The session's expiry is unchanged. */
+  async recordHostedOutcome(threadId: string, outcome: TerminalResponseCodeStatus): Promise<void> {
+    const hostedId = await this.redis().get(this.hostedThreadIndexKey(threadId));
+    if (!hostedId) {
+      return;
+    }
+    const session = await this.getHostedSession(hostedId);
+    if (!session || session.outcome) {
+      return;
+    }
+    // XX: if the session expired since the read, do not recreate it without an expiry.
+    await this.redis().set(this.hostedKey(hostedId), JSON.stringify({ ...session, outcome }), 'KEEPTTL', 'XX');
+  }
+
+  /** Counts a status read for a hosted page in the current window; the caller decides the limit (DL-008). */
+  async countHostedStatusRead(hostedId: string): Promise<number> {
+    const key = `${HOSTED_RATE_PREFIX}${hostedId}`;
+    // One transaction, so the window's expiry is always set with the counter.
+    const [, count] = await this.exec(
+      this.redis().multi().set(key, 0, 'EX', HOSTED_RATE_WINDOW_SECONDS, 'NX').incr(key)
+    );
+    return count as number;
   }
 
   /** Returns false when a concurrent reader already consumed the token. */
@@ -193,5 +253,13 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
 
   private threadIndexKey(threadId: string): string {
     return `${THREAD_INDEX_PREFIX}${threadId}`;
+  }
+
+  private hostedKey(hostedId: string): string {
+    return `${HOSTED_PREFIX}${hostedId}`;
+  }
+
+  private hostedThreadIndexKey(threadId: string): string {
+    return `${HOSTED_THREAD_INDEX_PREFIX}${threadId}`;
   }
 }

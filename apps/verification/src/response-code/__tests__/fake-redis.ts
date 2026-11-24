@@ -1,13 +1,25 @@
 class FakeTransaction {
-  private readonly commands: (() => number | string)[] = [];
+  private readonly commands: (() => number | string | null)[] = [];
 
   constructor(private readonly redis: FakeRedis) {}
 
-  set(key: string, value: string, _mode: 'EX', ttl: number): this {
+  set(key: string, value: string | number, _mode: 'EX', ttl: number, condition?: 'NX'): this {
     this.commands.push(() => {
-      this.redis.store.set(key, value);
+      if ('NX' === condition && this.redis.store.has(key)) {
+        return null;
+      }
+      this.redis.store.set(key, String(value));
       this.redis.ttls.set(key, ttl);
       return 'OK';
+    });
+    return this;
+  }
+
+  incr(key: string): this {
+    this.commands.push(() => {
+      const next = Number(this.redis.store.get(key) ?? 0) + 1;
+      this.redis.store.set(key, String(next));
+      return next;
     });
     return this;
   }
@@ -40,6 +52,19 @@ export class FakeRedis {
   async get(key: string): Promise<string | null> {
     this.assertConnected();
     return this.store.get(key) ?? null;
+  }
+
+  /** Only the KEEPTTL XX form is used outside a transaction. */
+  async set(key: string, value: string, mode: 'KEEPTTL', condition: 'XX'): Promise<'OK' | null> {
+    this.assertConnected();
+    if ('KEEPTTL' !== mode || 'XX' !== condition) {
+      throw new Error(`FakeRedis.set supports only KEEPTTL XX, got ${mode} ${condition}`);
+    }
+    if (!this.store.has(key)) {
+      return null;
+    }
+    this.store.set(key, value);
+    return 'OK';
   }
 
   async eval(_script: string, _numKeys: number, ...args: (string | number)[]): Promise<number> {

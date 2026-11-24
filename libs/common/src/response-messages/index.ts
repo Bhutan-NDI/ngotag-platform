@@ -586,7 +586,9 @@ export const ResponseMessages = {
       redirectUrisRegistered: 'Redirect URIs registered successfully',
       redirectUrisUpdated: 'Redirect URIs updated successfully',
       redirectUrisFetched: 'Redirect URIs fetched successfully',
-      callbackResultFetched: 'Proof result fetched successfully'
+      callbackResultFetched: 'Proof result fetched successfully',
+      hostedSessionFetched: 'Verification page details fetched successfully',
+      hostedStatusFetched: 'Verification page status fetched successfully'
     },
     error: {
       notFound: 'Organization agent not found',
@@ -611,6 +613,8 @@ export const ResponseMessages = {
       redirectUriHttpsRequired: 'Redirect URIs must use https',
       responseCodeExpired: 'response_code is unknown, expired or already used',
       responseCodeUnavailable: 'Proof result is temporarily unavailable, please retry',
+      hostedSessionNotFound: 'This verification request was not found or has expired',
+      hostedStatusRateLimited: 'Too many status checks for this verification request, please slow down',
       proofNotVerified: 'Proof presentation is not verified',
       proofRecordNotLinked: 'Proof presentation is verified but has no linked agent proof record'
     }
