@@ -49,11 +49,24 @@ export class ConnectionService {
   async getConnectionWebhook(payload: ICreateConnection): Promise<object> {
     try {
       const saveConnectionDetails = await this.connectionRepository.saveConnectionWebhook(payload);
+      // The saved row carries the org resolved from the agent's tenant, which a shared-agent webhook URL does not.
+      this.notifyHostedScan(payload.connectionDto, (saveConnectionDetails as { orgId?: string })?.orgId);
       return saveConnectionDetails;
     } catch (error) {
       this.logger.error(`[getConnectionWebhook] - error in fetch connection webhook: ${error}`);
       throw new RpcException(error?.response ?? error);
     }
+  }
+
+  /** Fire and forget (DL-016). On HandshakeReused the scanned invitation is outOfBandRecord, not outOfBandId. */
+  private notifyHostedScan(connectionDto: ICreateConnection['connectionDto'], orgId?: string): void {
+    const outOfBandId = connectionDto?.outOfBandRecord?.id ?? connectionDto?.outOfBandId;
+    if (!outOfBandId || !orgId) {
+      return;
+    }
+    this.natsClient
+      .sendNatsMessage(this.connectionServiceProxy, 'hosted-verification-scanned', { outOfBandId, orgId })
+      .catch((error) => this.logger.debug(`[notifyHostedScan] - not delivered: ${error?.message ?? error}`));
   }
 
   /**
