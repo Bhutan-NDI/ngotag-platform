@@ -84,7 +84,7 @@ interface IRequestedRestriction {
 }
 
 export interface IProofCallbackResult {
-  status: 'pending' | 'completed' | 'failed' | 'expired';
+  status: 'pending' | 'completed' | 'failed' | 'declined' | 'expired';
   threadId?: string;
   result?: {
     state: string;
