@@ -70,16 +70,14 @@ describe('hosted page: scan link', () => {
     jest.restoreAllMocks();
   });
 
-  it('points the page QR code and deep link at the scan link, and leaves the relying party response as it was', async () => {
+  it('points the page QR code at the scan link, and keeps the relying party deep link on the page', async () => {
     const service = makeService();
     const result = await hostedRequest(service);
 
     const page = await service.getHostedPage(hostedIdOf(result));
 
     expect(page.proofRequestURL).toMatch(/^https:\/\/api\.example\.com\/verification\/hosted\/i\/[0-9a-f]{64}$/);
-    expect(page.deepLinkURL).toBe(
-      `${DEEPLINK_DOMAIN}${page.proofRequestURL}&returnUrl=${encodeURIComponent(result.returnUrl)}`
-    );
+    expect(page.deepLinkURL).toBe(result.deepLinkURL);
     expect(result.invitationUrl).toBe(OOB_URL);
     expect(result.deepLinkURL).toBe(`${DEEPLINK_DOMAIN}${OOB_URL}&returnUrl=${encodeURIComponent(result.returnUrl)}`);
   });
@@ -94,6 +92,20 @@ describe('hosted page: scan link', () => {
     expect(await service.getHostedStatus(hostedIdOf(result))).toEqual({ status: 'scanned' });
     // A rescan or the app's second fetch gets the same answer.
     expect(await service.getHostedInvitation(token, true)).toBe(OOB_URL);
+  });
+
+  it('reads the hosted session once per wallet fetch', async () => {
+    const service = makeService();
+    const result = await hostedRequest(service);
+    const token = scanTokenOf((await service.getHostedPage(hostedIdOf(result))).proofRequestURL);
+    const responseCodes = (service as unknown as { proofResponseCodeService: ProofResponseCodeService })
+      .proofResponseCodeService;
+    const reads = jest.spyOn(responseCodes, 'getHostedSession');
+
+    await service.getHostedInvitation(token, true);
+
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(await service.getHostedStatus(hostedIdOf(result))).toEqual({ status: 'scanned' });
   });
 
   it('serves the agent URL from before shortening', async () => {

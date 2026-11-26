@@ -683,9 +683,9 @@ export class VerificationService {
    * leaves the invitation usable, only without hostedPageUrl.
    * deepLinkURL carries returnUrl (E7, DL-007), so the hostedId holder can use up the code's single terminal read.
    *
-   * With HOSTED_SCAN_BASE_URL set, the page's QR code and deep link point to the scan link instead of the invitation,
-   * so the platform sees the wallet fetch it, for new and returning users alike. The relying party's own
-   * invitationUrl and deepLinkURL stay as they are.
+   * With HOSTED_SCAN_BASE_URL set, the page's QR code points to the scan link instead of the invitation, so the platform
+   * sees the wallet fetch it, for new and returning users alike. The deep link stays the relying party's: once "Open
+   * Bhutan NDI" is tapped the page is already waiting, so routing it through the scan link would only add load.
    */
   private async attachHostedPage(
     presentationProof: IInvitation,
@@ -705,11 +705,6 @@ export class VerificationService {
     const scanBaseUrl = hostedScanBaseUrl();
     const scanToken = scanBaseUrl ? newHostedScanToken() : undefined;
     const scanUrl = scanToken ? `${scanBaseUrl}/verification/hosted/i/${scanToken}` : undefined;
-    // Same deep link format the relying party gets; only the inner url changes to the scan link.
-    const deepLinkURL =
-      scanUrl && presentationProof.deepLinkURL
-        ? appendReturnUrl(convertUrlToDeepLinkUrl(scanUrl), presentationProof.returnUrl)
-        : presentationProof.deepLinkURL;
     try {
       const hostedId = await this.proofResponseCodeService.createHostedSession(
         {
@@ -717,7 +712,7 @@ export class VerificationService {
           threadId,
           proofRequestURL: scanUrl ?? presentationProof.invitationUrl,
           oobUrl: scanUrl ? oobUrl : undefined,
-          deepLinkURL,
+          deepLinkURL: presentationProof.deepLinkURL,
           returnUrl: presentationProof.returnUrl,
           redirectUri,
           returnHost: new URL(redirectUri).host,
@@ -799,7 +794,7 @@ export class VerificationService {
   }
 
   /**
-   * The wallet fetches the hosted page's scan link when it scans the QR code or opens the deep link, before it decides
+   * The wallet fetches the hosted page's scan link when it scans the QR code, before it decides
    * how to handle the invitation, so this marks new and returning users scanned alike. `markScanned` is false for a
    * fetch that is not the wallet's (no `Accept: application/json`), such as a link preview. Answers every fetch until
    * the session ends; marking never fails the fetch.
@@ -818,7 +813,8 @@ export class VerificationService {
     }
     if (markScanned) {
       try {
-        await this.proofResponseCodeService.markHostedScannedById(hostedId);
+        // The session was just read, so marking it costs no second read.
+        await this.proofResponseCodeService.markHostedSessionScanned(session);
       } catch (error) {
         this.logger.warn(`[getHostedInvitation] - could not mark scanned: ${error?.message}`);
       }

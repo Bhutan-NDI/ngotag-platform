@@ -240,9 +240,18 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
    */
   async markHostedScannedById(hostedId: string, orgId?: string): Promise<boolean> {
     const session = await this.getHostedSession(hostedId);
-    if (!session || (orgId && session.orgId !== orgId) || session.outcome) {
+    if (!session || (orgId && session.orgId !== orgId)) {
       return false;
     }
+    return this.markHostedSessionScanned(session);
+  }
+
+  /** For a caller that has already read the session, such as the scan link. */
+  async markHostedSessionScanned(session: IHostedSession): Promise<boolean> {
+    if (session.outcome) {
+      return false;
+    }
+    const { hostedId } = session;
     const remainingMs = await this.redis().pttl(this.hostedKey(hostedId));
     if (0 >= remainingMs) {
       return false;
