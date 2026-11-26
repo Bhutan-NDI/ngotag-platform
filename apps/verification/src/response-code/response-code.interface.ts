@@ -77,9 +77,6 @@ export type HostedStatus = 'pending' | 'scanned' | 'completed' | 'failed' | 'exp
 export interface IHostedStatus {
   status: HostedStatus;
   returnUrl?: string;
-  /**
-   * With returnUrl only: when its response_code session ends and the code can no longer be exchanged. The
-   * page switches its Return button to redirectUri?error=<reason> shortly before.
-   */
+  /** With returnUrl only: when its response_code can no longer be exchanged. */
   returnUrlExpiresAt?: string;
 }

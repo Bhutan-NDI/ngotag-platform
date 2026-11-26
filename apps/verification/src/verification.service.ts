@@ -710,11 +710,7 @@ export class VerificationService {
     };
   }
 
-  /**
-   * The hosted page's polled status, with returnUrlExpiresAt whenever it returns returnUrl: the code works only while
-   * its response_code session lasts (about 60 s after the outcome), so the page learns when its Return button stops
-   * working.
-   */
+  /** Adds returnUrlExpiresAt alongside returnUrl: when its response_code can no longer be exchanged. */
   async getHostedStatus(hostedId: string): Promise<IHostedStatus> {
     const hostedStatus = await this.readHostedStatus(hostedId);
     const responseCode = hostedStatus.returnUrl && new URL(hostedStatus.returnUrl).searchParams.get('response_code');
