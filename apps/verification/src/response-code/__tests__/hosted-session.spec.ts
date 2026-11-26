@@ -184,10 +184,11 @@ describe('hosted verification session', () => {
         status: 'declined',
         returnUrl: declinedResult.returnUrl
       });
-      // Once the relying party has used the code, the page still learns it was declined.
-      expect((await declined.service.getProofCallbackResult(codeOf(declinedResult.returnUrl))).status).toBe(
-        ResponseCodeStatus.DECLINED
-      );
+      // TC-HVP-03 / DL-020: the exchange reports failed with reason declined; the page still learns it was declined.
+      expect(await declined.service.getProofCallbackResult(codeOf(declinedResult.returnUrl))).toMatchObject({
+        status: ResponseCodeStatus.FAILED,
+        reason: 'declined'
+      });
       expect(await declined.service.getHostedStatus(hostedIdOf(declinedResult))).toEqual({ status: 'declined' });
 
       const expired = makeService();

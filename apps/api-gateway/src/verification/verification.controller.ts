@@ -701,13 +701,12 @@ export class VerificationController {
   @ApiOperation({
     summary: 'Get proof result by response_code',
     description:
-      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof finishes. completed only means it finished: fetch the outcome with the authenticated proof endpoint. declined means the holder refused the request; failed means the proof finished but was not verified. expired with a threadId means the request ran out before the holder answered. A completed, failed, declined or expired result can be read only once, so read it once and keep the outcome in your own state (a retried or duplicated read gets 410).'
+      'Poll the result of a same-device out-of-band proof request using the response_code appended to the redirectUri. Returns pending until the proof finishes. completed only means it finished: fetch the outcome with the authenticated proof endpoint. expired with a threadId means the request ran out before the holder answered. A completed, failed or expired result can be read only once, so read it once and keep the outcome in your own state (a retried or duplicated read gets 410).'
   })
   @ApiQuery({ name: 'response_code', required: true })
   @ApiResponse({
     status: HttpStatus.OK,
-    description:
-      'Pending, completed, failed, declined (the holder refused), or expired with a threadId (the request ran out)',
+    description: 'Pending, completed, failed, or expired with a threadId (the request ran out)',
     type: ApiResponseDto
   })
   @ApiResponse({ status: HttpStatus.GONE, description: 'Unknown, expired or already used response_code' })

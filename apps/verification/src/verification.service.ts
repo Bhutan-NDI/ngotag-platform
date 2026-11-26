@@ -822,6 +822,15 @@ export class VerificationService {
       if (!consumed) {
         return expired;
       }
+      // DL-020: the exchange keeps reporting a refusal as failed, so integrations never see a new status value.
+      if (ResponseCodeStatus.DECLINED === session.status) {
+        return {
+          status: ResponseCodeStatus.FAILED,
+          reason: 'declined',
+          threadId: session.threadId,
+          result: session.result
+        };
+      }
       return { status: session.status, threadId: session.threadId, result: session.result };
     } catch (error) {
       // Not "expired": the code may still be valid once the store is reachable again.

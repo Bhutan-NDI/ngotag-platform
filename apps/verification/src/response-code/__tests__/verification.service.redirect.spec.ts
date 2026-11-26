@@ -165,7 +165,7 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
     expect(await service.getProofCallbackResult(responseCode)).toEqual({ status: ResponseCodeStatus.EXPIRED });
   });
 
-  it('marks an abandoned proof as declined', async () => {
+  it('reports an abandoned (declined) proof to the relying party as failed with reason declined (DL-020)', async () => {
     const { service } = makeService();
     const { returnUrl } = (await sendOob(service, REDIRECT_URI)) as OobResult;
 
@@ -180,7 +180,8 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
     });
 
     expect(await service.getProofCallbackResult(responseCodeFrom(returnUrl))).toEqual({
-      status: ResponseCodeStatus.DECLINED,
+      status: ResponseCodeStatus.FAILED,
+      reason: 'declined',
       threadId: THREAD_ID,
       result: { state: 'abandoned' }
     });
@@ -195,7 +196,9 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
       proofPresentationPayload: { threadId: THREAD_ID, state: 'done', isVerified: false } as never
     });
 
-    expect((await service.getProofCallbackResult(responseCodeFrom(returnUrl))).status).toBe(ResponseCodeStatus.FAILED);
+    const result = await service.getProofCallbackResult(responseCodeFrom(returnUrl));
+    expect(result.status).toBe(ResponseCodeStatus.FAILED);
+    expect(result.reason).toBeUndefined();
   });
 
   it('returns expired for an unknown or empty response_code', async () => {
