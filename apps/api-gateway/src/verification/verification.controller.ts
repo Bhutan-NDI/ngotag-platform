@@ -29,7 +29,8 @@ import {
   ParseUUIDPipe,
   Delete,
   Patch,
-  Version
+  Version,
+  Headers
 } from '@nestjs/common';
 import { ApiResponseDto } from '../dtos/apiResponse.dto';
 import { UnauthorizedErrorDto } from '../dtos/unauthorized-error.dto';
@@ -67,6 +68,20 @@ import { isMarketplaceMeteringEnabled } from '../marketplace/utils/marketplace-c
  * hostedId, in the verification service (DL-008). This only replaces the global per-IP ceiling with a looser one.
  */
 export const HOSTED_PAGE_IP_RATE_LIMIT = { keyPrefix: 'verification-hosted', points: 500, duration: 1 };
+
+/** A scan token is 32 random bytes in hex (64 characters); anything else is reported as not found. */
+function checkedScanToken(scanToken: string): string {
+  const value = scanToken?.trim();
+  if (!/^[0-9a-f]{64}$/.test(value ?? '')) {
+    throw new NotFoundException(ResponseMessages.verification.error.hostedSessionNotFound);
+  }
+  return value;
+}
+
+/** Only the wallet asks for JSON; a browser or a link preview fetching the link must not mark the request scanned. */
+export function isWalletFetch(accept: string | undefined): boolean {
+  return Boolean(accept?.toLowerCase().includes('application/json'));
+}
 
 /** A hostedId is 32 random bytes in base64url (43 characters); anything else is reported as not found. */
 function checkedHostedId(hostedId: string): string {
@@ -776,6 +791,27 @@ export class VerificationController {
       data
     };
     return res.status(HttpStatus.OK).json(finalResponse);
+  }
+
+  /**
+   * The hosted page's scan link: its QR code and deep link point here. Answers the full `?oob=` invitation URL as a
+   * bare JSON string, which is what the Bhutan NDI app expects from a short link, and marks the request scanned when
+   * the wallet fetches it.
+   */
+  @Get('/verification/hosted/i/:scanToken')
+  @RateLimit(HOSTED_PAGE_IP_RATE_LIMIT)
+  @ApiExcludeEndpoint()
+  async getHostedInvitation(
+    @Param('scanToken') scanToken: string,
+    @Headers('accept') accept: string | undefined,
+    @Res() res: Response
+  ): Promise<Response> {
+    res.setHeader('Cache-Control', 'no-store');
+    const oobUrl = await this.verificationService.getHostedInvitation(
+      checkedScanToken(scanToken),
+      isWalletFetch(accept)
+    );
+    return res.status(HttpStatus.OK).type('application/json').send(JSON.stringify(oobUrl));
   }
 
   /**

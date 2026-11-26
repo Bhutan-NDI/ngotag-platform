@@ -15,9 +15,18 @@ const HOSTED_PREFIX = 'verification:hosted:';
 const HOSTED_THREAD_INDEX_PREFIX = 'verification:idx:hosted-thread:';
 const HOSTED_OOB_INDEX_PREFIX = 'verification:idx:hosted-oob:';
 const HOSTED_SCANNED_PREFIX = 'verification:hosted-scanned:';
+const HOSTED_SCAN_PREFIX = 'verification:hosted-scan:';
 const HOSTED_RATE_PREFIX = 'verification:rate:hosted:';
 /** Window of the per-hostedId read limit on the status endpoint (DL-008). */
 export const HOSTED_RATE_WINDOW_SECONDS = 60;
+
+/**
+ * The token in the hosted page's scan link. Hex, so it can never contain `oob`, `c_i` or `d_m`, which the wallet would
+ * take for an inline invitation.
+ */
+export function newHostedScanToken(): string {
+  return randomBytes(32).toString('hex');
+}
 export const DEFAULT_PENDING_TTL_SECONDS = 600;
 export const DEFAULT_RESULT_TTL_SECONDS = 60;
 export const MAX_TTL_SECONDS = 3600;
@@ -171,7 +180,11 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
    * Stores the hosted page's session. The caller gives it the response_code session's lifetime plus one more grace
    * period, so the page can still read `expired` after the code session ends.
    */
-  async createHostedSession(session: Omit<IHostedSession, 'hostedId'>, ttlSeconds: number): Promise<string> {
+  async createHostedSession(
+    session: Omit<IHostedSession, 'hostedId'>,
+    ttlSeconds: number,
+    scanToken?: string
+  ): Promise<string> {
     const hostedId = randomBytes(32).toString('base64url');
     const transaction = this.redis()
       .multi()
@@ -179,6 +192,10 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
       .set(this.hostedThreadIndexKey(session.threadId), hostedId, 'EX', ttlSeconds);
     if (session.outOfBandId) {
       transaction.set(this.hostedOutOfBandIndexKey(session.outOfBandId), hostedId, 'EX', ttlSeconds);
+    }
+    if (scanToken) {
+      // Lives as long as the session, so the link answers every fetch (rescans included) until the session ends.
+      transaction.set(this.hostedScanKey(scanToken), hostedId, 'EX', ttlSeconds);
     }
     await this.exec(transaction);
     return hostedId;
@@ -203,16 +220,38 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
     await this.redis().set(this.hostedKey(hostedId), JSON.stringify({ ...session, outcome }), 'KEEPTTL', 'XX');
   }
 
-  /** The flag is its own key, so it can't overwrite an outcome recorded meanwhile (DL-016). */
+  /** The hosted session a scan link points to, or null when the token is unknown or the session has ended. */
+  async resolveHostedScan(scanToken: string): Promise<string | null> {
+    return this.redis().get(this.hostedScanKey(scanToken));
+  }
+
+  /** From a connection or handshake-reuse event: only for the org that created the request (DL-016). */
   async markHostedScanned(outOfBandId: string, orgId: string): Promise<boolean> {
     const hostedId = await this.redis().get(this.hostedOutOfBandIndexKey(outOfBandId));
     if (!hostedId) {
       return false;
     }
+    return this.markHostedScannedById(hostedId, orgId);
+  }
+
+  /**
+   * The flag is its own key, so it can't overwrite an outcome recorded meanwhile (DL-016). With `orgId`, only a session
+   * of that org is marked; the scan link needs no org check, as its token already names the session.
+   */
+  async markHostedScannedById(hostedId: string, orgId?: string): Promise<boolean> {
     const session = await this.getHostedSession(hostedId);
-    if (!session || session.orgId !== orgId || session.outcome) {
+    if (!session || (orgId && session.orgId !== orgId)) {
       return false;
     }
+    return this.markHostedSessionScanned(session);
+  }
+
+  /** For a caller that has already read the session, such as the scan link. */
+  async markHostedSessionScanned(session: IHostedSession): Promise<boolean> {
+    if (session.outcome) {
+      return false;
+    }
+    const { hostedId } = session;
     const remainingMs = await this.redis().pttl(this.hostedKey(hostedId));
     if (0 >= remainingMs) {
       return false;
@@ -291,6 +330,10 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
 
   private hostedOutOfBandIndexKey(outOfBandId: string): string {
     return `${HOSTED_OOB_INDEX_PREFIX}${outOfBandId}`;
+  }
+
+  private hostedScanKey(scanToken: string): string {
+    return `${HOSTED_SCAN_PREFIX}${scanToken}`;
   }
 
   private hostedScannedKey(hostedId: string): string {

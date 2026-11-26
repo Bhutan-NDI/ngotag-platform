@@ -169,6 +169,13 @@ export class VerificationService extends BaseService {
     });
   }
 
+  getHostedInvitation(scanToken: string, markScanned: boolean): Promise<string> {
+    return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'get-hosted-verification-invitation', {
+      scanToken,
+      markScanned
+    });
+  }
+
   setRedirectUris(orgId: string, redirectUris: string[], userId: string): Promise<string[]> {
     const payload = { orgId, redirectUris, userId };
     return this.natsClient.sendNatsMessage(this.verificationServiceProxy, 'set-verification-redirect-uris', payload);

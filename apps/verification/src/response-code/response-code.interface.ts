@@ -49,8 +49,13 @@ export interface IHostedSession {
   hostedId: string;
   orgId: string;
   threadId: string;
-  /** The bare invitation: the QR code encodes this, never the deep link (DL-004). */
+  /**
+   * What the QR code encodes, never the deep link (DL-004): the scan link when HOSTED_SCAN_BASE_URL is set, otherwise
+   * the bare invitation. Neither carries a returnUrl.
+   */
   proofRequestURL: string;
+  /** The agent's full `?oob=` invitation URL, before any shortening; the scan link answers with it. */
+  oobUrl?: string;
   /**
    * The relying party's deep link, with returnUrl, for the "Open Bhutan NDI" button: the wallet opens returnUrl once
    * the proof completes, so the page does not redirect after it is tapped (E7, DL-007).
