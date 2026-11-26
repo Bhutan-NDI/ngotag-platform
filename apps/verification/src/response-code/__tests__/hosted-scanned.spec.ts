@@ -91,7 +91,11 @@ describe('hosted page: scanned (DL-016)', () => {
     });
     await service.markHostedScanned(OOB_ID, ORG_ID);
 
-    expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'completed', returnUrl });
+    expect(await service.getHostedStatus(hostedId)).toEqual({
+      status: 'completed',
+      returnUrl,
+      returnUrlExpiresAt: expect.any(String)
+    });
   });
 
   it('reports expired when a scanned request is not approved before the deadline', async () => {
@@ -118,7 +122,11 @@ describe('hosted page: scanned (DL-016)', () => {
       proofPresentationPayload: { threadId: THREAD_ID, state: 'done', isVerified: true } as never
     });
 
-    expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'completed', returnUrl });
+    expect(await service.getHostedStatus(hostedId)).toEqual({
+      status: 'completed',
+      returnUrl,
+      returnUrlExpiresAt: expect.any(String)
+    });
   });
 
   it('does not recreate a hosted session that expired before the scan was recorded', async () => {

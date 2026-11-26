@@ -91,4 +91,6 @@ export type HostedStatus = 'pending' | 'scanned' | 'completed' | 'failed' | 'dec
 export interface IHostedStatus {
   status: HostedStatus;
   returnUrl?: string;
+  /** With returnUrl only: when its response_code can no longer be exchanged. */
+  returnUrlExpiresAt?: string;
 }

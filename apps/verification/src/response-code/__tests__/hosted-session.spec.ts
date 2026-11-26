@@ -154,7 +154,11 @@ describe('hosted verification session', () => {
       expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'pending' });
 
       await webhook(service, { state: 'done', isVerified: true, presentationId: 'pres-1' });
-      expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'completed', returnUrl: result.returnUrl });
+      expect(await service.getHostedStatus(hostedId)).toEqual({
+        status: 'completed',
+        returnUrl: result.returnUrl,
+        returnUrlExpiresAt: expect.any(String)
+      });
 
       // The relying party can still exchange the code after the page read the status.
       const exchanged = await service.getProofCallbackResult(codeOf(result.returnUrl));
@@ -170,7 +174,8 @@ describe('hosted verification session', () => {
       await webhook(failed.service, { state: 'done', isVerified: false });
       expect(await failed.service.getHostedStatus(hostedIdOf(failedResult))).toEqual({
         status: 'failed',
-        returnUrl: failedResult.returnUrl
+        returnUrl: failedResult.returnUrl,
+        returnUrlExpiresAt: expect.any(String)
       });
 
       const declined = makeService();
@@ -221,7 +226,34 @@ describe('hosted verification session', () => {
       expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'pending' });
 
       await webhook(service, { state: 'done', isVerified: true, presentationId: 'pres-1' });
-      expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'completed', returnUrl: result.returnUrl });
+      expect(await service.getHostedStatus(hostedId)).toEqual({
+        status: 'completed',
+        returnUrl: result.returnUrl,
+        returnUrlExpiresAt: expect.any(String)
+      });
+    });
+
+    it('gives returnUrlExpiresAt as the end of the response_code session, and none without returnUrl', async () => {
+      const { service, redis } = makeService();
+      const result = await sendOob(service, { redirectUri: REDIRECT_URI });
+      const hostedId = hostedIdOf(result);
+
+      expect(await service.getHostedStatus(hostedId)).not.toHaveProperty('returnUrlExpiresAt');
+
+      await webhook(service, { state: 'done', isVerified: true, presentationId: 'pres-1' });
+      const codeKey = `verification:response-code:${codeOf(result.returnUrl)}`;
+      redis.ttls.set(codeKey, 42);
+      const now = Date.now();
+      jest.spyOn(Date, 'now').mockReturnValue(now);
+
+      const status = await service.getHostedStatus(hostedId);
+
+      expect(status.returnUrl).toBe(result.returnUrl);
+      expect(status.returnUrlExpiresAt).toBe(new Date(now + 42_000).toISOString());
+
+      // Once the code is used, there is nothing to return and no deadline.
+      await service.getProofCallbackResult(codeOf(result.returnUrl));
+      expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'completed' });
     });
 
     it('limits status reads per hostedId', async () => {
