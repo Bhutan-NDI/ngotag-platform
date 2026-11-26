@@ -731,7 +731,8 @@ export class VerificationService {
     const { threadId } = session;
     const codeSession = await this.callHostedStore(() => this.proofResponseCodeService.getSessionByThreadId(threadId));
     if (codeSession && ResponseCodeStatus.PENDING !== codeSession.status) {
-      // Completed or failed: the page sends the browser back with the code. Expired: it offers "Start again" (DL-013).
+      // Completed, failed or declined: the page sends the browser back with the code. Expired: it offers "Start
+      // again" (DL-013).
       return ResponseCodeStatus.EXPIRED === codeSession.status
         ? { status: 'expired' }
         : { status: codeSession.status, returnUrl: session.returnUrl };

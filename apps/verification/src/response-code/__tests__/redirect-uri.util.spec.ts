@@ -158,10 +158,14 @@ describe('toTerminalResponseCodeStatus', () => {
     expect(toTerminalResponseCodeStatus('done', true)).toBe(ResponseCodeStatus.COMPLETED);
   });
 
-  it('maps done without verification, declined and abandoned to failed', () => {
+  it('maps done without verification to failed', () => {
     expect(toTerminalResponseCodeStatus('done', false)).toBe(ResponseCodeStatus.FAILED);
-    expect(toTerminalResponseCodeStatus('declined')).toBe(ResponseCodeStatus.FAILED);
-    expect(toTerminalResponseCodeStatus('abandoned')).toBe(ResponseCodeStatus.FAILED);
+    expect(toTerminalResponseCodeStatus('done')).toBe(ResponseCodeStatus.FAILED);
+  });
+
+  it('maps declined and abandoned (other than an expiry) to declined', () => {
+    expect(toTerminalResponseCodeStatus('declined')).toBe(ResponseCodeStatus.DECLINED);
+    expect(toTerminalResponseCodeStatus('abandoned')).toBe(ResponseCodeStatus.DECLINED);
   });
 
   it('treats intermediate states as non-terminal', () => {

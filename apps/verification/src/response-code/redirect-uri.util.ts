@@ -78,12 +78,13 @@ export function toTerminalResponseCodeStatus(
     case VerificationProcessState.DONE:
       return isVerified ? ResponseCodeStatus.COMPLETED : ResponseCodeStatus.FAILED;
     case VerificationProcessState.ABANDONED:
-      // A request the wallet let run out is not a refusal.
+      // The verifier records every holder problem report as abandoned; only the errorMessage tells a request that
+      // ran out from a refusal. Same rule as the Expired / Declined search filter.
       return errorMessage?.startsWith(REQUEST_EXPIRED_ERROR_PREFIX)
         ? ResponseCodeStatus.EXPIRED
-        : ResponseCodeStatus.FAILED;
+        : ResponseCodeStatus.DECLINED;
     case VerificationProcessState.DECLINED:
-      return ResponseCodeStatus.FAILED;
+      return ResponseCodeStatus.DECLINED;
     default:
       return null;
   }
