@@ -112,15 +112,15 @@ describe('response_code session follows the proof request deadline', () => {
   });
 });
 
-describe('an expired request is reported as expired, not failed', () => {
-  it('maps abandoned + request-expired to expired, and any other abandoned to failed', () => {
+describe('an expired request is reported as expired, not declined', () => {
+  it('maps abandoned + request-expired to expired, and any other abandoned to declined', () => {
     expect(toTerminalResponseCodeStatus('abandoned', false, 'abandoned: request-expired')).toBe(
       ResponseCodeStatus.EXPIRED
     );
-    expect(toTerminalResponseCodeStatus('abandoned', false, 'abandoned: Proof request declined')).toBe(
-      ResponseCodeStatus.FAILED
+    expect(toTerminalResponseCodeStatus('abandoned', false, 'abandoned: Request declined')).toBe(
+      ResponseCodeStatus.DECLINED
     );
-    expect(toTerminalResponseCodeStatus('abandoned', false, undefined)).toBe(ResponseCodeStatus.FAILED);
+    expect(toTerminalResponseCodeStatus('abandoned', false, undefined)).toBe(ResponseCodeStatus.DECLINED);
   });
 
   it('gives the relying party an expired result for the request, once', async () => {

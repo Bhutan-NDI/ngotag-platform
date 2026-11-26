@@ -2,14 +2,21 @@ export enum ResponseCodeStatus {
   PENDING = 'pending',
   // The proof finished; the verdict comes from the authenticated proof fetch, not from here.
   COMPLETED = 'completed',
+  /** The proof ended without a valid presentation: done but not verified. */
   FAILED = 'failed',
+  /** The holder refused. Reported by the hosted status only; callback-result reports it as failed with reason 'declined'. */
+  DECLINED = 'declined',
   EXPIRED = 'expired'
 }
 
-/** A proof outcome: completed, failed (refused or not verified), or expired (ran out unanswered). */
+/**
+ * A proof outcome: completed, failed (not verified), declined (refused by the holder), or expired (ran out
+ * unanswered).
+ */
 export type TerminalResponseCodeStatus =
   | ResponseCodeStatus.COMPLETED
   | ResponseCodeStatus.FAILED
+  | ResponseCodeStatus.DECLINED
   | ResponseCodeStatus.EXPIRED;
 
 export interface IResponseCodeResult {
@@ -28,6 +35,8 @@ export interface IResponseCodeSession {
 
 export interface IProofCallbackResult {
   status: ResponseCodeStatus;
+  /** Set with status failed when the holder refused the request. */
+  reason?: 'declined';
   threadId?: string;
   result?: IResponseCodeResult;
 }
@@ -47,7 +56,7 @@ export interface IHostedSession {
    * the proof completes, so the page does not redirect after it is tapped (E7, DL-007).
    */
   deepLinkURL?: string;
-  /** redirectUri?response_code=..., only returned by /status once the proof is completed or failed. */
+  /** redirectUri?response_code=..., only returned by /status once the proof is completed, failed or declined. */
   returnUrl: string;
   redirectUri: string;
   returnHost: string;
@@ -71,7 +80,7 @@ export interface IHostedPage {
   expiresAt: string;
 }
 
-export type HostedStatus = 'pending' | 'scanned' | 'completed' | 'failed' | 'expired';
+export type HostedStatus = 'pending' | 'scanned' | 'completed' | 'failed' | 'declined' | 'expired';
 
 /** GET /verification/hosted/:hostedId/status. returnUrl only while the result can still be exchanged. */
 export interface IHostedStatus {

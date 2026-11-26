@@ -165,16 +165,40 @@ describe('VerificationService — DIDComm redirect / response_code', () => {
     expect(await service.getProofCallbackResult(responseCode)).toEqual({ status: ResponseCodeStatus.EXPIRED });
   });
 
-  it('marks an abandoned proof as failed', async () => {
+  it('reports an abandoned (declined) proof to the relying party as failed with reason declined (DL-020)', async () => {
     const { service } = makeService();
     const { returnUrl } = (await sendOob(service, REDIRECT_URI)) as OobResult;
 
     await service.webhookProofPresentation({
       orgId: ORG_ID,
-      proofPresentationPayload: { threadId: THREAD_ID, state: 'abandoned', isVerified: false } as never
+      proofPresentationPayload: {
+        threadId: THREAD_ID,
+        state: 'abandoned',
+        isVerified: false,
+        errorMessage: 'abandoned: Request declined'
+      } as never
     });
 
-    expect((await service.getProofCallbackResult(responseCodeFrom(returnUrl))).status).toBe(ResponseCodeStatus.FAILED);
+    expect(await service.getProofCallbackResult(responseCodeFrom(returnUrl))).toEqual({
+      status: ResponseCodeStatus.FAILED,
+      reason: 'declined',
+      threadId: THREAD_ID,
+      result: { state: 'abandoned' }
+    });
+  });
+
+  it('marks a finished but unverified proof as failed', async () => {
+    const { service } = makeService();
+    const { returnUrl } = (await sendOob(service, REDIRECT_URI)) as OobResult;
+
+    await service.webhookProofPresentation({
+      orgId: ORG_ID,
+      proofPresentationPayload: { threadId: THREAD_ID, state: 'done', isVerified: false } as never
+    });
+
+    const result = await service.getProofCallbackResult(responseCodeFrom(returnUrl));
+    expect(result.status).toBe(ResponseCodeStatus.FAILED);
+    expect(result.reason).toBeUndefined();
   });
 
   it('returns expired for an unknown or empty response_code', async () => {

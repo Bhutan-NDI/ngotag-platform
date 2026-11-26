@@ -164,14 +164,32 @@ describe('hosted verification session', () => {
       expect(await service.getHostedStatus(hostedId)).toEqual({ status: 'completed' });
     });
 
-    it('reports failed with returnUrl, and an expired request as expired without one', async () => {
+    it('reports failed and declined with returnUrl, and an expired request as expired without one', async () => {
       const failed = makeService();
       const failedResult = await sendOob(failed.service, { redirectUri: REDIRECT_URI });
-      await webhook(failed.service, { state: 'abandoned', isVerified: false });
+      await webhook(failed.service, { state: 'done', isVerified: false });
       expect(await failed.service.getHostedStatus(hostedIdOf(failedResult))).toEqual({
         status: 'failed',
         returnUrl: failedResult.returnUrl
       });
+
+      const declined = makeService();
+      const declinedResult = await sendOob(declined.service, { redirectUri: REDIRECT_URI });
+      await webhook(declined.service, {
+        state: 'abandoned',
+        isVerified: false,
+        errorMessage: 'abandoned: Request declined'
+      });
+      expect(await declined.service.getHostedStatus(hostedIdOf(declinedResult))).toEqual({
+        status: 'declined',
+        returnUrl: declinedResult.returnUrl
+      });
+      // TC-HVP-03 / DL-020: the exchange reports failed with reason declined; the page still learns it was declined.
+      expect(await declined.service.getProofCallbackResult(codeOf(declinedResult.returnUrl))).toMatchObject({
+        status: ResponseCodeStatus.FAILED,
+        reason: 'declined'
+      });
+      expect(await declined.service.getHostedStatus(hostedIdOf(declinedResult))).toEqual({ status: 'declined' });
 
       const expired = makeService();
       const expiredResult = await sendOob(expired.service, { redirectUri: REDIRECT_URI });

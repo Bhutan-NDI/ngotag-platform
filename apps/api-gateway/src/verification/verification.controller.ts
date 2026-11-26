@@ -762,7 +762,7 @@ export class VerificationController {
   @ApiOperation({
     summary: 'Get a hosted verification page status',
     description:
-      'pending, scanned, completed, failed or expired. On completed or failed, also returnUrl (redirectUri with the response_code). Rate limited per hostedId.'
+      'pending, scanned, completed, failed, declined or expired. On completed, failed or declined, also returnUrl (redirectUri with the response_code). Rate limited per hostedId.'
   })
   @ApiResponse({ status: HttpStatus.OK, description: 'Current status', type: ApiResponseDto })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Unknown or expired hostedId' })
