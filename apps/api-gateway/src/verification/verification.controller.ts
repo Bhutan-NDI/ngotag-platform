@@ -794,9 +794,9 @@ export class VerificationController {
   }
 
   /**
-   * The hosted page's scan link: its QR code and deep link point here (DL-016, superseded). Answers the full `?oob=`
-   * invitation URL as a bare JSON string, which is what the Bhutan NDI app expects from a short link, and marks the
-   * request scanned when the wallet fetches it.
+   * The hosted page's scan link: its QR code and deep link point here. Answers the full `?oob=` invitation URL as a
+   * bare JSON string, which is what the Bhutan NDI app expects from a short link, and marks the request scanned when
+   * the wallet fetches it.
    */
   @Get('/verification/hosted/i/:scanToken')
   @RateLimit(HOSTED_PAGE_IP_RATE_LIMIT)

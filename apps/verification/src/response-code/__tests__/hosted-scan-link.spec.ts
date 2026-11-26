@@ -58,7 +58,7 @@ function scanTokenOf(proofRequestURL: string): string {
   return proofRequestURL.split('/verification/hosted/i/')[1];
 }
 
-describe('hosted page: scan link (supersedes the DL-016 signal source)', () => {
+describe('hosted page: scan link', () => {
   const originalEnv = { ...process.env };
   beforeEach(() => {
     process.env.HOSTED_PAGE_BASE_URL = 'https://id.bhutanndi.com';
