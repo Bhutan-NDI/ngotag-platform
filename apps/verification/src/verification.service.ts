@@ -731,8 +731,6 @@ export class VerificationService {
     const { threadId } = session;
     const codeSession = await this.callHostedStore(() => this.proofResponseCodeService.getSessionByThreadId(threadId));
     if (codeSession && ResponseCodeStatus.PENDING !== codeSession.status) {
-      // Completed, failed or declined: the page sends the browser back with the code. Expired: it offers "Start
-      // again" (DL-013).
       return ResponseCodeStatus.EXPIRED === codeSession.status
         ? { status: 'expired' }
         : { status: codeSession.status, returnUrl: session.returnUrl };
@@ -822,7 +820,7 @@ export class VerificationService {
       if (!consumed) {
         return expired;
       }
-      // DL-020: the exchange keeps reporting a refusal as failed, so integrations never see a new status value.
+      // Integrations only know completed, failed and expired, so a refusal is reported as failed.
       if (ResponseCodeStatus.DECLINED === session.status) {
         return {
           status: ResponseCodeStatus.FAILED,

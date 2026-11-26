@@ -4,10 +4,7 @@ export enum ResponseCodeStatus {
   COMPLETED = 'completed',
   /** The proof ended without a valid presentation: done but not verified. */
   FAILED = 'failed',
-  /**
-   * The holder refused the request: a problem report other than an expiry. Reported as declined by the hosted page
-   * status only; callback-result reports it as failed with reason declined (DL-020).
-   */
+  /** The holder refused. Reported by the hosted status only; callback-result reports it as failed with reason 'declined'. */
   DECLINED = 'declined',
   EXPIRED = 'expired'
 }
@@ -38,7 +35,7 @@ export interface IResponseCodeSession {
 
 export interface IProofCallbackResult {
   status: ResponseCodeStatus;
-  /** Set with status failed when the holder refused the request (DL-020). */
+  /** Set with status failed when the holder refused the request. */
   reason?: 'declined';
   threadId?: string;
   result?: IResponseCodeResult;

@@ -78,8 +78,7 @@ export function toTerminalResponseCodeStatus(
     case VerificationProcessState.DONE:
       return isVerified ? ResponseCodeStatus.COMPLETED : ResponseCodeStatus.FAILED;
     case VerificationProcessState.ABANDONED:
-      // The verifier records every holder problem report as abandoned; only the errorMessage tells a request that
-      // ran out from a refusal. Same rule as the Expired / Declined search filter.
+      // Every holder problem report is recorded as abandoned; only the errorMessage tells an expiry from a refusal.
       return errorMessage?.startsWith(REQUEST_EXPIRED_ERROR_PREFIX)
         ? ResponseCodeStatus.EXPIRED
         : ResponseCodeStatus.DECLINED;
