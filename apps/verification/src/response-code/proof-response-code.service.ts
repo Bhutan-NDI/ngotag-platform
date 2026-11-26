@@ -167,6 +167,12 @@ export class ProofResponseCodeService implements OnModuleInit, OnModuleDestroy {
     return token ? this.getSession(token) : null;
   }
 
+  /** How long a response_code can still be exchanged, in ms; 0 once its session is gone. */
+  async responseCodeRemainingMs(token: string): Promise<number> {
+    const remainingMs = await this.redis().pttl(this.tokenKey(token));
+    return 0 < remainingMs ? remainingMs : 0;
+  }
+
   /**
    * Stores the hosted page's session. The caller gives it the response_code session's lifetime plus one more grace
    * period, so the page can still read `expired` after the code session ends.

@@ -711,10 +711,27 @@ export class VerificationService {
   }
 
   /**
+   * The hosted page's polled status, with returnUrlExpiresAt whenever it returns returnUrl: the code works only while
+   * its response_code session lasts (about 60 s after the outcome), so the page learns when its Return button stops
+   * working.
+   */
+  async getHostedStatus(hostedId: string): Promise<IHostedStatus> {
+    const hostedStatus = await this.readHostedStatus(hostedId);
+    const responseCode = hostedStatus.returnUrl && new URL(hostedStatus.returnUrl).searchParams.get('response_code');
+    if (!responseCode) {
+      return hostedStatus;
+    }
+    const remainingMs = await this.callHostedStore(() =>
+      this.proofResponseCodeService.responseCodeRemainingMs(responseCode)
+    );
+    return { ...hostedStatus, returnUrlExpiresAt: new Date(Date.now() + remainingMs).toISOString() };
+  }
+
+  /**
    * The hosted page's polled status (HVP-SD §5.3). Reads the response_code session without consuming it, so the relying
    * party can still exchange the code; callback-result cannot be used because a terminal read deletes the session.
    */
-  async getHostedStatus(hostedId: string): Promise<IHostedStatus> {
+  private async readHostedStatus(hostedId: string): Promise<IHostedStatus> {
     const session = await this.findHostedSession(hostedId);
     const reads = await this.callHostedStore(() => this.proofResponseCodeService.countHostedStatusRead(hostedId));
     if (reads > hostedStatusReadsPerMinute()) {

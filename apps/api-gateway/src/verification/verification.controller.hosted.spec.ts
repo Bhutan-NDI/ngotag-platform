@@ -34,8 +34,27 @@ describe('hosted verification page routes', () => {
 
     expect(service.getHostedStatus).toHaveBeenCalledWith(validId);
     expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
-    expect(res.json.mock.calls[0][0].data).toEqual({ status: 'pending' });
+    expect(res.json.mock.calls[0][0].data).toEqual({ status: 'pending', serverTime: expect.any(String) });
   });
+
+  it.each(['getHostedPage', 'getHostedStatus'] as const)(
+    '%s adds the platform time, keeping every field the service returned',
+    async (handler) => {
+      const { controller } = makeController();
+      const res = makeRes();
+      const before = Date.now();
+
+      await controller[handler](validId, res as never);
+
+      const [[{ data }]] = res.json.mock.calls;
+      expect(data).toMatchObject(
+        'getHostedPage' === handler ? { returnHost: 'rp.example.com' } : { status: 'pending' }
+      );
+      expect(new Date(data.serverTime).toISOString()).toBe(data.serverTime);
+      expect(Date.parse(data.serverTime)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(data.serverTime)).toBeLessThanOrEqual(Date.now());
+    }
+  );
 
   it.each(['short', `${'a'.repeat(42)}!`, 'a'.repeat(44)])(
     'answers not found for a malformed hostedId %p without calling the service',

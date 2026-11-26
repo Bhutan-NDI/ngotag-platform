@@ -77,6 +77,14 @@ function checkedHostedId(hostedId: string): string {
   return value;
 }
 
+/**
+ * The platform's clock for the hosted page, which runs on another origin and cannot read the Date header: it judges
+ * expiresAt and returnUrlExpiresAt against this, not the citizen's device clock.
+ */
+function withServerTime<T extends object>(data: T): T & { serverTime: string } {
+  return { ...data, serverTime: new Date().toISOString() };
+}
+
 @UseFilters(CustomExceptionFilter)
 @Controller()
 @ApiTags('verifications')
@@ -741,11 +749,15 @@ export class VerificationController {
     description:
       'For the NDI hosted page: the QR invitation, the deep link (with returnUrl, as the relying party gets it), the return host, redirectUri without the response_code, and the request deadline (expiresAt).'
   })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Session found', type: ApiResponseDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Session found, with the platform time (serverTime, ISO 8601) to judge expiresAt against',
+    type: ApiResponseDto
+  })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Unknown or expired hostedId' })
   async getHostedPage(@Param('hostedId') hostedId: string, @Res() res: Response): Promise<Response> {
     res.setHeader('Cache-Control', 'no-store');
-    const data = await this.verificationService.getHostedPage(checkedHostedId(hostedId));
+    const data = withServerTime(await this.verificationService.getHostedPage(checkedHostedId(hostedId)));
     const finalResponse: IResponse = {
       statusCode: HttpStatus.OK,
       message: ResponseMessages.verification.success.hostedSessionFetched,
@@ -764,12 +776,17 @@ export class VerificationController {
     description:
       'pending, scanned, completed, failed or expired. On completed or failed, also returnUrl (redirectUri with the response_code). Rate limited per hostedId.'
   })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Current status', type: ApiResponseDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description:
+      'Current status, with the platform time (serverTime, ISO 8601). Whenever returnUrl is returned, also returnUrlExpiresAt (ISO 8601): when the code can no longer be exchanged.',
+    type: ApiResponseDto
+  })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Unknown or expired hostedId' })
   @ApiResponse({ status: HttpStatus.TOO_MANY_REQUESTS, description: 'Too many status reads for this hostedId' })
   async getHostedStatus(@Param('hostedId') hostedId: string, @Res() res: Response): Promise<Response> {
     res.setHeader('Cache-Control', 'no-store');
-    const data = await this.verificationService.getHostedStatus(checkedHostedId(hostedId));
+    const data = withServerTime(await this.verificationService.getHostedStatus(checkedHostedId(hostedId)));
     const finalResponse: IResponse = {
       statusCode: HttpStatus.OK,
       message: ResponseMessages.verification.success.hostedStatusFetched,
