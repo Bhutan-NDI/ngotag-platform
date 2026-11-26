@@ -58,7 +58,11 @@ import { UserActivityRepository } from 'libs/user-activity/repositories';
 import { ISchemaDetail } from '@credebl/common/interfaces/schema.interface';
 import { NATSClient } from '@credebl/common/NATSClient';
 import { EmailService } from '@credebl/common/email.service';
-import { ProofResponseCodeService, REQUEST_DEADLINE_GRACE_SECONDS } from './response-code/proof-response-code.service';
+import {
+  newHostedScanToken,
+  ProofResponseCodeService,
+  REQUEST_DEADLINE_GRACE_SECONDS
+} from './response-code/proof-response-code.service';
 import {
   appendReturnUrl,
   buildReturnUrl,
@@ -100,6 +104,14 @@ function hostedStatusReadsPerMinute(): number {
 /** Where the NDI hosted page is served, e.g. https://id.bhutanndi.com (DL-012). Unset: no hosted page. */
 function hostedPageBaseUrl(): string | undefined {
   return process.env.HOSTED_PAGE_BASE_URL?.trim().replace(/\/+$/, '') || undefined;
+}
+
+/**
+ * Public api-gateway URL for the hosted page's scan link. Unset: the QR code keeps the plain invitation, and returning
+ * users are not marked scanned (they send no connection message).
+ */
+function hostedScanBaseUrl(): string | undefined {
+  return process.env.HOSTED_SCAN_BASE_URL?.trim().replace(/\/+$/, '') || undefined;
 }
 
 function redirectDefaultExpiresInSeconds(): number {
@@ -617,7 +629,14 @@ export class VerificationService {
           presentationProof.deepLinkURL = convertUrlToDeepLinkUrl(presentationProof.invitationUrl);
         }
         if (redirectUri) {
-          await this.attachRedirect(presentationProof, user.orgId, redirectUri, expiresInSeconds, requestedAt);
+          await this.attachRedirect(
+            presentationProof,
+            user.orgId,
+            redirectUri,
+            expiresInSeconds,
+            requestedAt,
+            proofRequestInvitationUrl
+          );
         }
         return presentationProof;
       }
@@ -635,7 +654,8 @@ export class VerificationService {
     orgId: string,
     redirectUri: string,
     expiresInSeconds?: number,
-    requestedAt: number = Date.now()
+    requestedAt: number = Date.now(),
+    oobUrl: string = presentationProof.invitationUrl
   ): Promise<void> {
     const threadId = presentationProof.proofRecordThId;
     if (!threadId) {
@@ -654,7 +674,7 @@ export class VerificationService {
     if (presentationProof.deepLinkURL) {
       presentationProof.deepLinkURL = appendReturnUrl(presentationProof.deepLinkURL, presentationProof.returnUrl);
     }
-    await this.attachHostedPage(presentationProof, orgId, threadId, redirectUri, expiresInSeconds, requestedAt);
+    await this.attachHostedPage(presentationProof, orgId, threadId, redirectUri, expiresInSeconds, requestedAt, oobUrl);
   }
 
   /**
@@ -662,6 +682,10 @@ export class VerificationService {
    * period longer, so the page can read `expired` after the code session ends. Like the redirect itself, a failure
    * leaves the invitation usable, only without hostedPageUrl.
    * deepLinkURL carries returnUrl (E7, DL-007), so the hostedId holder can use up the code's single terminal read.
+   *
+   * With HOSTED_SCAN_BASE_URL set, the page's QR code and deep link point to the scan link instead of the invitation,
+   * so the platform sees the wallet fetch it, for new and returning users alike. The relying party's own
+   * invitationUrl and deepLinkURL stay as they are.
    */
   private async attachHostedPage(
     presentationProof: IInvitation,
@@ -669,7 +693,8 @@ export class VerificationService {
     threadId: string,
     redirectUri: string,
     expiresInSeconds: number | undefined,
-    requestedAt: number
+    requestedAt: number,
+    oobUrl: string
   ): Promise<void> {
     const baseUrl = hostedPageBaseUrl();
     if (!baseUrl) {
@@ -677,20 +702,30 @@ export class VerificationService {
     }
     const ttlSeconds = this.proofResponseCodeService.sessionTtlSeconds(expiresInSeconds);
     const lifetimeMs = (expiresInSeconds ?? ttlSeconds) * 1000;
+    const scanBaseUrl = hostedScanBaseUrl();
+    const scanToken = scanBaseUrl ? newHostedScanToken() : undefined;
+    const scanUrl = scanToken ? `${scanBaseUrl}/verification/hosted/i/${scanToken}` : undefined;
+    // Same deep link format the relying party gets; only the inner url changes to the scan link.
+    const deepLinkURL =
+      scanUrl && presentationProof.deepLinkURL
+        ? appendReturnUrl(convertUrlToDeepLinkUrl(scanUrl), presentationProof.returnUrl)
+        : presentationProof.deepLinkURL;
     try {
       const hostedId = await this.proofResponseCodeService.createHostedSession(
         {
           orgId,
           threadId,
-          proofRequestURL: presentationProof.invitationUrl,
-          deepLinkURL: presentationProof.deepLinkURL,
+          proofRequestURL: scanUrl ?? presentationProof.invitationUrl,
+          oobUrl: scanUrl ? oobUrl : undefined,
+          deepLinkURL,
           returnUrl: presentationProof.returnUrl,
           redirectUri,
           returnHost: new URL(redirectUri).host,
           outOfBandId: presentationProof.outOfBandRecord?.id,
           expiresAt: new Date(requestedAt + lifetimeMs).toISOString()
         },
-        ttlSeconds + REQUEST_DEADLINE_GRACE_SECONDS
+        ttlSeconds + REQUEST_DEADLINE_GRACE_SECONDS,
+        scanToken
       );
       presentationProof.hostedPageUrl = `${baseUrl}/v/${hostedId}`;
     } catch (error) {
@@ -761,6 +796,34 @@ export class VerificationService {
     } catch (error) {
       this.logger.warn(`[markHostedScanned] - could not mark ${outOfBandId} scanned: ${error?.message}`);
     }
+  }
+
+  /**
+   * The wallet fetches the hosted page's scan link when it scans the QR code or opens the deep link, before it decides
+   * how to handle the invitation, so this marks new and returning users scanned alike. `markScanned` is false for a
+   * fetch that is not the wallet's (no `Accept: application/json`), such as a link preview. Answers every fetch until
+   * the session ends; marking never fails the fetch.
+   */
+  async getHostedInvitation(scanToken: string, markScanned: boolean): Promise<string> {
+    const hostedId = scanToken
+      ? await this.callHostedStore(() => this.proofResponseCodeService.resolveHostedScan(scanToken))
+      : null;
+    const session = hostedId
+      ? await this.callHostedStore(() => this.proofResponseCodeService.getHostedSession(hostedId))
+      : null;
+    if (!session?.oobUrl) {
+      throw new RpcException(
+        new NotFoundException(ResponseMessages.verification.error.hostedSessionNotFound).getResponse()
+      );
+    }
+    if (markScanned) {
+      try {
+        await this.proofResponseCodeService.markHostedScannedById(hostedId);
+      } catch (error) {
+        this.logger.warn(`[getHostedInvitation] - could not mark scanned: ${error?.message}`);
+      }
+    }
+    return session.oobUrl;
   }
 
   private async findHostedSession(hostedId: string): Promise<IHostedSession> {

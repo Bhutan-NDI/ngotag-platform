@@ -131,6 +131,11 @@ export class VerificationController {
     return this.verificationService.getHostedStatus(payload.hostedId);
   }
 
+  @MessagePattern({ cmd: 'get-hosted-verification-invitation' })
+  async getHostedInvitation(payload: { scanToken: string; markScanned: boolean }): Promise<string> {
+    return this.verificationService.getHostedInvitation(payload.scanToken, payload.markScanned);
+  }
+
   @MessagePattern({ cmd: 'hosted-verification-scanned' })
   async markHostedScanned(payload: { outOfBandId: string; orgId: string }): Promise<void> {
     return this.verificationService.markHostedScanned(payload.outOfBandId, payload.orgId);
